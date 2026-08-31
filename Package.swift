@@ -32,11 +32,22 @@ let package = Package(
         .target(
             name: "Cflac",
             path: "Sources/Cflac",
+            exclude: ["src/deduplication"],
             publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("src"),
+                .headerSearchPath("src/include"),
                 .define("FLAC__NO_DLL"),
                 .define("HAVE_STDINT_H"),
+                .define("FLAC__HAS_OGG", to: "0"),
+                .define("HAVE_LROUND"),
+                .define("HAVE_CPUID_H"),
+                .define("HAVE_FSEEKO"),
+                .define("HAVE_INTTYPES_H"),
+                .define("HAVE_SYS_PARAM_H"),
+                .define("_POSIX_C_SOURCE", to: "200809L"),
+                .define("PACKAGE_VERSION", to: "\"1.4.3\""),
+                .unsafeFlags(["-include", "strings.h", "-include", "string.h"])
             ]
         ),
         .target(
@@ -81,11 +92,17 @@ let package = Package(
             path: "Sources/CParsoEngine",
             publicHeadersPath: "include"
         ),
+        .target(
+            name: "CflacBridge",
+            dependencies: ["Cflac"],
+            path: "Sources/CflacBridge",
+            publicHeadersPath: "include"
+        ),
 
         // ── Swift layers (Swift 6 language mode) ──
         .target(
             name: "ParsoAudioCore",
-            dependencies: ["CParsoDSP", "Cflac", "Cebur128", "Csrc", "Cvorbis", "Copus"],
+            dependencies: ["CParsoDSP", "CflacBridge", "Cebur128", "Csrc", "Cvorbis", "Copus"],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
                 .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),

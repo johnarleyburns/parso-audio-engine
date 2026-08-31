@@ -94,7 +94,7 @@ struct SignalGeneratorTests {
 
 // MARK: - Pending implementation (docs/SPEC.md §9, §13)
 
-@Suite("Codec roundtrip", .disabled("Implement file IO — docs/SPEC.md §9"))
+@Suite("Codec roundtrip")
 struct CodecRoundtripTests {
     private func tempURL(_ ext: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)

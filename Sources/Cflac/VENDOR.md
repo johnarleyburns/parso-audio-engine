@@ -1,9 +1,6 @@
-# Vendoring libFLAC
+# Vendoring libFLAC (native FLAC only)
 
-1. Download a tagged libFLAC release (e.g. 1.4.x) from https://xiph.org/flac/.
-2. Copy `src/libFLAC/*.c` into `src/` and `include/FLAC/*.h` + `include/share/*` into `include/`.
-3. Native FLAC only: exclude `ogg_*.c` and any Ogg mapping; do not add libogg.
-4. Keep the upstream `COPYING.Xiph` (BSD-3) here. Record the source commit below.
-5. Delete `cflac_shim.h` and `placeholder.c`.
-
-Source commit: <fill in>
+Vendored from the upstream `1.4.3` release tag (`28e4f0528c76b296c561e922ba67d43751990599`).
+The libFLAC C sources and public/private headers are unmodified. Ogg mapping sources are excluded,
+so this target has no libogg dependency. `COPYING.Xiph` is retained as the upstream BSD-3-Clause
+license.
