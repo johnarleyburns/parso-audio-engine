@@ -98,11 +98,17 @@ let package = Package(
             path: "Sources/CflacBridge",
             publicHeadersPath: "include"
         ),
+        .target(
+            name: "CvorbisBridge",
+            dependencies: ["Cvorbis"],
+            path: "Sources/CvorbisBridge",
+            publicHeadersPath: "include"
+        ),
 
         // ── Swift layers (Swift 6 language mode) ──
         .target(
             name: "ParsoAudioCore",
-            dependencies: ["CParsoDSP", "CflacBridge", "Cebur128", "Csrc", "Cvorbis", "Copus"],
+            dependencies: ["CParsoDSP", "CflacBridge", "CvorbisBridge", "Cebur128", "Csrc", "Copus"],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
                 .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),

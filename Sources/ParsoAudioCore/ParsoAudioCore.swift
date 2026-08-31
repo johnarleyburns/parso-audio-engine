@@ -11,6 +11,7 @@ import Foundation
 import Cebur128
 import Csrc
 import CflacBridge
+import CvorbisBridge
 #if canImport(AVFoundation)
 import AVFoundation
 import AudioToolbox
@@ -192,6 +193,8 @@ public struct AudioFileReader: Sendable {
         switch container {
         case .flac:
             return try decodeFLAC(url: url)
+        case .oggVorbis:
+            return try decodeVorbis(url: url)
         case .wav:
             return try decodeWAV(url: url)
         case .aiff, .caf, .mp3, .m4a:
@@ -202,7 +205,7 @@ public struct AudioFileReader: Sendable {
             // inspect their WAV fallback files, which retain a valid PCM stream.
             return try decodeWAV(url: url)
 #endif
-        case .oggVorbis, .opus, .auto:
+        case .opus, .auto:
             throw AudioFileError.unsupportedContainer(container)
         }
     }
@@ -246,6 +249,34 @@ public struct AudioFileReader: Sendable {
         do { data = try Data(contentsOf: url) }
         catch { throw AudioFileError.invalidFile(error.localizedDescription) }
         return try WAVCodec.decode(data)
+    }
+
+    private static func decodeVorbis(url: URL) throws -> PCMBuffer {
+        var samples: UnsafeMutablePointer<Int16>?
+        var frames: UInt64 = 0
+        var channels: UInt32 = 0
+        var sampleRate: UInt32 = 0
+        let result = url.path.withCString { path in
+            parso_vorbis_decode_file(path, &samples, &frames, &channels, &sampleRate)
+        }
+        guard result == 0, let samples, channels > 0,
+              frames <= UInt64(Int.max), frames <= UInt64(Int.max) / UInt64(channels) else {
+            if let samples { parso_vorbis_free(samples) }
+            throw AudioFileError.invalidFile("stb_vorbis decode failed")
+        }
+        defer { parso_vorbis_free(samples) }
+        let frameCount = Int(frames)
+        let channelCount = Int(channels)
+        let output = PCMBuffer(
+            format: AudioFormat(sampleRate: Double(sampleRate), channelCount: channelCount),
+            capacity: frameCount
+        )
+        for frame in 0..<frameCount {
+            for channel in 0..<channelCount {
+                output.channel(channel)[frame] = Float(samples[frame * channelCount + channel]) * (1.0 / 32_768.0)
+            }
+        }
+        return output
     }
 
 #if canImport(AVFoundation)
