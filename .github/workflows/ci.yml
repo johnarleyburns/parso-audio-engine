@@ -19,7 +19,16 @@ jobs:
           xcodebuild -version
           swift --version
       - name: Download real audio fixtures
-        run: ./scripts/download-fixtures.sh
+        run: |
+          for attempt in 1 2 3; do
+            ./scripts/download-fixtures.sh
+            fixture_count="$(find Tests/Fixtures/audio -type f ! -name '.gitkeep' | wc -l | tr -d ' ')"
+            if [[ "$fixture_count" -eq 18 ]]; then exit 0; fi
+            echo "Only $fixture_count/18 fixtures are present; retrying in 30 seconds (attempt $attempt/3)."
+            sleep 30
+          done
+          echo "::error::The complete 18-fixture corpus was not downloaded"
+          exit 1
       - name: Build
         run: swift build -v
       - name: Unit tests (synthetic and real fixtures)

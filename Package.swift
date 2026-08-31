@@ -117,7 +117,12 @@ let package = Package(
             name: "CflacBridge",
             dependencies: ["Cflac"],
             path: "Sources/CflacBridge",
-            publicHeadersPath: "include"
+            publicHeadersPath: "include",
+            cSettings: [
+                // libFLAC's public share/safe_str.h is an upstream header that
+                // relies on the including translation unit for string APIs.
+                .unsafeFlags(["-include", "string.h"])
+            ]
         ),
         .target(
             name: "CvorbisBridge",
