@@ -1,0 +1,15 @@
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+.DS_Store
+
+# Test fixtures are downloaded, never committed
+Tests/Fixtures/audio/
+!Tests/Fixtures/audio/.gitkeep
+
+# Golden values a developer verifies locally (optional to commit)
+Tests/Fixtures/expected.local.json
+
+# Agent phase ledger — untracked by design (see AGENTS.md §3)
+current_status.md

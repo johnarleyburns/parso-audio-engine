@@ -1,0 +1,45 @@
+name: CI
+on:
+  push: { branches: [ main ] }
+  pull_request: { branches: [ main ] }
+
+jobs:
+  build-test-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode (Swift 6)
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+      - name: Build
+        run: swift build -v
+      - name: Unit tests (synthetic; fixtures auto-skip when absent)
+        run: swift test -v
+      - name: SPDX copyleft guard
+        run: |
+          if grep -R -n -E "GNU (Lesser )?General Public License|GPL-2|GPL-3|LGPL|AGPL" \
+               --include="LICENSE*" --include="*.md" Sources NOTICE.md 2>/dev/null; then
+            echo "::error::Copyleft license text found in dependency tree"; exit 1
+          fi
+          echo "No copyleft licenses detected."
+
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild -scheme ParsoDJEngine \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -skipPackagePluginValidation build
+
+  # Optional nightly job runs the real-fixture analysis suite (network + ffmpeg).
+  real-fixtures:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install ffmpeg
+      - run: ./scripts/download-fixtures.sh
+      - run: swift test --filter RealFixture

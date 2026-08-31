@@ -1,0 +1,112 @@
+// swift-tools-version: 6.0
+import PackageDescription
+
+// parso-audio-engine — MIT-licensed, permissive-only software DJ engine
+// delivering full DDJ-FLX4 functional equivalence. See docs/SPEC.md.
+//
+// Swift 6 language mode is enabled package-wide (strict concurrency).
+// The C/C++ targets currently ship as *placeholder* modules that compile but
+// return errors; vendor the real permissive libraries per docs/SPEC.md §4:
+//   Cflac    -> libFLAC (BSD-3)            https://xiph.org/flac/
+//   Cebur128 -> libebur128 (MIT)          https://github.com/jiixyj/libebur128
+//   Csrc     -> libsamplerate >= 0.2.2     https://github.com/libsndfile/libsamplerate  (BSD-2)
+//   Cvorbis  -> stb_vorbis (Public Domain) https://github.com/nothings/stb   (Ogg Vorbis decode)
+//   Copus    -> libogg + libopus + libopusfile (BSD-3)  https://github.com/xiph  (Opus decode)
+//   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
+//                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
+
+let package = Package(
+    name: "parso-audio-engine",
+    platforms: [
+        .iOS(.v15),
+        .macCatalyst(.v15),
+        .macOS(.v13)
+    ],
+    products: [
+        .library(name: "ParsoAudioCore",     targets: ["ParsoAudioCore"]),
+        .library(name: "ParsoAudioAnalysis", targets: ["ParsoAudioAnalysis"]),
+        .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
+    ],
+    targets: [
+        // ── Vendored C libraries (placeholders until sources are dropped in) ──
+        .target(
+            name: "Cflac",
+            path: "Sources/Cflac",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("src"),
+                .define("FLAC__NO_DLL"),
+                .define("HAVE_STDINT_H"),
+            ]
+        ),
+        .target(name: "Cebur128", path: "Sources/Cebur128", publicHeadersPath: "include"),
+        .target(name: "Csrc",     path: "Sources/Csrc",     publicHeadersPath: "include"),
+        .target(name: "Cvorbis",  path: "Sources/Cvorbis",  publicHeadersPath: "include"),
+        .target(name: "Copus",    path: "Sources/Copus",    publicHeadersPath: "include"),
+
+        // ── C/C++ DSP core + DJ real-time engine (C-clean public headers) ──
+        .target(
+            name: "CParsoDSP",
+            path: "Sources/CParsoDSP",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("vendor/signalsmith"),
+                .headerSearchPath("src"),
+                .define("SIGNALSMITH_USE_ACCELERATE", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+            ],
+            linkerSettings: [
+                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS]))
+            ]
+        ),
+        .target(
+            name: "CParsoEngine",
+            dependencies: ["CParsoDSP"],
+            path: "Sources/CParsoEngine",
+            publicHeadersPath: "include"
+        ),
+
+        // ── Swift layers (Swift 6 language mode) ──
+        .target(
+            name: "ParsoAudioCore",
+            dependencies: ["CParsoDSP", "Cflac", "Cebur128", "Csrc", "Cvorbis", "Copus"],
+            linkerSettings: [
+                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+                .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+                .linkedFramework("Accelerate",   .when(platforms: [.iOS, .macCatalyst, .macOS])),
+            ]
+        ),
+        .target(
+            name: "ParsoAudioAnalysis",
+            dependencies: ["ParsoAudioCore"],
+            linkerSettings: [
+                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS]))
+            ]
+        ),
+        .target(
+            name: "ParsoDJEngine",
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoEngine"]
+        ),
+
+        // ── Tests ──
+        .testTarget(
+            name: "ParsoAudioCoreTests",
+            dependencies: ["ParsoAudioCore", "ParsoTestSupport"]
+        ),
+        .testTarget(
+            name: "ParsoAudioAnalysisTests",
+            dependencies: ["ParsoAudioAnalysis", "ParsoTestSupport"]
+        ),
+        .testTarget(
+            name: "ParsoDJEngineTests",
+            dependencies: ["ParsoDJEngine", "ParsoTestSupport"]
+        ),
+        .target(
+            name: "ParsoTestSupport",
+            dependencies: ["ParsoAudioCore"],
+            path: "Tests/Support"
+        ),
+    ],
+    swiftLanguageModes: [.v6],
+    cLanguageStandard: .c11,
+    cxxLanguageStandard: .cxx17
+)
