@@ -1,4 +1,5 @@
 # Vendoring libsamplerate (BSD-2, >= 0.2.2)
-Copy `src/*.c` -> src/, `include/samplerate.h` -> include/. Keep upstream COPYING (BSD-2).
-CONFIRM the version is >= 0.1.9 (older releases were GPL). Remove shim + placeholder.
-Source commit / version: <fill in>
+
+Vendored from the upstream `0.2.2` release tag (`c96f5e3de9c4488f4e6c97f59f5245f22fda22f7`).
+The source files and `include/samplerate.h` are unmodified. `COPYING` is the upstream 2-clause
+BSD license. This is newer than the prohibited pre-0.1.9 releases.

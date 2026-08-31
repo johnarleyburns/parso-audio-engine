@@ -132,7 +132,7 @@ struct CodecRoundtripTests {
     }
 }
 
-@Suite("Sample-rate conversion", .disabled("Implement SRC — docs/SPEC.md §9"))
+@Suite("Sample-rate conversion")
 struct SampleRateTests {
     @Test func lengthRatioAndToneSurvive() throws {
         let src = SignalGenerators.sine(frequency: 1000, seconds: 1.0, sampleRate: 44_100)

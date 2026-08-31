@@ -45,7 +45,19 @@ let package = Package(
             publicHeadersPath: "include",
             cSettings: [.define("M_PI", to: "3.14159265358979323846")]
         ),
-        .target(name: "Csrc",     path: "Sources/Csrc",     publicHeadersPath: "include"),
+        .target(
+            name: "Csrc",
+            path: "Sources/Csrc",
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("ENABLE_SINC_BEST_CONVERTER"),
+                .define("ENABLE_SINC_MEDIUM_CONVERTER"),
+                .define("ENABLE_SINC_FAST_CONVERTER"),
+                .define("HAVE_STDBOOL_H"),
+                .define("PACKAGE", to: "\"libsamplerate\""),
+                .define("VERSION", to: "\"0.2.2\"")
+            ]
+        ),
         .target(name: "Cvorbis",  path: "Sources/Cvorbis",  publicHeadersPath: "include"),
         .target(name: "Copus",    path: "Sources/Copus",    publicHeadersPath: "include"),
 
