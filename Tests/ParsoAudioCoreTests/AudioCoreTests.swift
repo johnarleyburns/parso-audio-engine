@@ -192,7 +192,7 @@ struct TimePitchTests {
     }
 }
 
-@Suite("Loudness", .disabled("Implement LoudnessAnalyzer — docs/SPEC.md §9"))
+@Suite("Loudness")
 struct LoudnessTests {
     @Test func computesGainTowardTarget() {
         let quiet = SignalGenerators.sine(frequency: 1000, seconds: 3.0, amplitude: 0.05)

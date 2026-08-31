@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Cebur128
 
 /// Traps with a clear message; every stubbed body calls this.
 @inline(never)
@@ -176,7 +177,51 @@ public struct LoudnessResult: Sendable, Equatable {
 public struct LoudnessAnalyzer: Sendable {
     public var targetLUFS: Double
     public init(targetLUFS: Double = -14.0) { self.targetLUFS = targetLUFS }
-    public func measure(_ buffer: PCMBuffer) -> LoudnessResult { unimplemented() }
+    public func measure(_ buffer: PCMBuffer) -> LoudnessResult {
+        let channels = buffer.channelCount
+        let mode = EBUR128_MODE_I.rawValue | EBUR128_MODE_TRUE_PEAK.rawValue
+        var optionalState = ebur128_init(
+            UInt32(channels),
+            UInt(buffer.format.sampleRate.rounded()),
+            Int32(mode)
+        )
+        guard let state = optionalState else {
+            return LoudnessResult(
+                integratedLUFS: -.infinity,
+                truePeakDBTP: -.infinity,
+                gainToTargetDB: .infinity
+            )
+        }
+        defer { ebur128_destroy(&optionalState) }
+
+        var interleaved = [Float](repeating: 0, count: buffer.frameCount * channels)
+        for frame in 0..<buffer.frameCount {
+            for channel in 0..<channels {
+                interleaved[frame * channels + channel] = buffer.channel(channel)[frame]
+            }
+        }
+        interleaved.withUnsafeBufferPointer {
+            _ = ebur128_add_frames_float(state, $0.baseAddress, buffer.frameCount)
+        }
+
+        var integratedLUFS = -Double.infinity
+        _ = ebur128_loudness_global(state, &integratedLUFS)
+
+        var truePeak = 0.0
+        for channel in 0..<channels {
+            var channelPeak = 0.0
+            if ebur128_true_peak(state, UInt32(channel), &channelPeak) == EBUR128_SUCCESS.rawValue {
+                truePeak = max(truePeak, channelPeak)
+            }
+        }
+        let truePeakDBTP = truePeak > 0 ? 20 * log10(truePeak) : -Double.infinity
+
+        return LoudnessResult(
+            integratedLUFS: integratedLUFS,
+            truePeakDBTP: truePeakDBTP,
+            gainToTargetDB: targetLUFS - integratedLUFS
+        )
+    }
 }
 
 // MARK: - RT DSP wrappers (thin Swift over CParsoDSP; also usable offline for tests/reuse)
