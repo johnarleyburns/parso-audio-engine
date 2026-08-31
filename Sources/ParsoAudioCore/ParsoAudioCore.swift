@@ -195,7 +195,8 @@ public struct AudioFileReader: Sendable {
         case .flac:
             return try decodeFLAC(url: url)
         case .oggVorbis:
-            return try decodeVorbis(url: url)
+            do { return try decodeVorbis(url: url) }
+            catch { return try decodeOpus(url: url) }
         case .opus:
             return try decodeOpus(url: url)
         case .wav:

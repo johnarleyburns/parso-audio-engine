@@ -50,9 +50,9 @@ struct FixtureManifestTests {
 
 // MARK: - Gated: real decode paths (docs/SPEC.md §9)
 
-@Suite("RealFixture decode", .disabled("Implement AudioFileReader — docs/SPEC.md §9"))
+@Suite("RealFixture decode")
 struct FixtureDecodeTests {
-    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.all)
+    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.decodeFixtures)
     func decodesToNonEmptyPCM(_ fixture: Fixture) throws {
         try withKnownIssueIfMissing(fixture) {
             let reader = try AudioFileReader(url: FixtureLibrary.url(for: fixture))
