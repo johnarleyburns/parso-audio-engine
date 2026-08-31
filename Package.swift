@@ -39,7 +39,12 @@ let package = Package(
                 .define("HAVE_STDINT_H"),
             ]
         ),
-        .target(name: "Cebur128", path: "Sources/Cebur128", publicHeadersPath: "include"),
+        .target(
+            name: "Cebur128",
+            path: "Sources/Cebur128",
+            publicHeadersPath: "include",
+            cSettings: [.define("M_PI", to: "3.14159265358979323846")]
+        ),
         .target(name: "Csrc",     path: "Sources/Csrc",     publicHeadersPath: "include"),
         .target(name: "Cvorbis",  path: "Sources/Cvorbis",  publicHeadersPath: "include"),
         .target(name: "Copus",    path: "Sources/Copus",    publicHeadersPath: "include"),
