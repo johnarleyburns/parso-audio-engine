@@ -12,6 +12,7 @@ import Cebur128
 import Csrc
 import CflacBridge
 import CvorbisBridge
+import CopusBridge
 #if canImport(AVFoundation)
 import AVFoundation
 import AudioToolbox
@@ -195,6 +196,8 @@ public struct AudioFileReader: Sendable {
             return try decodeFLAC(url: url)
         case .oggVorbis:
             return try decodeVorbis(url: url)
+        case .opus:
+            return try decodeOpus(url: url)
         case .wav:
             return try decodeWAV(url: url)
         case .aiff, .caf, .mp3, .m4a:
@@ -205,7 +208,7 @@ public struct AudioFileReader: Sendable {
             // inspect their WAV fallback files, which retain a valid PCM stream.
             return try decodeWAV(url: url)
 #endif
-        case .opus, .auto:
+        case .auto:
             throw AudioFileError.unsupportedContainer(container)
         }
     }
@@ -274,6 +277,34 @@ public struct AudioFileReader: Sendable {
         for frame in 0..<frameCount {
             for channel in 0..<channelCount {
                 output.channel(channel)[frame] = Float(samples[frame * channelCount + channel]) * (1.0 / 32_768.0)
+            }
+        }
+        return output
+    }
+
+    private static func decodeOpus(url: URL) throws -> PCMBuffer {
+        var samples: UnsafeMutablePointer<Float>?
+        var frames: UInt64 = 0
+        var channels: UInt32 = 0
+        var sampleRate: UInt32 = 0
+        let result = url.path.withCString { path in
+            parso_opus_decode_file(path, &samples, &frames, &channels, &sampleRate)
+        }
+        guard result == 0, let samples, channels > 0,
+              frames <= UInt64(Int.max), frames <= UInt64(Int.max) / UInt64(channels) else {
+            if let samples { parso_opus_free(samples) }
+            throw AudioFileError.invalidFile("libopusfile decode failed")
+        }
+        defer { parso_opus_free(samples) }
+        let frameCount = Int(frames)
+        let channelCount = Int(channels)
+        let output = PCMBuffer(
+            format: AudioFormat(sampleRate: Double(sampleRate), channelCount: channelCount),
+            capacity: frameCount
+        )
+        for frame in 0..<frameCount {
+            for channel in 0..<channelCount {
+                output.channel(channel)[frame] = samples[frame * channelCount + channel]
             }
         }
         return output

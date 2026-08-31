@@ -28,7 +28,7 @@ let package = Package(
         .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
     ],
     targets: [
-        // ── Vendored C libraries (placeholders until sources are dropped in) ──
+        // ── Vendored C libraries (permissive upstream licenses; see VENDOR.md) ──
         .target(
             name: "Cflac",
             path: "Sources/Cflac",
@@ -70,7 +70,28 @@ let package = Package(
             ]
         ),
         .target(name: "Cvorbis",  path: "Sources/Cvorbis",  publicHeadersPath: "include"),
-        .target(name: "Copus",    path: "Sources/Copus",    publicHeadersPath: "include"),
+        .target(
+            name: "Copus",
+            path: "Sources/Copus",
+            exclude: ["silk/float"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("src"),
+                .headerSearchPath("src/opusfile"),
+                .headerSearchPath("celt"),
+                .headerSearchPath("silk"),
+                .headerSearchPath("silk/fixed"),
+                .headerSearchPath("silk/float"),
+                .headerSearchPath("include/ogg"),
+                .headerSearchPath("include/opus"),
+                .define("HAVE_CONFIG_H"),
+                .define("OPUS_BUILD"),
+                .define("OPUS_DISABLE_INTRINSICS"),
+                .define("FIXED_POINT"),
+                .define("USE_ALLOCA")
+            ],
+            linkerSettings: [.linkedLibrary("m")]
+        ),
 
         // ── C/C++ DSP core + DJ real-time engine (C-clean public headers) ──
         .target(
@@ -104,11 +125,17 @@ let package = Package(
             path: "Sources/CvorbisBridge",
             publicHeadersPath: "include"
         ),
+        .target(
+            name: "CopusBridge",
+            dependencies: ["Copus"],
+            path: "Sources/CopusBridge",
+            publicHeadersPath: "include"
+        ),
 
         // ── Swift layers (Swift 6 language mode) ──
         .target(
             name: "ParsoAudioCore",
-            dependencies: ["CParsoDSP", "CflacBridge", "CvorbisBridge", "Cebur128", "Csrc", "Copus"],
+            dependencies: ["CParsoDSP", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
                 .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),
