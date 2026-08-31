@@ -41,7 +41,7 @@ let package = Package(
                 .define("HAVE_STDINT_H"),
                 .define("FLAC__HAS_OGG", to: "0"),
                 .define("HAVE_LROUND"),
-                .define("HAVE_CPUID_H"),
+                .define("HAVE_CPUID_H", .when(platforms: [.linux])),
                 .define("HAVE_FSEEKO"),
                 .define("HAVE_INTTYPES_H"),
                 .define("HAVE_SYS_PARAM_H"),
