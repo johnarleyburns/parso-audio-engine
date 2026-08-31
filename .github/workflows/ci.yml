@@ -2,17 +2,27 @@ name: CI
 on:
   push: { branches: [ main ] }
   pull_request: { branches: [ main ] }
+  workflow_dispatch:
 
 jobs:
   build-test-macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode (Swift 6)
-        run: sudo xcode-select -s /Applications/Xcode_16.app
+      - name: Select latest installed Xcode
+        run: |
+          xcode_app=""
+          for candidate in /Applications/Xcode*.app; do
+            if [[ -d "$candidate" ]]; then xcode_app="$candidate"; fi
+          done
+          if [[ -n "$xcode_app" ]]; then sudo xcode-select -s "$xcode_app"; fi
+          xcodebuild -version
+          swift --version
+      - name: Download real audio fixtures
+        run: ./scripts/download-fixtures.sh
       - name: Build
         run: swift build -v
-      - name: Unit tests (synthetic; fixtures auto-skip when absent)
+      - name: Unit tests (synthetic and real fixtures)
         run: swift test -v
       - name: SPDX copyleft guard
         run: |
@@ -26,20 +36,16 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app
+      - name: Select latest installed Xcode
+        run: |
+          xcode_app=""
+          for candidate in /Applications/Xcode*.app; do
+            if [[ -d "$candidate" ]]; then xcode_app="$candidate"; fi
+          done
+          if [[ -n "$xcode_app" ]]; then sudo xcode-select -s "$xcode_app"; fi
+          xcodebuild -version
       - name: Build for iOS Simulator
         run: |
           xcodebuild -scheme ParsoDJEngine \
             -destination 'platform=iOS Simulator,name=iPhone 15' \
             -skipPackagePluginValidation build
-
-  # Optional nightly job runs the real-fixture analysis suite (network + ffmpeg).
-  real-fixtures:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - run: brew install ffmpeg
-      - run: ./scripts/download-fixtures.sh
-      - run: swift test --filter RealFixture
