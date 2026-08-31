@@ -45,7 +45,7 @@ let package = Package(
                 .define("HAVE_FSEEKO"),
                 .define("HAVE_INTTYPES_H"),
                 .define("HAVE_SYS_PARAM_H"),
-                .define("_POSIX_C_SOURCE", to: "200809L"),
+                .define("_POSIX_C_SOURCE", to: "200809L", .when(platforms: [.linux])),
                 .define("PACKAGE_VERSION", to: "\"1.4.3\""),
                 .unsafeFlags(["-include", "strings.h", "-include", "string.h"])
             ]
