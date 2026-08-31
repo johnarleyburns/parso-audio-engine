@@ -1,0 +1,7 @@
+module Cflac {
+    header "FLAC/format.h"
+    header "FLAC/metadata.h"
+    header "FLAC/stream_decoder.h"
+    header "FLAC/stream_encoder.h"
+    export *
+}
