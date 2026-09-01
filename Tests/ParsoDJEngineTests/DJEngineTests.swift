@@ -94,7 +94,7 @@ struct HeadlessTransportTests {
     }
 }
 
-@Suite("Sync", .disabled("Implement beat sync — docs/SPEC.md §11.2"))
+@Suite("Sync")
 @MainActor
 struct SyncTests {
     @Test func syncMatchesTempoToMaster() {

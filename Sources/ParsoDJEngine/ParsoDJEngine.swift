@@ -44,6 +44,10 @@ public final class DJEngine {
 fileprivate final class EngineBridge {
     private let handleBits: UInt
     var control: pe_control
+    private(set) var masterDeckIndex: Int?
+    private var trackBPM: [Double] = [120, 120]
+    weak var deckA: Deck?
+    weak var deckB: Deck?
 
     var handle: OpaquePointer {
         // The C handle is owned and used exclusively on the main/control actor.
@@ -61,6 +65,8 @@ fileprivate final class EngineBridge {
         control.master_level = 0.8
         control.trim = (0.5, 0.5)
         control.fader = (1, 1)
+        control.deck_time_ratio = (1, 1)
+        control.deck_pitch = (0, 0)
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -68,6 +74,45 @@ fileprivate final class EngineBridge {
     deinit { pe_destroy(OpaquePointer(bitPattern: handleBits)) }
 
     func publishControl() { pe_set_control(handle, &control) }
+
+    func register(_ deck: Deck, index: Int) {
+        if index == 0 { deckA = deck } else if index == 1 { deckB = deck }
+    }
+
+    func setTrackBPM(_ bpm: Double, index: Int) {
+        guard trackBPM.indices.contains(index), bpm.isFinite, bpm > 0 else { return }
+        trackBPM[index] = bpm
+    }
+
+    func bpm(for index: Int) -> Double {
+        trackBPM.indices.contains(index) ? trackBPM[index] : 120
+    }
+
+    func deck(at index: Int) -> Deck? {
+        index == 0 ? deckA : (index == 1 ? deckB : nil)
+    }
+
+    func setMaster(index: Int) {
+        guard index == 0 || index == 1 else { return }
+        masterDeckIndex = index
+        deckA?.refreshSyncFromMasterIfNeeded()
+        deckB?.refreshSyncFromMasterIfNeeded()
+    }
+
+    func setDeckPlayback(index: Int, tempoRatio: Double, pitchSemitones: Double) {
+        let ratio = tempoRatio.isFinite && tempoRatio > 0 ? tempoRatio : 1
+        let pitch = pitchSemitones.isFinite ? pitchSemitones : 0
+        if index == 0 {
+            control.deck_time_ratio.0 = Float(ratio)
+            control.deck_pitch.0 = Float(pitch)
+        } else if index == 1 {
+            control.deck_time_ratio.1 = Float(ratio)
+            control.deck_pitch.1 = Float(pitch)
+        } else {
+            return
+        }
+        publishControl()
+    }
 }
 
 /// Synchronous render harness for tests. Same DSP as `DJEngine`, no audio device.
@@ -157,10 +202,12 @@ public final class Deck {
     private var currentPlayhead: TimeInterval = 0
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
     private var trackBPM: Double = 120
+    private var beatPositions: [TimeInterval] = []
 
     fileprivate init(bridge: EngineBridge, index: Int) {
         self.bridge = bridge
         self.index = index
+        bridge.register(self, index: index)
     }
 
     // Loading / transport
@@ -169,6 +216,9 @@ public final class Deck {
         currentPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
         trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
+        beatPositions = analysis.tempo.beatPositions
+        bridge.setTrackBPM(trackBPM, index: index)
+        updatePlaybackRate()
         buffer.withUnsafeChannels { channels, frames in
             channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: buffer.channelCount) { pointers in
                 pe_deck_set_buffer(
@@ -226,13 +276,42 @@ public final class Deck {
 
     // Tempo / pitch
     public enum TempoRange: Sendable { case p6, p10, p16, wide }
-    public var tempoRange: TempoRange = .p10
+    public var tempoRange: TempoRange = .p10 { didSet { updatePlaybackRate() } }
     /// Fader position in percent within `tempoRange` (e.g. −16.0 … +16.0).
-    public var tempoPercent: Double = 0
+    public var tempoPercent: Double = 0 { didSet { updatePlaybackRate() } }
     /// `true` keeps pitch constant while tempo changes (key-lock beatmatch).
-    public var keyLock: Bool = true
+    public var keyLock: Bool = true {
+        didSet {
+            post(PE_CMD_SET_KEYLOCK, f0: keyLock ? 1 : 0)
+            updatePlaybackRate()
+        }
+    }
     /// Independent key change (Key Shift), in semitones.
-    public var pitchSemitones: Double = 0
+    public var pitchSemitones: Double = 0 { didSet { updatePlaybackRate() } }
+
+    /// `true` when this deck is following the current master deck's tempo.
+    public private(set) var isSynced: Bool = false
+
+    /// `true` when this deck is the engine's current tempo master.
+    public var isMaster: Bool { bridge.masterDeckIndex == index }
+
+    private var tempoLimit: Double {
+        switch tempoRange {
+        case .p6: return 6
+        case .p10: return 10
+        case .p16: return 16
+        case .wide: return 100
+        }
+    }
+
+    private var playbackRatio: Double {
+        let percent = max(-tempoLimit, min(tempoLimit, tempoPercent))
+        return max(0.01, 1 + percent / 100)
+    }
+
+    private func updatePlaybackRate() {
+        bridge.setDeckPlayback(index: index, tempoRatio: playbackRatio, pitchSemitones: pitchSemitones)
+    }
 
     // Jog / scratch (engages varispeed transiently)
     public var vinylMode: Bool = true
@@ -277,8 +356,55 @@ public final class Deck {
     public func setActiveLoop(_ enabled: Bool) { unimplemented() }
 
     // Sync
-    public func sync() { unimplemented() }
-    public func setAsMaster() { unimplemented() }
+    public func sync() {
+        let masterIndex = bridge.masterDeckIndex ?? (index == 0 ? 1 : 0)
+        guard masterIndex != index else { return }
+        if bridge.masterDeckIndex == nil { bridge.setMaster(index: masterIndex) }
+        isSynced = true
+        refreshSyncFromMasterIfNeeded()
+    }
+
+    public func setAsMaster() {
+        isSynced = false
+        bridge.setMaster(index: index)
+        post(PE_CMD_SET_MASTER)
+        updatePlaybackRate()
+    }
+
+    fileprivate func refreshSyncFromMasterIfNeeded() {
+        guard isSynced, let masterIndex = bridge.masterDeckIndex, masterIndex != index else { return }
+        let master = bridge.deck(at: masterIndex)
+        let masterBPM = master?.effectiveBPM ?? bridge.bpm(for: masterIndex)
+        guard masterBPM.isFinite, masterBPM > 0, trackBPM > 0 else { return }
+
+        let ratio = masterBPM / trackBPM
+        tempoPercent = (ratio - 1) * 100
+        updatePlaybackRate()
+
+        let target = syncTargetPosition(master: master, masterBPM: masterBPM)
+        post(PE_CMD_SYNC, f0: Float(target))
+    }
+
+    private var effectiveBPM: Double { trackBPM * playbackRatio }
+
+    private func syncTargetPosition(master: Deck?, masterBPM: Double) -> TimeInterval {
+        guard let master else { return 0 }
+        let masterPeriod = 60 / masterBPM
+        let targetPeriod = 60 / trackBPM
+        let trackDuration = buffer.map { Double($0.frameCount) / $0.format.sampleRate } ?? .greatestFiniteMagnitude
+        guard masterPeriod.isFinite, targetPeriod.isFinite, masterPeriod > 0 else { return 0 }
+
+        if let masterBeat = master.beatPositions.first, !beatPositions.isEmpty {
+            let beatNumber = max(0, (master.currentPlayhead - masterBeat) / masterPeriod)
+            let target = beatPositions[0] + beatNumber * targetPeriod
+            return max(0, min(trackDuration, target))
+        }
+
+        // Tracks without a beat grid still start on beat zero. Preserve the
+        // current musical beat count while accounting for the source BPM.
+        let target = max(0, master.currentPlayhead * masterBPM / trackBPM)
+        return max(0, min(trackDuration, target))
+    }
     public var quantize: Bool = true
     public var slip: Bool = false
 

@@ -48,6 +48,8 @@ struct ControlState {
     std::atomic<float> masterLevel{0.8f};
     std::atomic<float> fader[2]{{1.0f}, {1.0f}};
     std::atomic<float> trim[2]{{0.5f}, {0.5f}};
+    std::atomic<float> deckTimeRatio[2]{{1.0f}, {1.0f}};
+    std::atomic<float> deckPitch[2]{{0.0f}, {0.0f}};
 };
 
 } // namespace
@@ -152,7 +154,6 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_SET_CUE:
         case PE_CMD_JUMP_CUE:
         case PE_CMD_BEATJUMP:
-        case PE_CMD_SYNC:
         case PE_CMD_SET_MASTER:
         case PE_CMD_SET_KEYLOCK:
         case PE_CMD_SET_SLIP:
@@ -168,6 +169,17 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_LOAD:
             // These commands are reserved for subsequent engine slices;
             // ignoring them is deterministic and non-blocking.
+            break;
+        case PE_CMD_SYNC:
+            // The control actor computes the source position that matches the
+            // master beat phase. Applying it here keeps seeking on the RT side
+            // and makes pe_step and pe_render use identical transport state.
+            if (std::isfinite(command.f0) && command.f0 >= 0.0f && deck.frames > 0) {
+                const double target = static_cast<double>(command.f0);
+                deck.position = target < static_cast<double>(deck.frames)
+                    ? target : static_cast<double>(deck.frames - 1);
+            }
+            pushPlayheadEvent(engine, command.deck);
             break;
         case PE_CMD_LOOP_IN:
             deck.loopIn = deck.position;
@@ -298,7 +310,9 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 sampleAt(deck, 0, sourcePosition) + sampleAt(deck, rightChannel, sourcePosition)
             );
             mixed += sample * channelGains[deckIndex];
-            deck.position += deck.sampleRate / engine->sampleRate;
+            const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
+            deck.position += deck.sampleRate / engine->sampleRate *
+                (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
             if (deck.loopActive && deck.loopEnd > deck.loopStart && deck.position >= deck.loopEnd) {
                 const double loopLength = deck.loopEnd - deck.loopStart;
                 while (deck.position >= deck.loopEnd) {
@@ -348,6 +362,12 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
     for (int index = 0; index < 2; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
+        const float ratio = control->deck_time_ratio[index];
+        engine->control.deckTimeRatio[index].store(
+            std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f,
+            std::memory_order_relaxed
+        );
+        engine->control.deckPitch[index].store(control->deck_pitch[index], std::memory_order_relaxed);
     }
 }
 
