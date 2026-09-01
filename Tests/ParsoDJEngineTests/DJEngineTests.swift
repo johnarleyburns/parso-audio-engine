@@ -390,3 +390,38 @@ struct ChannelRoutingTests {
         #expect((e.render(frames: 4096).left.map(abs).max() ?? 0) < 0.05)
     }
 }
+
+@Suite("Color and Beat FX render")
+@MainActor
+struct ColorAndBeatFXRenderTests {
+    @Test func colorFilterChangesTheSharedRenderSignal() {
+        let dry = makeLoadedHeadless()
+        dry.deckA.play()
+        let dryOutput = dry.render(frames: 4096).left
+
+        let filtered = makeLoadedHeadless()
+        filtered.mixer.channelA.colorFX = .filter
+        filtered.mixer.channelA.colorAmount = 1
+        filtered.deckA.play()
+        let filteredOutput = filtered.render(frames: 4096).left
+        let difference = zip(dryOutput, filteredOutput).map { abs($0 - $1) }.max() ?? 0
+        #expect(difference > 0.01)
+    }
+
+    @Test func beatEchoProcessesAssignedChannelAndLeavesAReleaseTail() {
+        let e = makeLoadedHeadless()
+        e.mixer.beatFX.kind = .echo
+        e.mixer.beatFX.assign = .chA
+        e.mixer.beatFX.depth = 0.75
+        e.mixer.beatFX.isOn = true
+        e.deckA.play()
+        let effected = e.render(frames: 16_384).left
+        #expect((effected.map(abs).max() ?? 0) > 0)
+
+        e.deckA.pause()
+        _ = e.render(frames: 1)
+        e.mixer.beatFX.releaseFX()
+        let tail = e.render(frames: 4096).left
+        #expect((tail.map(abs).max() ?? 0) > 0.001)
+    }
+}

@@ -30,6 +30,12 @@ typedef struct {
     float trim[2];
     float eq_low[2], eq_mid[2], eq_high[2]; /* dB, -INFINITY == kill */
     float color_amount[2];   /* -1..+1 */
+    float color_kind[2];     /* Color FX enum value */
+    float beatfx_kind;       /* Beat FX enum value */
+    float beatfx_beats;      /* beat division, expressed in quarter notes */
+    float beatfx_depth;      /* 0..1 wet amount */
+    float beatfx_assign;     /* 0=A, 1=B, 2=both, 3=master */
+    float beatfx_on;         /* 0/1 */
     float fader[2];          /* 0..1 */
     float deck_time_ratio[2];
     float deck_pitch[2];     /* semitones */

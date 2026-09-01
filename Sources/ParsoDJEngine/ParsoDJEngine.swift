@@ -139,6 +139,13 @@ fileprivate final class EngineBridge {
         control.eq_low = (0, 0)
         control.eq_mid = (0, 0)
         control.eq_high = (0, 0)
+        control.color_amount = (0, 0)
+        control.color_kind = (0, 0)
+        control.beatfx_kind = 0
+        control.beatfx_beats = 0.5
+        control.beatfx_depth = 0.5
+        control.beatfx_assign = 0
+        control.beatfx_on = 0
         control.trim = (0.5, 0.5)
         control.fader = (1, 1)
         control.deck_time_ratio = (1, 1)
@@ -707,7 +714,7 @@ public final class Mixer {
         channelA = Channel(bridge: bridge, index: 0)
         channelB = Channel(bridge: bridge, index: 1)
         master = MasterOut(bridge: bridge)
-        beatFX = BeatFXUnit()
+        beatFX = BeatFXUnit(bridge: bridge)
         smartFader = SmartFader()
         smartCFX = SmartCFX()
         smartFader.attach(to: self)
@@ -721,7 +728,7 @@ public final class Mixer {
     }
 }
 
-public enum ColorFX: Sendable { case filter, space, dubEcho, sweep, noise, crush, pitch }
+public enum ColorFX: Sendable, CaseIterable, Equatable { case filter, space, dubEcho, sweep, noise, crush, pitch }
 
 public enum XFAssign: Sendable { case a, b, thru }
 
@@ -733,8 +740,8 @@ public final class Channel {
     public var eqLow: Double = 0 { didSet { publishControl() } } // dB, -inf(kill)..+6
     public var eqMid: Double = 0 { didSet { publishControl() } }
     public var eqHigh: Double = 0 { didSet { publishControl() } }
-    public var colorFX: ColorFX = .filter
-    public var colorAmount: Double = 0                // -1..+1 (center = off)
+    public var colorFX: ColorFX = .filter { didSet { publishControl() } }
+    public var colorAmount: Double = 0 { didSet { publishControl() } } // -1..+1 (center = off)
     public var fader: Double = 1 { didSet { publishControl() } } // 0..1
     public var cuePFL: Bool = false { didSet { publishControl() } } // headphone pre-listen
     public var faderStart: Bool = false { didSet { publishControl() } }
@@ -762,6 +769,8 @@ public final class Channel {
         let low = Float(eqLow.isNaN ? 0 : eqLow)
         let mid = Float(eqMid.isNaN ? 0 : eqMid)
         let high = Float(eqHigh.isNaN ? 0 : eqHigh)
+        let colorAmount = Float(self.colorAmount.isFinite ? max(-1, min(1, self.colorAmount)) : 0)
+        let colorKind = Float(ColorFX.allCases.firstIndex(of: colorFX) ?? 0)
         if index == 0 {
             bridge.control.trim.0 = gain
             bridge.control.fader.0 = channelFader
@@ -771,6 +780,8 @@ public final class Channel {
             bridge.control.eq_low.0 = low
             bridge.control.eq_mid.0 = mid
             bridge.control.eq_high.0 = high
+            bridge.control.color_amount.0 = colorAmount
+            bridge.control.color_kind.0 = colorKind
         } else {
             bridge.control.trim.1 = gain
             bridge.control.fader.1 = channelFader
@@ -780,6 +791,8 @@ public final class Channel {
             bridge.control.eq_low.1 = low
             bridge.control.eq_mid.1 = mid
             bridge.control.eq_high.1 = high
+            bridge.control.color_amount.1 = colorAmount
+            bridge.control.color_kind.1 = colorKind
         }
         bridge.publishControl()
     }
@@ -792,13 +805,36 @@ public final class BeatFXUnit {
              trans, roll, spiral, pitch, lowCutEcho, vinylBrake, helix
     }
     public enum Assign: Sendable { case chA, chB, both, master }
-    public var kind: Kind = .echo
-    public var beats: Double = 0.5                    // time division
-    public var depth: Double = 0.5                    // wet/level
-    public var assign: Assign = .chA
-    public var isOn: Bool = false
-    public func releaseFX() { isOn = false }       // tail on release
-    internal init() {}
+    private let bridge: EngineBridge
+    public var kind: Kind = .echo { didSet { publishControl() } }
+    public var beats: Double = 0.5 { didSet { publishControl() } } // time division
+    public var depth: Double = 0.5 { didSet { publishControl() } } // wet/level
+    public var assign: Assign = .chA { didSet { publishControl() } }
+    public var isOn: Bool = false { didSet { publishControl() } }
+
+    fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
+
+    public func releaseFX() {
+        isOn = false
+        var command = pe_command(
+            type: PE_CMD_BEATFX_RELEASE, deck: -1, i0: 0, i1: 0, i2: 0, f0: 0, f1: 0
+        )
+        _ = pe_post_command(bridge.handle, &command)
+    }
+
+    private func publishControl() {
+        bridge.control.beatfx_kind = Float(Kind.allCases.firstIndex(of: kind) ?? 0)
+        bridge.control.beatfx_beats = Float(beats.isFinite && beats > 0 ? beats : 0.5)
+        bridge.control.beatfx_depth = Float(depth.isFinite ? max(0, min(1, depth)) : 0.5)
+        bridge.control.beatfx_assign = switch assign {
+        case .chA: 0
+        case .chB: 1
+        case .both: 2
+        case .master: 3
+        }
+        bridge.control.beatfx_on = isOn ? 1 : 0
+        bridge.publishControl()
+    }
 }
 
 @MainActor

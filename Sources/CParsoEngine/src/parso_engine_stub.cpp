@@ -38,6 +38,11 @@ struct DeckState {
     float eqHighGain = 1.0f;
     float lowState = 0.0f;
     float highState = 0.0f;
+    float colorLowState = 0.0f;
+    float colorHighState = 0.0f;
+    float colorDelay[24000] = {};
+    uint32_t colorDelayIndex = 0;
+    uint32_t colorNoiseState = 0x13579BDFu;
 };
 
 struct SamplerSlot {
@@ -82,6 +87,13 @@ struct ControlState {
     std::atomic<float> eqLow[2]{{0.0f}, {0.0f}};
     std::atomic<float> eqMid[2]{{0.0f}, {0.0f}};
     std::atomic<float> eqHigh[2]{{0.0f}, {0.0f}};
+    std::atomic<float> colorAmount[2]{{0.0f}, {0.0f}};
+    std::atomic<float> colorKind[2]{{0.0f}, {0.0f}};
+    std::atomic<float> beatFXKind{0.0f};
+    std::atomic<float> beatFXBeats{0.5f};
+    std::atomic<float> beatFXDepth{0.5f};
+    std::atomic<float> beatFXAssign{0.0f};
+    std::atomic<float> beatFXOn{0.0f};
     std::atomic<float> fader[2]{{1.0f}, {1.0f}};
     std::atomic<float> trim[2]{{0.5f}, {0.5f}};
     std::atomic<float> deckTimeRatio[2]{{1.0f}, {1.0f}};
@@ -101,6 +113,13 @@ struct pe_engine {
     EventQueue events;
     float previousCrossfader = 0.0f;
     bool crossfaderInitialized = false;
+    int beatFXKind = 0;
+    int beatFXAssign = 0;
+    bool beatFXOn = false;
+    bool beatFXTail = false;
+    int beatFXTailFrames = 0;
+    float beatFXDelay[48000] = {};
+    uint32_t beatFXDelayIndex = 0;
 };
 
 namespace {
@@ -159,6 +178,57 @@ static float processEQ(DeckState& deck, float sample, double sampleRate, int dec
     const float high = sample - deck.highState;
     const float mid = deck.highState - deck.lowState;
     return low * deck.eqLowGain + mid * deck.eqMidGain + high * deck.eqHighGain;
+}
+
+static float processColorFX(DeckState& deck, float input, double sampleRate, int deckIndex,
+                            const ControlState& control) {
+    const float rawAmount = control.colorAmount[deckIndex].load(std::memory_order_relaxed);
+    const float amount = std::isfinite(rawAmount) ? std::max(-1.0f, std::min(1.0f, rawAmount)) : 0.0f;
+    const float wet = std::fabs(amount);
+    const float lowAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 250.0f /
+                                             static_cast<float>(sampleRate));
+    const float highAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 1800.0f /
+                                              static_cast<float>(sampleRate));
+    deck.colorLowState += lowAlpha * (input - deck.colorLowState);
+    deck.colorHighState += highAlpha * (input - deck.colorHighState);
+    const uint32_t index = deck.colorDelayIndex;
+    const int delaySamples = std::max(1, std::min(23999, static_cast<int>(sampleRate * 0.25)));
+    const uint32_t delayedIndex = (index + 24000u - static_cast<uint32_t>(delaySamples)) % 24000u;
+    const float delayed = deck.colorDelay[delayedIndex];
+    deck.colorDelay[index] = input;
+    deck.colorDelayIndex = (index + 1) % 24000u;
+
+    if (wet < 0.0001f) return input;
+    const int kind = std::max(0, std::min(6, static_cast<int>(std::lround(
+        control.colorKind[deckIndex].load(std::memory_order_relaxed)))));
+    switch (kind) {
+        case 0: // Filter: negative is low-pass, positive is high-pass.
+            return amount < 0.0f ? input * (1.0f - wet) + deck.colorLowState * wet
+                                 : input * (1.0f - wet) + (input - deck.colorHighState) * wet;
+        case 1: // Space: a short, smooth diffusion.
+            return input * (1.0f - wet) + deck.colorLowState * wet;
+        case 2: // Dub Echo.
+            deck.colorDelay[index] = input + delayed * (0.35f + 0.4f * wet);
+            return input * (1.0f - wet) + delayed * wet;
+        case 3: // Sweep: emphasize the moving mid band.
+            return input * (1.0f - wet) + (deck.colorHighState - deck.colorLowState) * wet * 1.6f;
+        case 4: { // Noise: deterministic, bounded texture for RT-safe operation.
+            deck.colorNoiseState = deck.colorNoiseState * 1664525u + 1013904223u;
+            const float noise = static_cast<float>((deck.colorNoiseState >> 8) & 0x00FFFFFFu) /
+                8388607.5f - 1.0f;
+            return input + noise * wet * 0.18f;
+        }
+        case 5: { // Crush.
+            const int bits = std::max(4, 12 - static_cast<int>(wet * 8.0f));
+            const float steps = static_cast<float>(1 << bits);
+            const float crushed = std::round(input * steps) / steps;
+            return input * (1.0f - wet) + crushed * wet;
+        }
+        case 6: // Pitch: short comb-like modulation, keeping the path bounded.
+            return input * (1.0f - wet) + delayed * wet;
+        default:
+            return input;
+    }
 }
 
 static float sampleAt(const SamplerSlot& slot, int channel, int64_t position) {
@@ -244,6 +314,15 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             }
         } else if (command.type == PE_CMD_SAMPLER_STOP && command.i0 >= 0 && command.i0 < 16) {
             engine->sampler[command.i0].playing = false;
+        } else if (command.type == PE_CMD_BEATFX_KIND && std::isfinite(command.f0)) {
+            engine->beatFXKind = std::max(0, std::min(13, static_cast<int>(std::lround(command.f0))));
+        } else if (command.type == PE_CMD_BEATFX_ONOFF) {
+            engine->beatFXOn = command.f0 > 0.5f;
+            if (engine->beatFXOn) engine->beatFXTail = false;
+        } else if (command.type == PE_CMD_BEATFX_RELEASE) {
+            engine->beatFXOn = false;
+            engine->beatFXTail = true;
+            engine->beatFXTailFrames = static_cast<int>(engine->sampleRate * 2.0);
         }
         return;
     }
@@ -273,14 +352,25 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_SET_MASTER:
         case PE_CMD_SET_KEYLOCK:
         case PE_CMD_COLORFX_KIND:
-        case PE_CMD_BEATFX_KIND:
-        case PE_CMD_BEATFX_ONOFF:
-        case PE_CMD_BEATFX_RELEASE:
         case PE_CMD_SAMPLER_TRIGGER:
         case PE_CMD_SAMPLER_STOP:
         case PE_CMD_LOAD:
             // These commands are reserved for subsequent engine slices;
             // ignoring them is deterministic and non-blocking.
+            break;
+        case PE_CMD_BEATFX_KIND:
+            if (std::isfinite(command.f0)) {
+                engine->beatFXKind = std::max(0, std::min(13, static_cast<int>(std::lround(command.f0))));
+            }
+            break;
+        case PE_CMD_BEATFX_ONOFF:
+            engine->beatFXOn = command.f0 > 0.5f;
+            if (engine->beatFXOn) engine->beatFXTail = false;
+            break;
+        case PE_CMD_BEATFX_RELEASE:
+            engine->beatFXOn = false;
+            engine->beatFXTail = true;
+            engine->beatFXTailFrames = static_cast<int>(engine->sampleRate * 2.0);
             break;
         case PE_CMD_JOG_TOUCH:
             // i0 is vinyl mode. A vinyl touch pauses transport while preserving
@@ -447,6 +537,58 @@ static void crossfadeGains(float crossfader, float curve, float& gainA, float& g
     }
 }
 
+static float processBeatFX(pe_engine* engine, float input) {
+    const bool active = engine->beatFXOn || engine->beatFXTail;
+    if (!active) return input;
+
+    const float rawBeats = engine->control.beatFXBeats.load(std::memory_order_relaxed);
+    const float beats = std::isfinite(rawBeats) ? std::max(0.0625f, std::min(8.0f, rawBeats)) : 0.5f;
+    const int kind = engine->beatFXKind;
+    int delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * beats * 0.5f)));
+    if (kind == 2) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.08)));
+    if (kind == 5 || kind == 6) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.005)));
+
+    const uint32_t index = engine->beatFXDelayIndex;
+    const uint32_t delayedIndex = (index + 48000u - static_cast<uint32_t>(delaySamples)) % 48000u;
+    const float delayed = engine->beatFXDelay[delayedIndex];
+    const float rawDepth = engine->control.beatFXDepth.load(std::memory_order_relaxed);
+    const float depth = std::isfinite(rawDepth) ? std::max(0.0f, std::min(1.0f, rawDepth)) : 0.5f;
+    float wet = delayed;
+    float feedback = 0.55f;
+    switch (kind) {
+        case 2: // Reverb.
+            feedback = 0.72f;
+            wet = delayed + input * 0.35f;
+            break;
+        case 5: // Flanger.
+            wet = delayed;
+            feedback = 0.4f;
+            break;
+        case 6: // Phaser approximation with a short all-pass-like blend.
+            wet = input - delayed;
+            feedback = 0.35f;
+            break;
+        case 7: // Trans.
+            wet = delayed;
+            feedback = 0.25f;
+            break;
+        case 8: // Roll.
+            wet = delayed;
+            feedback = 0.75f;
+            break;
+        default:
+            break;
+    }
+    engine->beatFXDelay[index] = input + wet * feedback;
+    engine->beatFXDelayIndex = (index + 1) % 48000u;
+    const float output = input * (1.0f - depth) + wet * depth;
+    if (engine->beatFXTail) {
+        if (engine->beatFXTailFrames > 0) --engine->beatFXTailFrames;
+        if (engine->beatFXTailFrames == 0) engine->beatFXTail = false;
+    }
+    return output;
+}
+
 static void render(pe_engine* engine, float* left, float* right, int frames) {
     if (!engine || frames <= 0) {
         clearOutput(left, right, frames);
@@ -455,6 +597,21 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
 
     clearOutput(left, right, frames);
     drainCommands(engine);
+
+    const float rawBeatKind = engine->control.beatFXKind.load(std::memory_order_relaxed);
+    if (std::isfinite(rawBeatKind)) {
+        engine->beatFXKind = std::max(0, std::min(13, static_cast<int>(std::lround(rawBeatKind))));
+    }
+    const float rawBeatAssign = engine->control.beatFXAssign.load(std::memory_order_relaxed);
+    if (std::isfinite(rawBeatAssign)) {
+        engine->beatFXAssign = std::max(0, std::min(3, static_cast<int>(std::lround(rawBeatAssign))));
+    }
+    if (engine->control.beatFXOn.load(std::memory_order_relaxed) > 0.5f) {
+        engine->beatFXOn = true;
+        engine->beatFXTail = false;
+    } else if (!engine->beatFXTail) {
+        engine->beatFXOn = false;
+    }
 
     const float crossfader = engine->control.crossfader.load(std::memory_order_relaxed);
     float gainA = 0.0f;
@@ -497,7 +654,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
     float deckPeaks[2] = {0.0f, 0.0f};
     float masterPeak = 0.0f;
     for (int frame = 0; frame < frames; ++frame) {
-        float mixed = 0.0f;
+        float channelSignals[2] = {0.0f, 0.0f};
         for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
             DeckState& deck = engine->decks[deckIndex];
             if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) continue;
@@ -507,7 +664,8 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 sampleAt(deck, 0, sourcePosition) + sampleAt(deck, rightChannel, sourcePosition)
             );
             sample = processEQ(deck, sample, deck.sampleRate, deckIndex, engine->control);
-            mixed += sample * channelGains[deckIndex];
+            sample = processColorFX(deck, sample, deck.sampleRate, deckIndex, engine->control);
+            channelSignals[deckIndex] += sample * channelGains[deckIndex];
             const float channelSample = sample * channelGains[deckIndex];
             const float channelPeak = std::fabs(channelSample);
             if (channelPeak > deckPeaks[deckIndex]) deckPeaks[deckIndex] = channelPeak;
@@ -535,6 +693,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 pushStateEvent(engine, deckIndex);
             }
         }
+        float mixed = channelSignals[0] + channelSignals[1];
         if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
             engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
             const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
@@ -557,6 +716,20 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             ) * 0.8f;
             ++slot.position;
             if (slot.position >= slot.frames) slot.playing = false;
+        }
+        if (engine->beatFXOn || engine->beatFXTail) {
+            const float extraSignal = mixed - channelSignals[0] - channelSignals[1];
+            if (engine->beatFXAssign == 0) {
+                channelSignals[0] = processBeatFX(engine, channelSignals[0]);
+                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
+            } else if (engine->beatFXAssign == 1) {
+                channelSignals[1] = processBeatFX(engine, channelSignals[1]);
+                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
+            } else if (engine->beatFXAssign == 2) {
+                mixed = processBeatFX(engine, channelSignals[0] + channelSignals[1]) + extraSignal;
+            } else {
+                mixed = processBeatFX(engine, mixed);
+            }
         }
         const float output = mixed * master;
         const float outputPeak = std::fabs(output);
@@ -681,6 +854,20 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
             std::max(0.0f, std::min(1.0f, control->headphone_level)) : 0.7f,
         std::memory_order_relaxed
     );
+    engine->control.beatFXKind.store(control->beatfx_kind, std::memory_order_relaxed);
+    engine->control.beatFXBeats.store(
+        std::isfinite(control->beatfx_beats) && control->beatfx_beats > 0.0f ? control->beatfx_beats : 0.5f,
+        std::memory_order_relaxed
+    );
+    engine->control.beatFXDepth.store(
+        std::isfinite(control->beatfx_depth) ? std::max(0.0f, std::min(1.0f, control->beatfx_depth)) : 0.5f,
+        std::memory_order_relaxed
+    );
+    engine->control.beatFXAssign.store(
+        std::isfinite(control->beatfx_assign) ? std::max(0.0f, std::min(3.0f, control->beatfx_assign)) : 0.0f,
+        std::memory_order_relaxed
+    );
+    engine->control.beatFXOn.store(control->beatfx_on > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
     for (int index = 0; index < 2; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
@@ -697,6 +884,16 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
         engine->control.eqLow[index].store(std::isnan(low) ? 0.0f : low, std::memory_order_relaxed);
         engine->control.eqMid[index].store(std::isnan(mid) ? 0.0f : mid, std::memory_order_relaxed);
         engine->control.eqHigh[index].store(std::isnan(high) ? 0.0f : high, std::memory_order_relaxed);
+        const float colorAmount = control->color_amount[index];
+        const float colorKind = control->color_kind[index];
+        engine->control.colorAmount[index].store(
+            std::isfinite(colorAmount) ? std::max(-1.0f, std::min(1.0f, colorAmount)) : 0.0f,
+            std::memory_order_relaxed
+        );
+        engine->control.colorKind[index].store(
+            std::isfinite(colorKind) ? std::max(0.0f, std::min(6.0f, colorKind)) : 0.0f,
+            std::memory_order_relaxed
+        );
         const float ratio = control->deck_time_ratio[index];
         engine->control.deckTimeRatio[index].store(
             std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f,
@@ -756,6 +953,11 @@ void pe_deck_set_buffer(
     state.eqHighGain = 1.0f;
     state.lowState = 0.0f;
     state.highState = 0.0f;
+    state.colorLowState = 0.0f;
+    state.colorHighState = 0.0f;
+    state.colorDelayIndex = 0;
+    state.colorNoiseState = 0x13579BDFu;
+    for (float& sample : state.colorDelay) sample = 0.0f;
     for (int slot = 0; slot < 8; ++slot) {
         state.hotCueFrames[slot] = 0;
         state.hotCueSet[slot] = false;
