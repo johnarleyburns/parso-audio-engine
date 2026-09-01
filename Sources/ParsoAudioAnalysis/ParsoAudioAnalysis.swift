@@ -629,7 +629,52 @@ public struct StructureAnalyzer: Sendable {
 
 public struct WaveformGenerator: Sendable {
     public init() {}
-    public func generate(_ buffer: PCMBuffer, overviewBuckets: Int = 2048) -> Waveform { unimplemented() }
+    public func generate(_ buffer: PCMBuffer, overviewBuckets: Int = 2048) -> Waveform {
+        let bucketCount = max(0, overviewBuckets)
+        guard bucketCount > 0 else { return Waveform(overviewMinMax: [], detailRMS: [], bandEnergy: []) }
+        let mono = buffer.downmixedToMono().channel(0)
+        var overview = [SIMD2<Float>](repeating: SIMD2(0, 0), count: bucketCount)
+        var rms = [Float](repeating: 0, count: bucketCount)
+        var bands = [SIMD3<Float>](repeating: SIMD3(0, 0, 0), count: bucketCount)
+        guard buffer.frameCount > 0 else {
+            return Waveform(overviewMinMax: overview, detailRMS: rms, bandEnergy: bands)
+        }
+
+        var lowState = 0.0
+        var midState = 0.0
+        for bucket in 0..<bucketCount {
+            let start = min(buffer.frameCount, bucket * buffer.frameCount / bucketCount)
+            let end = min(buffer.frameCount, max(start + 1, (bucket + 1) * buffer.frameCount / bucketCount))
+            var minimum = Float.infinity
+            var maximum = -Float.infinity
+            var squareSum = 0.0
+            var lowEnergy = 0.0
+            var midEnergy = 0.0
+            var highEnergy = 0.0
+            for frame in start..<end {
+                let value = Double(mono[frame])
+                let sample = Float(value)
+                minimum = min(minimum, sample)
+                maximum = max(maximum, sample)
+                squareSum += value * value
+
+                lowState += 0.02 * (value - lowState)
+                midState += 0.2 * (value - midState)
+                let mid = midState - lowState
+                let high = value - midState
+                lowEnergy += lowState * lowState
+                midEnergy += mid * mid
+                highEnergy += high * high
+            }
+            let count = Double(end - start)
+            overview[bucket] = SIMD2(minimum, maximum)
+            rms[bucket] = Float((squareSum / count).squareRoot())
+            bands[bucket] = SIMD3(
+                Float(lowEnergy / count), Float(midEnergy / count), Float(highEnergy / count)
+            )
+        }
+        return Waveform(overviewMinMax: overview, detailRMS: rms, bandEnergy: bands)
+    }
 }
 
 /// Runs the full pipeline (tempo → key → structure → waveform → loudness).

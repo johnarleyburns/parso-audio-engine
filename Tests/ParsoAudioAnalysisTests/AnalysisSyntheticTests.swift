@@ -83,7 +83,7 @@ struct StructureSyntheticTests {
     }
 }
 
-@Suite("Waveform (synthetic)", .disabled("Implement WaveformGenerator — docs/SPEC.md §10.5"))
+@Suite("Waveform (synthetic)")
 struct WaveformSyntheticTests {
     @Test func bucketInvariants() {
         let w = WaveformGenerator().generate(SignalGenerators.sine(frequency: 440, seconds: 2), overviewBuckets: 512)
