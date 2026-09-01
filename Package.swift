@@ -14,6 +14,7 @@ import PackageDescription
 //   Copus    -> libogg + libopus + libopusfile (BSD-3)  https://github.com/xiph  (Opus decode)
 //   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
 //                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
+//   CGlint (planned) -> Glint portable MP3/AAC-LC compatibility and MP3 encode
 
 let package = Package(
     name: "parso-audio-engine",

@@ -17,7 +17,10 @@ with rekordbox), with **no copyleft dependencies**.
 2. **MIT** first-party; only **MIT / BSD / Apache-2.0 / public-domain** third-party + Apple frameworks. **No GPL/LGPL/AGPL.**
 3. **Swift 6 language mode** package-wide (`swiftLanguageModes: [.v6]`, tools 6.0).
 4. **Decode scope:** FLAC (libFLAC/`Cflac`), **Ogg Vorbis** (stb_vorbis/`Cvorbis`), **Opus** (libopus+libopusfile/`Copus`), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF.
-5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC + ALAC (AudioToolbox). **No MP3 encode** (no permissive encoder) — lossy export is AAC.
+5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC + ALAC (AudioToolbox on Apple), and a planned
+   portable MP3 encoder behind the Linux Swift compatibility workstream. No MP3 encoder is vendored
+   yet; the Apple-native baseline remains AAC/ALAC until the portable encoder passes license,
+   security, compatibility, and CoreAudio cross-checks.
 6. **Real-time DSP core is C/C++**; Swift is the API/orchestration skin. Apple-native (Accelerate/AVFoundation/AudioToolbox) where it is the best free option.
 7. **Targets:** iOS 15+, iPadOS 15+, macCatalyst 15+, macOS 13+.
 8. **Goal:** replicate the *audio + DJ* functionality of a DDJ-FLX4 in software. Physical-only aspects (jog motor, jacks, soundcard, USB, Bluetooth-in) are **N/A** (§15).
@@ -61,6 +64,9 @@ concept. Only `ParsoDJEngine`/`CParsoEngine` know about decks/crossfader/cues.
 | `Csrc` | libsamplerate ≥ 0.2.2 | BSD-2 | Offline sample-rate conversion (**never < 0.1.9 — GPL**) |
 | `CParsoDSP` | Signalsmith Stretch | MIT | Time-stretch + pitch-shift (key-lock) |
 | — | Apple AVFoundation / AudioToolbox / Accelerate | Apple SDK | Engine graph, MP3/AAC/ALAC/WAV/AIFF decode, AAC/ALAC encode, FFT/vector |
+| `CGlint` (candidate) | Glint | MIT | Portable MP3/AAC-LC decode and MP3 encode; pending audit, not yet vendored |
+| `Cminimp4` (candidate) | minimp4 | CC0 | Portable ISO BMFF/M4A container parsing; codec-independent |
+| `Calac` (candidate) | AppleALAC | Apache-2.0 | Portable ALAC codec; M4A/CAF integration pending |
 | — | Freeverb constants (§13.4) | Public Domain | Reverb tuning |
 
 **Rejected (do not use):** Rubber Band, SoundTouch, sbsms, soxr, aubio, libKeyFinder, Essentia,
@@ -163,7 +169,7 @@ Physical-only **[HW]** items are **N/A**. Each row has a test suite in `Tests/` 
 | Mic summed to master/record | `MicInput` | (mic sum) |
 | Sync / master / quantize / slip | `Deck.sync/setAsMaster/quantize/slip` | `Sync`, `Slip mode` |
 | Analysis (BPM/key/waveform/structure/loudness) | `ParsoAudioAnalysis`, `LoudnessAnalyzer` | `Tempo`, `Key`, `RealFixture *` |
-| Recording (WAV/FLAC/AAC/ALAC — no MP3) | `MixRecorder` | `Codec roundtrip` |
+| Recording (WAV/FLAC/AAC/ALAC + planned MP3) | `MixRecorder` | `Codec roundtrip` + Linux compatibility gates |
 | Decode FLAC/OggVorbis/Opus/MP3/AAC/ALAC/WAV/AIFF | `AudioFileReader` | `RealFixture decode` |
 | Library / streaming | **Out of scope** (app concern) | — |
 
@@ -184,3 +190,18 @@ Streaming-service integration, library/browser UI, DVS timecode, external-MIDI/c
 **Definition of done:** all three products build for iOS + macOS; `swift test` green (all suites
 enabled); every §15 gate has a passing test; NOTICE/SPDX clean; public C headers C-clean;
 `pe_render` asserts zero allocations.
+
+### 19.1 Linux Swift compatibility workstream
+
+This workstream runs before the final acceptance sign-off and is intentionally additive to the
+Apple-native gates:
+
+1. Audit and pin Glint; verify its MIT license, source provenance, generated assets, and decoder/
+   encoder behavior against CoreAudio.
+2. Add a C-clean `CGlint` bridge and use it for portable MP3 decode and opt-in MP3 encode on Linux
+   and Apple platforms. Keep AudioToolbox as the Apple AAC/ALAC implementation.
+3. Add `Cminimp4` only for the supported ISO BMFF/M4A profiles, with malformed-file, duration,
+   seek, priming, and metadata tests.
+4. Evaluate Apache-2.0 AppleALAC for Linux ALAC and cross-check lossless output with AudioToolbox.
+5. Make Linux the independent correctness host for Swift, analysis, DSP, headless render, and all
+   portable codecs. Keep macOS/iOS CI as the native Apple framework and hardware-family gate.

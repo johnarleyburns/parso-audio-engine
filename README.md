@@ -406,7 +406,8 @@ try w.write(pcm); try w.finish()
 ```
 
 Supported decode: FLAC, Ogg Vorbis, Opus, MP3, AAC, ALAC, WAV, AIFF, CAF.
-Supported encode: WAV/PCM, FLAC, AAC, ALAC. (No MP3 — no permissive encoder; use AAC.)
+Supported encode: WAV/PCM, FLAC, AAC, ALAC. Portable MP3 encode is planned through the Linux Swift
+compatibility workstream using an audited permissive codec; Apple AAC/ALAC remains the native path.
 
 ## Loudness / auto-gain
 
@@ -434,7 +435,8 @@ regressions once you record verified values. See `Tests/` and `docs/SPEC.md §5,
 
 ## Roadmap
 
-Phased implementation plan in `docs/SPEC.md §19`. If you're handing this to a coding agent, start it
+Phased implementation plan in `docs/SPEC.md §19`, including the Linux Swift compatibility
+workstream in §19.1. If you're handing this to a coding agent, start it
 at **`AGENTS.md`** — it defines the implement → enable-tests → commit → update-`current_status.md` loop
 and the exact phase order. The public API is **0.x / unstable** until validated by a first real
 integration, then tagged 1.0.0.
