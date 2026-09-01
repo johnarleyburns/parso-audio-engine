@@ -11,6 +11,7 @@
 namespace {
 
 constexpr uint32_t kCommandCapacity = 256;
+constexpr uint32_t kEventCapacity = 1024;
 
 struct DeckState {
     const float* channels[2] = {nullptr, nullptr};
@@ -19,10 +20,18 @@ struct DeckState {
     double sampleRate = 0.0;
     double position = 0.0;
     bool playing = false;
+    int64_t hotCueFrames[8] = {};
+    bool hotCueSet[8] = {};
 };
 
 struct CommandQueue {
     pe_command commands[kCommandCapacity]{};
+    std::atomic<uint32_t> writeIndex{0};
+    std::atomic<uint32_t> readIndex{0};
+};
+
+struct EventQueue {
+    pe_event events[kEventCapacity]{};
     std::atomic<uint32_t> writeIndex{0};
     std::atomic<uint32_t> readIndex{0};
 };
@@ -43,6 +52,7 @@ struct pe_engine {
     DeckState decks[2];
     ControlState control;
     CommandQueue queue;
+    EventQueue events;
 };
 
 namespace {
@@ -75,21 +85,50 @@ static float sampleAt(const DeckState& deck, int channel, double position) {
     return a + (b - a) * fraction;
 }
 
+static void pushEvent(pe_engine* engine, pe_event event) {
+    const uint32_t write = engine->events.writeIndex.load(std::memory_order_relaxed);
+    const uint32_t read = engine->events.readIndex.load(std::memory_order_acquire);
+    if (write - read >= kEventCapacity) return;
+    engine->events.events[write % kEventCapacity] = event;
+    engine->events.writeIndex.store(write + 1, std::memory_order_release);
+}
+
+static void pushStateEvent(pe_engine* engine, int deckIndex) {
+    const DeckState& deck = engine->decks[deckIndex];
+    pushEvent(engine, pe_event{
+        PE_EVT_STATE,
+        deckIndex,
+        static_cast<int64_t>(deck.position),
+        deck.playing ? 1.0f : 0.0f,
+        0.0f
+    });
+}
+
+static void pushPlayheadEvent(pe_engine* engine, int deckIndex) {
+    const DeckState& deck = engine->decks[deckIndex];
+    pushEvent(engine, pe_event{
+        PE_EVT_PLAYHEAD,
+        deckIndex,
+        static_cast<int64_t>(deck.position),
+        deck.playing ? 1.0f : 0.0f,
+        0.0f
+    });
+}
+
 static void applyCommand(pe_engine* engine, const pe_command& command) {
     if (!validDeck(command.deck)) return;
     DeckState& deck = engine->decks[command.deck];
     switch (command.type) {
         case PE_CMD_PLAY:
             deck.playing = true;
+            pushStateEvent(engine, command.deck);
             break;
         case PE_CMD_PAUSE:
             deck.playing = false;
+            pushStateEvent(engine, command.deck);
             break;
         case PE_CMD_SET_CUE:
         case PE_CMD_JUMP_CUE:
-        case PE_CMD_HOTCUE_SET:
-        case PE_CMD_HOTCUE_JUMP:
-        case PE_CMD_HOTCUE_DELETE:
         case PE_CMD_LOOP_IN:
         case PE_CMD_LOOP_OUT:
         case PE_CMD_RELOOP_EXIT:
@@ -112,6 +151,24 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_LOAD:
             // These commands are reserved for subsequent engine slices;
             // ignoring them is deterministic and non-blocking.
+            break;
+        case PE_CMD_HOTCUE_SET:
+            if (command.i0 >= 0 && command.i0 < 8) {
+                const int slot = command.i0;
+                deck.hotCueFrames[slot] = static_cast<int64_t>(deck.position);
+                deck.hotCueSet[slot] = true;
+            }
+            break;
+        case PE_CMD_HOTCUE_JUMP:
+            if (command.i0 >= 0 && command.i0 < 8 && deck.hotCueSet[command.i0]) {
+                deck.position = static_cast<double>(deck.hotCueFrames[command.i0]);
+                pushPlayheadEvent(engine, command.deck);
+            }
+            break;
+        case PE_CMD_HOTCUE_DELETE:
+            if (command.i0 >= 0 && command.i0 < 8) {
+                deck.hotCueSet[command.i0] = false;
+            }
             break;
     }
 }
@@ -182,11 +239,23 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             if (deck.position >= static_cast<double>(deck.frames)) {
                 deck.position = static_cast<double>(deck.frames);
                 deck.playing = false;
+                pushEvent(engine, pe_event{
+                    PE_EVT_END_OF_TRACK,
+                    deckIndex,
+                    deck.frames,
+                    0.0f,
+                    0.0f
+                });
+                pushStateEvent(engine, deckIndex);
             }
         }
         const float output = mixed * master;
         if (left) left[frame] = output;
         if (right) right[frame] = output;
+    }
+
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        pushPlayheadEvent(engine, deckIndex);
     }
 }
 
@@ -224,8 +293,18 @@ int pe_post_command(pe_engine* engine, const pe_command* command) {
     return 1;
 }
 
-int pe_poll_events(pe_engine*, pe_event*, int) {
-    return 0;
+int pe_poll_events(pe_engine* engine, pe_event* out, int max) {
+    if (!engine || !out || max <= 0) return 0;
+    uint32_t read = engine->events.readIndex.load(std::memory_order_relaxed);
+    const uint32_t write = engine->events.writeIndex.load(std::memory_order_acquire);
+    int count = 0;
+    while (read != write && count < max) {
+        out[count] = engine->events.events[read % kEventCapacity];
+        ++read;
+        ++count;
+    }
+    engine->events.readIndex.store(read, std::memory_order_release);
+    return count;
 }
 
 void pe_deck_set_buffer(
@@ -245,6 +324,10 @@ void pe_deck_set_buffer(
     state.sampleRate = sample_rate;
     state.position = 0.0;
     state.playing = false;
+    for (int slot = 0; slot < 8; ++slot) {
+        state.hotCueFrames[slot] = 0;
+        state.hotCueSet[slot] = false;
+    }
 }
 
 void pe_sampler_set_slot(pe_engine*, int, const float* const*, int, int64_t) {}

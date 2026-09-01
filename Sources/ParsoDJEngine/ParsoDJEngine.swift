@@ -96,6 +96,7 @@ public final class HeadlessDJEngine {
                 pe_step(bridge.handle, leftPointer.baseAddress, rightPointer.baseAddress, Int32(count))
             }
         }
+        drainEvents()
         return (left, right)
     }
     /// Advance the monitor/headphone bus.
@@ -108,7 +109,30 @@ public final class HeadlessDJEngine {
                 pe_render_monitor(bridge.handle, leftPointer.baseAddress, rightPointer.baseAddress, Int32(count))
             }
         }
+        drainEvents()
         return (left, right)
+    }
+
+    private func drainEvents() {
+        var events = [pe_event](repeating: pe_event(type: PE_EVT_PLAYHEAD, deck: -1, frame: 0, f0: 0, f1: 0), count: 64)
+        while true {
+            let count = events.withUnsafeMutableBufferPointer { pointer in
+                pe_poll_events(bridge.handle, pointer.baseAddress, Int32(pointer.count))
+            }
+            if count == 0 { return }
+            for event in events.prefix(Int(count)) {
+                switch event.type {
+                case PE_EVT_PLAYHEAD, PE_EVT_STATE:
+                    if event.deck == 0 { deckA.apply(event) }
+                    if event.deck == 1 { deckB.apply(event) }
+                case PE_EVT_END_OF_TRACK:
+                    if event.deck == 0 { deckA.applyEndOfTrack(event) }
+                    if event.deck == 1 { deckB.applyEndOfTrack(event) }
+                default:
+                    break
+                }
+            }
+        }
     }
 }
 
@@ -131,6 +155,7 @@ public final class Deck {
     private let index: Int
     private var buffer: PCMBuffer?
     private var currentPlayhead: TimeInterval = 0
+    private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
 
     fileprivate init(bridge: EngineBridge, index: Int) {
         self.bridge = bridge
@@ -141,6 +166,7 @@ public final class Deck {
     public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) {
         self.buffer = buffer
         currentPlayhead = 0
+        hotCueTimes = Array(repeating: nil, count: 8)
         buffer.withUnsafeChannels { channels, frames in
             channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: buffer.channelCount) { pointers in
                 pe_deck_set_buffer(
@@ -168,6 +194,22 @@ public final class Deck {
     public private(set) var isPlaying: Bool = false
     /// Latest playhead in seconds (updated from the RT event stream).
     public var playhead: TimeInterval { currentPlayhead }
+
+    fileprivate func apply(_ event: pe_event) {
+        guard event.deck == index else { return }
+        if event.type == PE_EVT_PLAYHEAD || event.type == PE_EVT_STATE {
+            currentPlayhead = TimeInterval(event.frame) / (buffer?.format.sampleRate ?? 1)
+        }
+        if event.type == PE_EVT_STATE {
+            isPlaying = event.f0 > 0.5
+        }
+    }
+
+    fileprivate func applyEndOfTrack(_ event: pe_event) {
+        guard event.deck == index else { return }
+        currentPlayhead = TimeInterval(event.frame) / (buffer?.format.sampleRate ?? 1)
+        isPlaying = false
+    }
 
     private func post(_ type: pe_cmd_type) {
         var command = pe_command(type: type, deck: Int32(index), i0: 0, i1: 0, i2: 0, f0: 0, f1: 0)
@@ -198,9 +240,21 @@ public final class Deck {
     public func nudge(_ amount: Double) { unimplemented() }   // pitch bend
 
     // Hot cues (8)
-    public func setHotCue(_ index: Int) { unimplemented() }
-    public func jumpHotCue(_ index: Int) { unimplemented() }
-    public func deleteHotCue(_ index: Int) { unimplemented() }
+    public func setHotCue(_ index: Int) {
+        guard hotCueTimes.indices.contains(index) else { return }
+        hotCueTimes[index] = currentPlayhead
+        post(PE_CMD_HOTCUE_SET, i0: index)
+    }
+    public func jumpHotCue(_ index: Int) {
+        guard hotCueTimes.indices.contains(index), let time = hotCueTimes[index] else { return }
+        currentPlayhead = time
+        post(PE_CMD_HOTCUE_JUMP, i0: index)
+    }
+    public func deleteHotCue(_ index: Int) {
+        guard hotCueTimes.indices.contains(index) else { return }
+        hotCueTimes[index] = nil
+        post(PE_CMD_HOTCUE_DELETE, i0: index)
+    }
 
     // Loops
     public func loopIn() { unimplemented() }
@@ -230,6 +284,11 @@ public final class Deck {
     public func assignPadFX(bank: Int, pad: Int, effect: BeatFXUnit.Kind, hold: Bool) { unimplemented() }
     /// Beat-jump size for `.beatJump` mode.
     public var beatJumpSize: Double = 4
+
+    private func post(_ type: pe_cmd_type, i0: Int = 0) {
+        var command = pe_command(type: type, deck: Int32(index), i0: Int32(i0), i1: 0, i2: 0, f0: 0, f1: 0)
+        _ = pe_post_command(bridge.handle, &command)
+    }
 }
 
 // MARK: - Mixer / channels / FX

@@ -78,6 +78,22 @@ struct CrossfaderTests {
     }
 }
 
+@Suite("Headless transport")
+@MainActor
+struct HeadlessTransportTests {
+    @Test func playheadEventsTrackRenderAndEndOfTrack() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        #expect(abs(e.deckA.playhead - 0.5) < 0.01)
+        #expect(e.deckA.isPlaying)
+
+        _ = e.render(frames: 400_000)
+        #expect(abs(e.deckA.playhead - 8.0) < 0.01)
+        #expect(!e.deckA.isPlaying)
+    }
+}
+
 @Suite("Sync", .disabled("Implement beat sync — docs/SPEC.md §11.2"))
 @MainActor
 struct SyncTests {
@@ -107,7 +123,7 @@ struct LoopTests {
     }
 }
 
-@Suite("Hot cues", .disabled("Implement hot cues — docs/SPEC.md §11.2"))
+@Suite("Hot cues")
 @MainActor
 struct HotCueTests {
     @Test func jumpResetsPlayhead() {
