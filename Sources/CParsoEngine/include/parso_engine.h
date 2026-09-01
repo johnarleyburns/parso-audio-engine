@@ -24,6 +24,8 @@ typedef struct {
     float master_cue;        /* 0/1 */
     float headphone_level;   /* 0..1 */
     float cue_pfl[2];        /* per-channel pre-listen 0/1 */
+    float xfade_assign[2];   /* 0=A side, 1=B side, 2=thru */
+    float fader_start[2];    /* 0/1 */
     /* per channel [0]=A [1]=B */
     float trim[2];
     float eq_low[2], eq_mid[2], eq_high[2]; /* dB, -INFINITY == kill */

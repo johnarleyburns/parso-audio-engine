@@ -356,3 +356,37 @@ struct MonitoringTests {
         #expect(abs(e.deckA.playhead) < 0.001)
     }
 }
+
+@Suite("Channel routing and EQ")
+@MainActor
+struct ChannelRoutingTests {
+    @Test func crossfaderAssignmentCanRemoveChannelFromBothSides() {
+        let e = makeLoadedHeadless()
+        e.mixer.crossfader = -1
+        e.mixer.channelA.crossfaderAssign = .b
+        e.deckA.play()
+        let out = e.render(frames: 4096)
+        #expect((out.left.map(abs).max() ?? 0) == 0)
+    }
+
+    @Test func faderStartStartsDeckWhenCrossfaderMoves() {
+        let e = makeLoadedHeadless()
+        e.mixer.channelA.faderStart = true
+        _ = e.render(frames: 1) // establish the initial crossfader position
+        e.mixer.crossfader = -1
+        _ = e.render(frames: 1)
+        #expect(e.deckA.isPlaying)
+    }
+
+    @Test func allEQBandsCanMuteAChannel() {
+        let e = makeLoadedHeadless()
+        e.mixer.crossfader = -1
+        e.deckA.play()
+        _ = e.render(frames: 4096)
+        e.mixer.channelA.eqLow = -.infinity
+        e.mixer.channelA.eqMid = -.infinity
+        e.mixer.channelA.eqHigh = -.infinity
+        _ = e.render(frames: 16_384) // allow the 10 ms gain smoothing to settle
+        #expect((e.render(frames: 4096).left.map(abs).max() ?? 0) < 0.05)
+    }
+}

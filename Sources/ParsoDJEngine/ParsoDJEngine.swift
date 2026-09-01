@@ -134,6 +134,11 @@ fileprivate final class EngineBridge {
         control.master_cue = 0
         control.headphone_level = 0.7
         control.cue_pfl = (0, 0)
+        control.xfade_assign = (2, 2)
+        control.fader_start = (0, 0)
+        control.eq_low = (0, 0)
+        control.eq_mid = (0, 0)
+        control.eq_high = (0, 0)
         control.trim = (0.5, 0.5)
         control.fader = (1, 1)
         control.deck_time_ratio = (1, 1)
@@ -725,15 +730,15 @@ public final class Channel {
     private let bridge: EngineBridge
     private let index: Int
     public var trim: Double = 0.5 { didSet { publishControl() } } // gain
-    public var eqLow: Double = 0                      // dB, -inf(kill)..+6
-    public var eqMid: Double = 0
-    public var eqHigh: Double = 0
+    public var eqLow: Double = 0 { didSet { publishControl() } } // dB, -inf(kill)..+6
+    public var eqMid: Double = 0 { didSet { publishControl() } }
+    public var eqHigh: Double = 0 { didSet { publishControl() } }
     public var colorFX: ColorFX = .filter
     public var colorAmount: Double = 0                // -1..+1 (center = off)
     public var fader: Double = 1 { didSet { publishControl() } } // 0..1
     public var cuePFL: Bool = false { didSet { publishControl() } } // headphone pre-listen
-    public var faderStart: Bool = false
-    public var crossfaderAssign: XFAssign = .thru
+    public var faderStart: Bool = false { didSet { publishControl() } }
+    public var crossfaderAssign: XFAssign = .thru { didSet { publishControl() } }
     /// Latest peak meter (0..1), updated from the RT event stream.
     public private(set) var peakMeter: Float = 0
     fileprivate func updatePeak(_ value: Float) {
@@ -748,14 +753,33 @@ public final class Channel {
         let gain = Float(max(0, trim))
         let channelFader = Float(max(0, min(1, fader)))
         let pfl = cuePFL ? Float(1) : Float(0)
+        let assignment: Float = switch crossfaderAssign {
+        case .a: 0
+        case .b: 1
+        case .thru: 2
+        }
+        let start = faderStart ? Float(1) : Float(0)
+        let low = Float(eqLow.isNaN ? 0 : eqLow)
+        let mid = Float(eqMid.isNaN ? 0 : eqMid)
+        let high = Float(eqHigh.isNaN ? 0 : eqHigh)
         if index == 0 {
             bridge.control.trim.0 = gain
             bridge.control.fader.0 = channelFader
             bridge.control.cue_pfl.0 = pfl
+            bridge.control.xfade_assign.0 = assignment
+            bridge.control.fader_start.0 = start
+            bridge.control.eq_low.0 = low
+            bridge.control.eq_mid.0 = mid
+            bridge.control.eq_high.0 = high
         } else {
             bridge.control.trim.1 = gain
             bridge.control.fader.1 = channelFader
             bridge.control.cue_pfl.1 = pfl
+            bridge.control.xfade_assign.1 = assignment
+            bridge.control.fader_start.1 = start
+            bridge.control.eq_low.1 = low
+            bridge.control.eq_mid.1 = mid
+            bridge.control.eq_high.1 = high
         }
         bridge.publishControl()
     }

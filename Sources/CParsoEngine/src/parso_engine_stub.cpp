@@ -33,6 +33,11 @@ struct DeckState {
     bool loopInSet = false;
     bool loopAvailable = false;
     bool loopActive = false;
+    float eqLowGain = 1.0f;
+    float eqMidGain = 1.0f;
+    float eqHighGain = 1.0f;
+    float lowState = 0.0f;
+    float highState = 0.0f;
 };
 
 struct SamplerSlot {
@@ -72,6 +77,11 @@ struct ControlState {
     std::atomic<float> masterCue{0.0f};
     std::atomic<float> headphoneLevel{0.7f};
     std::atomic<float> cuePFL[2]{{0.0f}, {0.0f}};
+    std::atomic<float> xfadeAssign[2]{{2.0f}, {2.0f}};
+    std::atomic<float> faderStart[2]{{0.0f}, {0.0f}};
+    std::atomic<float> eqLow[2]{{0.0f}, {0.0f}};
+    std::atomic<float> eqMid[2]{{0.0f}, {0.0f}};
+    std::atomic<float> eqHigh[2]{{0.0f}, {0.0f}};
     std::atomic<float> fader[2]{{1.0f}, {1.0f}};
     std::atomic<float> trim[2]{{0.5f}, {0.5f}};
     std::atomic<float> deckTimeRatio[2]{{1.0f}, {1.0f}};
@@ -89,6 +99,8 @@ struct pe_engine {
     ControlState control;
     CommandQueue queue;
     EventQueue events;
+    float previousCrossfader = 0.0f;
+    bool crossfaderInitialized = false;
 };
 
 namespace {
@@ -119,6 +131,34 @@ static float sampleAt(const DeckState& deck, int channel, double position) {
     const float a = deck.channels[channel][lower];
     const float b = deck.channels[channel][upper];
     return a + (b - a) * fraction;
+}
+
+static float dbToGain(float db) {
+    if (std::isnan(db) || db <= -90.0f) return 0.0f;
+    if (!std::isfinite(db)) return 1.0f;
+    return std::pow(10.0f, db / 20.0f);
+}
+
+static float processEQ(DeckState& deck, float sample, double sampleRate, int deckIndex,
+                       const ControlState& control) {
+    const float lowTarget = dbToGain(control.eqLow[deckIndex].load(std::memory_order_relaxed));
+    const float midTarget = dbToGain(control.eqMid[deckIndex].load(std::memory_order_relaxed));
+    const float highTarget = dbToGain(control.eqHigh[deckIndex].load(std::memory_order_relaxed));
+    const float smoothing = 1.0f - std::exp(-1.0f / static_cast<float>(sampleRate * 0.010));
+    deck.eqLowGain += smoothing * (lowTarget - deck.eqLowGain);
+    deck.eqMidGain += smoothing * (midTarget - deck.eqMidGain);
+    deck.eqHighGain += smoothing * (highTarget - deck.eqHighGain);
+
+    const float lowAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 200.0f /
+                                             static_cast<float>(sampleRate));
+    const float highAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 2000.0f /
+                                              static_cast<float>(sampleRate));
+    deck.lowState += lowAlpha * (sample - deck.lowState);
+    deck.highState += highAlpha * (sample - deck.highState);
+    const float low = deck.lowState;
+    const float high = sample - deck.highState;
+    const float mid = deck.highState - deck.lowState;
+    return low * deck.eqLowGain + mid * deck.eqMidGain + high * deck.eqHighGain;
 }
 
 static float sampleAt(const SamplerSlot& slot, int channel, int64_t position) {
@@ -416,22 +456,43 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
     clearOutput(left, right, frames);
     drainCommands(engine);
 
+    const float crossfader = engine->control.crossfader.load(std::memory_order_relaxed);
     float gainA = 0.0f;
     float gainB = 0.0f;
     crossfadeGains(
-        engine->control.crossfader.load(std::memory_order_relaxed),
+        crossfader,
         engine->control.curve.load(std::memory_order_relaxed),
         gainA,
         gainB
     );
+    if (!engine->crossfaderInitialized) {
+        engine->previousCrossfader = crossfader;
+        engine->crossfaderInitialized = true;
+    } else if (std::fabs(crossfader - engine->previousCrossfader) > 0.0001f) {
+        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+            if (engine->control.faderStart[deckIndex].load(std::memory_order_relaxed) > 0.5f &&
+                !engine->decks[deckIndex].playing && engine->decks[deckIndex].frames > 0) {
+                engine->decks[deckIndex].playing = true;
+                pushStateEvent(engine, deckIndex);
+            }
+        }
+        engine->previousCrossfader = crossfader;
+    }
     const float master = engine->control.masterLevel.load(std::memory_order_relaxed);
     const float micLevel = engine->control.micLevel.load(std::memory_order_relaxed);
-    const float channelGains[2] = {
+    float channelGains[2] = {
         engine->control.trim[0].load(std::memory_order_relaxed) *
             engine->control.fader[0].load(std::memory_order_relaxed) * gainA,
         engine->control.trim[1].load(std::memory_order_relaxed) *
             engine->control.fader[1].load(std::memory_order_relaxed) * gainB
     };
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        const float assignment = engine->control.xfadeAssign[deckIndex].load(std::memory_order_relaxed);
+        const float assignedGain = assignment < 0.5f ? gainA :
+            (assignment < 1.5f ? gainB : (deckIndex == 0 ? gainA : gainB));
+        channelGains[deckIndex] = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
+            engine->control.fader[deckIndex].load(std::memory_order_relaxed) * assignedGain;
+    }
 
     float deckPeaks[2] = {0.0f, 0.0f};
     float masterPeak = 0.0f;
@@ -442,9 +503,10 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) continue;
             const double sourcePosition = deck.position;
             const int rightChannel = deck.channelCount > 1 ? 1 : 0;
-            const float sample = 0.5f * (
+            float sample = 0.5f * (
                 sampleAt(deck, 0, sourcePosition) + sampleAt(deck, rightChannel, sourcePosition)
             );
+            sample = processEQ(deck, sample, deck.sampleRate, deckIndex, engine->control);
             mixed += sample * channelGains[deckIndex];
             const float channelSample = sample * channelGains[deckIndex];
             const float channelPeak = std::fabs(channelSample);
@@ -532,12 +594,19 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
     const float mix = engine->control.cueMasterMix.load(std::memory_order_relaxed);
     const float masterCue = engine->control.masterCue.load(std::memory_order_relaxed);
     const float headphoneLevel = engine->control.headphoneLevel.load(std::memory_order_relaxed);
-    const float channelGains[2] = {
+    float channelGains[2] = {
         engine->control.trim[0].load(std::memory_order_relaxed) *
             engine->control.fader[0].load(std::memory_order_relaxed) * gainA,
         engine->control.trim[1].load(std::memory_order_relaxed) *
             engine->control.fader[1].load(std::memory_order_relaxed) * gainB
     };
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        const float assignment = engine->control.xfadeAssign[deckIndex].load(std::memory_order_relaxed);
+        const float assignedGain = assignment < 0.5f ? gainA :
+            (assignment < 1.5f ? gainB : (deckIndex == 0 ? gainA : gainB));
+        channelGains[deckIndex] = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
+            engine->control.fader[deckIndex].load(std::memory_order_relaxed) * assignedGain;
+    }
     const float cueGains[2] = {
         engine->control.trim[0].load(std::memory_order_relaxed) *
             engine->control.fader[0].load(std::memory_order_relaxed),
@@ -616,6 +685,18 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
         engine->control.cuePFL[index].store(control->cue_pfl[index] > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
+        const float assignment = control->xfade_assign[index];
+        engine->control.xfadeAssign[index].store(
+            std::isfinite(assignment) ? std::max(0.0f, std::min(2.0f, assignment)) : 2.0f,
+            std::memory_order_relaxed
+        );
+        engine->control.faderStart[index].store(control->fader_start[index] > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
+        const float low = control->eq_low[index];
+        const float mid = control->eq_mid[index];
+        const float high = control->eq_high[index];
+        engine->control.eqLow[index].store(std::isnan(low) ? 0.0f : low, std::memory_order_relaxed);
+        engine->control.eqMid[index].store(std::isnan(mid) ? 0.0f : mid, std::memory_order_relaxed);
+        engine->control.eqHigh[index].store(std::isnan(high) ? 0.0f : high, std::memory_order_relaxed);
         const float ratio = control->deck_time_ratio[index];
         engine->control.deckTimeRatio[index].store(
             std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f,
@@ -670,6 +751,11 @@ void pe_deck_set_buffer(
     state.slip = false;
     state.cueFrame = 0;
     state.cueSet = false;
+    state.eqLowGain = 1.0f;
+    state.eqMidGain = 1.0f;
+    state.eqHighGain = 1.0f;
+    state.lowState = 0.0f;
+    state.highState = 0.0f;
     for (int slot = 0; slot < 8; ++slot) {
         state.hotCueFrames[slot] = 0;
         state.hotCueSet[slot] = false;
