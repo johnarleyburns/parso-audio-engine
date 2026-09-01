@@ -200,6 +200,7 @@ public final class Deck {
     private let index: Int
     private var buffer: PCMBuffer?
     private var currentPlayhead: TimeInterval = 0
+    private var shadowPlayhead: TimeInterval = 0
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
     private var trackBPM: Double = 120
     private var beatPositions: [TimeInterval] = []
@@ -214,6 +215,7 @@ public final class Deck {
     public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) {
         self.buffer = buffer
         currentPlayhead = 0
+        shadowPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
         trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
         beatPositions = analysis.tempo.beatPositions
@@ -251,6 +253,9 @@ public final class Deck {
         guard event.deck == index else { return }
         if event.type == PE_EVT_PLAYHEAD || event.type == PE_EVT_STATE {
             currentPlayhead = TimeInterval(event.frame) / (buffer?.format.sampleRate ?? 1)
+        }
+        if event.type == PE_EVT_PLAYHEAD {
+            shadowPlayhead = TimeInterval(event.f1) / (buffer?.format.sampleRate ?? 1)
         }
         if event.type == PE_EVT_STATE {
             isPlaying = event.f0 > 0.5
@@ -340,7 +345,10 @@ public final class Deck {
     // Loops
     public func loopIn() { post(PE_CMD_LOOP_IN) }
     public func loopOut() { post(PE_CMD_LOOP_OUT) }
-    public func reloopExit() { post(PE_CMD_RELOOP_EXIT) }
+    public func reloopExit() {
+        if slip { currentPlayhead = shadowPlayhead }
+        post(PE_CMD_RELOOP_EXIT)
+    }
     public func autoBeatLoop(beats: Double) {
         guard beats > 0, trackBPM > 0 else { return }
         post(PE_CMD_BEATLOOP, f0: Float(beats * 60 / trackBPM))
@@ -406,7 +414,9 @@ public final class Deck {
         return max(0, min(trackDuration, target))
     }
     public var quantize: Bool = true
-    public var slip: Bool = false
+    public var slip: Bool = false {
+        didSet { post(PE_CMD_SET_SLIP, f0: slip ? 1 : 0) }
+    }
 
     // Performance pads
     public var padMode: PadMode = .hotCue

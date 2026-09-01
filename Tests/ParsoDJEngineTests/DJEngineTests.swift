@@ -148,7 +148,7 @@ struct HotCueTests {
     }
 }
 
-@Suite("Slip mode", .disabled("Implement slip — docs/SPEC.md §11.2"))
+@Suite("Slip mode")
 @MainActor
 struct SlipTests {
     @Test func slipResumesAtShadowPosition() {

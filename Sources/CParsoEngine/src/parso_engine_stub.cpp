@@ -19,7 +19,9 @@ struct DeckState {
     int64_t frames = 0;
     double sampleRate = 0.0;
     double position = 0.0;
+    double shadowPosition = 0.0;
     bool playing = false;
+    bool slip = false;
     int64_t hotCueFrames[8] = {};
     bool hotCueSet[8] = {};
     double loopIn = 0.0;
@@ -119,7 +121,7 @@ static void pushPlayheadEvent(pe_engine* engine, int deckIndex) {
         deckIndex,
         static_cast<int64_t>(deck.position),
         deck.playing ? 1.0f : 0.0f,
-        0.0f
+        static_cast<float>(deck.shadowPosition)
     });
 }
 
@@ -145,6 +147,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
     switch (command.type) {
         case PE_CMD_PLAY:
             deck.playing = true;
+            deck.shadowPosition = deck.position;
             pushStateEvent(engine, command.deck);
             break;
         case PE_CMD_PAUSE:
@@ -156,7 +159,6 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_BEATJUMP:
         case PE_CMD_SET_MASTER:
         case PE_CMD_SET_KEYLOCK:
-        case PE_CMD_SET_SLIP:
         case PE_CMD_JOG_TOUCH:
         case PE_CMD_JOG_MOVE:
         case PE_CMD_JOG_RELEASE:
@@ -178,8 +180,13 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                 const double target = static_cast<double>(command.f0);
                 deck.position = target < static_cast<double>(deck.frames)
                     ? target : static_cast<double>(deck.frames - 1);
+                deck.shadowPosition = deck.position;
             }
             pushPlayheadEvent(engine, command.deck);
+            break;
+        case PE_CMD_SET_SLIP:
+            deck.slip = command.f0 > 0.5f;
+            if (deck.slip) deck.shadowPosition = deck.position;
             break;
         case PE_CMD_LOOP_IN:
             deck.loopIn = deck.position;
@@ -194,6 +201,14 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_RELOOP_EXIT:
             if (deck.loopActive) {
                 deck.loopActive = false;
+                if (deck.slip) {
+                    deck.position = deck.shadowPosition;
+                    if (deck.position >= static_cast<double>(deck.frames)) {
+                        deck.position = static_cast<double>(deck.frames);
+                        deck.playing = false;
+                    }
+                    pushPlayheadEvent(engine, command.deck);
+                }
             } else if (deck.loopAvailable) {
                 deck.loopActive = true;
             }
@@ -237,6 +252,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_HOTCUE_JUMP:
             if (command.i0 >= 0 && command.i0 < 8 && deck.hotCueSet[command.i0]) {
                 deck.position = static_cast<double>(deck.hotCueFrames[command.i0]);
+                deck.shadowPosition = deck.position;
                 pushPlayheadEvent(engine, command.deck);
             }
             break;
@@ -311,8 +327,10 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             );
             mixed += sample * channelGains[deckIndex];
             const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
-            deck.position += deck.sampleRate / engine->sampleRate *
+            const double positionIncrement = deck.sampleRate / engine->sampleRate *
                 (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
+            if (deck.slip) deck.shadowPosition += positionIncrement;
+            deck.position += positionIncrement;
             if (deck.loopActive && deck.loopEnd > deck.loopStart && deck.position >= deck.loopEnd) {
                 const double loopLength = deck.loopEnd - deck.loopStart;
                 while (deck.position >= deck.loopEnd) {
@@ -320,6 +338,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 }
             } else if (deck.position >= static_cast<double>(deck.frames)) {
                 deck.position = static_cast<double>(deck.frames);
+                deck.shadowPosition = deck.position;
                 deck.playing = false;
                 pushEvent(engine, pe_event{
                     PE_EVT_END_OF_TRACK,
@@ -411,7 +430,9 @@ void pe_deck_set_buffer(
     state.frames = frames;
     state.sampleRate = sample_rate;
     state.position = 0.0;
+    state.shadowPosition = 0.0;
     state.playing = false;
+    state.slip = false;
     for (int slot = 0; slot < 8; ++slot) {
         state.hotCueFrames[slot] = 0;
         state.hotCueSet[slot] = false;
