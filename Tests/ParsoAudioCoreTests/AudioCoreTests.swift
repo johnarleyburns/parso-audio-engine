@@ -164,6 +164,29 @@ struct CodecRoundtripTests {
         #expect(back.frameCount > 0)
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
+
+    @Test func portableAlacM4aRoundtripSupportsSeekAndDuration() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.25, channels: 2)
+        let url = tempURL("m4a")
+        let writer = try AudioFileWriter(url: url, format: src.format, codec: .alac)
+        try writer.write(src)
+        try writer.finish()
+
+        let reader = try AudioFileReader(url: url, container: .m4a)
+        #expect(reader.frameCount == src.frameCount)
+        #expect(reader.format == src.format)
+
+        let window = PCMBuffer(format: src.format, capacity: 2_048)
+        let read = try reader.read(into: window, frameOffset: 10_000)
+        #expect(read == 2_048)
+        #expect(Measure.dominantFrequency(window, searchRange: 300...600) == 440)
+    }
+
+    @Test func portableAlacM4aRejectsMalformedContainer() throws {
+        let url = tempURL("m4a")
+        try Data([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]).write(to: url)
+        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
+    }
 #endif
 }
 

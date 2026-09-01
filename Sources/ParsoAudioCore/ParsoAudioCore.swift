@@ -15,6 +15,7 @@ import Csrc
 import CflacBridge
 import CvorbisBridge
 import CopusBridge
+import Calac
 #if canImport(AVFoundation)
 import AVFoundation
 import AudioToolbox
@@ -220,6 +221,12 @@ public struct AudioFileReader: Sendable {
 #if canImport(AVFoundation)
             return try decodeApple(url: url)
 #else
+            if container == .m4a {
+                let data: Data
+                do { data = try Data(contentsOf: url) }
+                catch { throw AudioFileError.invalidFile(error.localizedDescription) }
+                return try MP4ALACCodec.decode(data)
+            }
             throw AudioFileError.unsupportedContainer(container)
 #endif
         case .auto:
@@ -438,9 +445,10 @@ public struct AudioFileWriter {
 #if canImport(AVFoundation)
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
 #else
-            throw AudioFileError.writeFailed(
-                "portable ALAC/M4A is not available until the planned AppleALAC codec integration"
-            )
+            guard url.pathExtension.lowercased() == "m4a" || url.pathExtension.lowercased() == "alac" else {
+                throw AudioFileError.writeFailed("portable ALAC requires an .m4a or .alac output path")
+            }
+            try MP4ALACCodec.write(buffer, to: url)
 #endif
         case .mp3(let bitrate):
             try writeGlint(buffer, format: Int32(GLINT_ENC_MP3.rawValue), bitrate: bitrate)
