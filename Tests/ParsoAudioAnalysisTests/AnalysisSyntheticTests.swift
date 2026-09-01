@@ -27,7 +27,7 @@ struct KeyProfileTests {
 
 // MARK: - Pending implementation (docs/SPEC.md §10)
 
-@Suite("Tempo (synthetic)", .disabled("Implement TempoEstimator — docs/SPEC.md §10.2"))
+@Suite("Tempo (synthetic)")
 struct TempoSyntheticTests {
     @Test(arguments: [90.0, 100.0, 120.0, 124.0, 128.0, 140.0, 174.0])
     func detectsClickTrackTempo(bpm: Double) {
