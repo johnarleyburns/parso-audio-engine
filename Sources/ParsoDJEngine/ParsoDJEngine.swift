@@ -66,6 +66,7 @@ fileprivate final class EngineBridge {
     weak var deckA: Deck?
     weak var deckB: Deck?
     weak var sampler: Sampler?
+    weak var mixer: Mixer?
 
     var handle: OpaquePointer {
         // The C handle is owned and used exclusively on the main/control actor.
@@ -98,6 +99,8 @@ fileprivate final class EngineBridge {
     }
 
     func register(_ sampler: Sampler) { self.sampler = sampler }
+
+    func register(_ mixer: Mixer) { self.mixer = mixer }
 
     func setTrackBPM(_ bpm: Double, index: Int) {
         guard trackBPM.indices.contains(index), bpm.isFinite, bpm > 0 else { return }
@@ -216,6 +219,16 @@ public enum PadMode: Sendable {
 
 @MainActor
 public final class Deck {
+    private struct SavedLoop {
+        let start: TimeInterval
+        let end: TimeInterval
+    }
+
+    private struct PadFXAssignment {
+        let effect: BeatFXUnit.Kind
+        let hold: Bool
+    }
+
     private let bridge: EngineBridge
     private let index: Int
     private var buffer: PCMBuffer?
@@ -224,6 +237,12 @@ public final class Deck {
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
     private var cueTime: TimeInterval?
     private var joggingWasPlaying = false
+    private var loopStartTime: TimeInterval?
+    private var loopEndTime: TimeInterval?
+    private var savedLoops: [SavedLoop?] = Array(repeating: nil, count: 8)
+    private var padFXAssignments: [[PadFXAssignment?]] = Array(
+        repeating: Array(repeating: nil, count: 8), count: 2
+    )
     private var trackBPM: Double = 120
     private var beatPositions: [TimeInterval] = []
 
@@ -244,6 +263,9 @@ public final class Deck {
         cueTime = nil
         nudgeRatio = 1
         isPlaying = false
+        loopStartTime = nil
+        loopEndTime = nil
+        savedLoops = Array(repeating: nil, count: 8)
         trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
         beatPositions = analysis.tempo.beatPositions
         bridge.setTrackBPM(trackBPM, index: index)
@@ -405,25 +427,94 @@ public final class Deck {
     }
 
     // Loops
-    public func loopIn() { post(PE_CMD_LOOP_IN) }
-    public func loopOut() { post(PE_CMD_LOOP_OUT) }
+    public private(set) var isLoopActive: Bool = false
+
+    private var trackDuration: TimeInterval {
+        guard let buffer, buffer.format.sampleRate > 0 else { return 0 }
+        return Double(buffer.frameCount) / buffer.format.sampleRate
+    }
+
+    private func setLocalLoop(start: TimeInterval, end: TimeInterval, active: Bool = true) {
+        guard start.isFinite, end.isFinite, end > start else { return }
+        let duration = trackDuration
+        let clampedStart = max(0, min(start, duration))
+        let clampedEnd = max(clampedStart, min(end, duration))
+        guard clampedEnd > clampedStart else { return }
+        loopStartTime = clampedStart
+        loopEndTime = clampedEnd
+        isLoopActive = active
+    }
+
+    private func resizeLocalLoop(by multiplier: Double) {
+        guard let start = loopStartTime, let end = loopEndTime, multiplier > 0 else { return }
+        let center = (start + end) * 0.5
+        let length = (end - start) * multiplier
+        var newStart = center - length * 0.5
+        var newEnd = center + length * 0.5
+        let duration = trackDuration
+        if newStart < 0 { newEnd -= newStart; newStart = 0 }
+        if newEnd > duration { newStart -= newEnd - duration; newEnd = duration }
+        setLocalLoop(start: max(0, newStart), end: min(duration, newEnd), active: isLoopActive)
+    }
+
+    public func loopIn() {
+        loopStartTime = max(0, currentPlayhead)
+        isLoopActive = false
+        post(PE_CMD_LOOP_IN)
+    }
+    public func loopOut() {
+        guard let start = loopStartTime else { return }
+        setLocalLoop(start: min(start, currentPlayhead), end: max(start, currentPlayhead))
+        post(PE_CMD_LOOP_OUT)
+    }
     public func reloopExit() {
-        if slip { currentPlayhead = shadowPlayhead }
+        if isLoopActive {
+            isLoopActive = false
+            if slip { currentPlayhead = shadowPlayhead }
+        } else if loopStartTime != nil, loopEndTime != nil {
+            isLoopActive = true
+        }
         post(PE_CMD_RELOOP_EXIT)
     }
     public func autoBeatLoop(beats: Double) {
         guard beats > 0, trackBPM > 0 else { return }
-        post(PE_CMD_BEATLOOP, f0: Float(beats * 60 / trackBPM))
+        let length = beats * 60 / trackBPM
+        let start = min(max(0, currentPlayhead), max(0, trackDuration - length))
+        setLocalLoop(start: start, end: start + min(length, trackDuration - start))
+        post(PE_CMD_BEATLOOP, f0: Float(length))
     }
-    public func loopHalve() { post(PE_CMD_LOOP_SCALE, f0: 0.5) }
-    public func loopDouble() { post(PE_CMD_LOOP_SCALE, f0: 2) }
+    public func loopHalve() {
+        resizeLocalLoop(by: 0.5)
+        post(PE_CMD_LOOP_SCALE, f0: 0.5)
+    }
+    public func loopDouble() {
+        resizeLocalLoop(by: 2)
+        post(PE_CMD_LOOP_SCALE, f0: 2)
+    }
     public func loopMove(beats: Double) {
         guard trackBPM > 0 else { return }
+        if let start = loopStartTime, let end = loopEndTime {
+            let shift = beats * 60 / trackBPM
+            let length = end - start
+            let newStart = min(max(0, start + shift), max(0, trackDuration - length))
+            setLocalLoop(start: newStart, end: newStart + length, active: isLoopActive)
+        }
         post(PE_CMD_LOOP_MOVE, f0: Float(beats * 60 / trackBPM))
     }
-    public func saveLoop(_ slot: Int) { unimplemented() }
-    public func callLoop(_ slot: Int) { unimplemented() }
-    public func setActiveLoop(_ enabled: Bool) { unimplemented() }
+    public func saveLoop(_ slot: Int) {
+        guard savedLoops.indices.contains(slot), let start = loopStartTime, let end = loopEndTime else { return }
+        savedLoops[slot] = SavedLoop(start: start, end: end)
+    }
+    public func callLoop(_ slot: Int) {
+        guard savedLoops.indices.contains(slot), let saved = savedLoops[slot] else { return }
+        setLocalLoop(start: saved.start, end: saved.end)
+        post(PE_CMD_SET_LOOP, i0: 1, f0: Float(saved.start), f1: Float(saved.end))
+    }
+    public func setActiveLoop(_ enabled: Bool) {
+        guard loopStartTime != nil, loopEndTime != nil else { return }
+        isLoopActive = enabled
+        post(PE_CMD_SET_LOOP_ACTIVE, f0: enabled ? 1 : 0)
+    }
 
     // Sync
     public func sync() {
@@ -492,7 +583,10 @@ public final class Deck {
         case .keyboard:
             pitchSemitones = Double(index - 4)
         case .padFX1, .padFX2:
-            break
+            let bank = padMode == .padFX1 ? 0 : 1
+            guard let assignment = padFXAssignments[bank][index] else { return }
+            bridge.mixer?.beatFX.kind = assignment.effect
+            bridge.mixer?.beatFX.isOn = true
         case .beatJump:
             let seconds = trackBPM > 0 ? Double(index - 3) * beatJumpSize * 60 / trackBPM : 0
             post(PE_CMD_BEATJUMP, f0: Float(seconds))
@@ -509,9 +603,18 @@ public final class Deck {
     public func padRelease(_ index: Int) {
         guard (0..<8).contains(index) else { return }
         if padMode == .keyboard { pitchSemitones = 0 }
+        if padMode == .padFX1 || padMode == .padFX2 {
+            let bank = padMode == .padFX1 ? 0 : 1
+            if padFXAssignments[bank][index]?.hold == true {
+                bridge.mixer?.beatFX.releaseFX()
+            }
+        }
     }
     /// Assign an effect to a Pad-FX pad (bank 1 or 2).
-    public func assignPadFX(bank: Int, pad: Int, effect: BeatFXUnit.Kind, hold: Bool) { unimplemented() }
+    public func assignPadFX(bank: Int, pad: Int, effect: BeatFXUnit.Kind, hold: Bool) {
+        guard (1...2).contains(bank), (0..<8).contains(pad) else { return }
+        padFXAssignments[bank - 1][pad] = PadFXAssignment(effect: effect, hold: hold)
+    }
     /// Beat-jump size for `.beatJump` mode.
     public var beatJumpSize: Double = 4
 
@@ -543,6 +646,7 @@ public final class Mixer {
         smartFader = SmartFader()
         smartCFX = SmartCFX()
         smartFader.attach(to: self)
+        bridge.register(self)
     }
 
     private func publishControl() {
@@ -575,7 +679,7 @@ public final class Channel {
 
 @MainActor
 public final class BeatFXUnit {
-    public enum Kind: Sendable, CaseIterable {
+    public enum Kind: Sendable, CaseIterable, Equatable {
         case echo, echoOut, reverb, delay, multiTapDelay, flanger, phaser,
              trans, roll, spiral, pitch, lowCutEcho, vinylBrake, helix
     }
@@ -585,7 +689,7 @@ public final class BeatFXUnit {
     public var depth: Double = 0.5                    // wet/level
     public var assign: Assign = .chA
     public var isOn: Bool = false
-    public func releaseFX() { unimplemented() }       // tail on release
+    public func releaseFX() { isOn = false }       // tail on release
     internal init() {}
 }
 

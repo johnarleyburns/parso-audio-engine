@@ -270,3 +270,30 @@ struct PadModeTests {
         #expect(e.deckA.pitchSemitones != 0)
     }
 }
+
+@Suite("Saved loops and pad FX")
+@MainActor
+struct SavedLoopAndPadFXTests {
+    @Test func savedLoopCanBeRecalledAndReactivated() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        e.deckA.autoBeatLoop(beats: 2)
+        e.deckA.saveLoop(0)
+        e.deckA.setActiveLoop(false)
+        e.deckA.callLoop(0)
+        _ = e.render(frames: 120_000) // 2.5 s across a 1 s recalled loop
+        #expect(e.deckA.isLoopActive)
+        #expect(e.deckA.playhead > 0.45 && e.deckA.playhead < 0.55)
+    }
+
+    @Test func padFXAssignmentTriggersAndReleasesAssignedEffect() {
+        let e = makeLoadedHeadless()
+        e.deckA.assignPadFX(bank: 1, pad: 2, effect: .echo, hold: true)
+        e.deckA.padMode = .padFX1
+        e.deckA.padPress(2)
+        #expect(e.mixer.beatFX.kind == .echo)
+        #expect(e.mixer.beatFX.isOn)
+        e.deckA.padRelease(2)
+        #expect(!e.mixer.beatFX.isOn)
+    }
+}

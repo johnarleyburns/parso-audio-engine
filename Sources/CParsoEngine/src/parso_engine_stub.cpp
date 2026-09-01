@@ -315,6 +315,17 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                 setLoop(deck, start, start + length);
             }
             break;
+        case PE_CMD_SET_LOOP:
+            if (std::isfinite(command.f0) && std::isfinite(command.f1) && deck.sampleRate > 0.0) {
+                const double start = command.f0 * deck.sampleRate;
+                const double end = command.f1 * deck.sampleRate;
+                setLoop(deck, start, end);
+                deck.loopActive = command.i0 != 0;
+            }
+            break;
+        case PE_CMD_SET_LOOP_ACTIVE:
+            if (deck.loopAvailable) deck.loopActive = command.f0 > 0.5f;
+            break;
         case PE_CMD_HOTCUE_SET:
             if (command.i0 >= 0 && command.i0 < 8) {
                 const int slot = command.i0;
