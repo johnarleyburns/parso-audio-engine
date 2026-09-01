@@ -97,6 +97,24 @@ Without the download, the fixture suites simply skip. To turn a track into a str
 regression test, fill its verified `expected.bpm` / `expected.key` in `Tests/Fixtures/fixtures.json`
 (until then those tests assert **determinism + plausibility**, not exact values).
 
+## Human-visible acceptance videos
+
+The Linux-compatible acceptance tool can produce a WAV plus JSON analysis sidecar, then render a
+reviewable MP4 with waveform, beat/downbeat markers, section labels, and a synchronized playhead.
+See [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md). It uses system `ffmpeg`
+only as developer tooling; ffmpeg is not a product dependency.
+
+```bash
+swift run ParsoAcceptanceArtifacts \
+  --fixture gostreyshen_world \
+  --scenario waveform \
+  --output-dir artifacts/acceptance/gostreyshen_world
+python3 scripts/render-acceptance-video.py \
+  --audio artifacts/acceptance/gostreyshen_world/gostreyshen_world-waveform.wav \
+  --analysis artifacts/acceptance/gostreyshen_world/gostreyshen_world-waveform.json \
+  --output artifacts/acceptance/gostreyshen_world/gostreyshen_world-waveform.mp4
+```
+
 ---
 
 # Cookbook — one sample per FLX4 feature

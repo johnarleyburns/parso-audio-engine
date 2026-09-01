@@ -23,7 +23,7 @@ as much of the behavior as possible independently testable on Linux.
 | Encode WAV | AVAudioFile / ExtAudioFile | Apple | PCM |
 | Encode FLAC | libFLAC | BSD-3 | lossless |
 | Encode lossy | AAC (AudioToolbox) | Apple | **no MP3 encoder exists permissively** |
-| Portable MP3 decode/encode (candidate) | Glint | MIT | Linux + Apple fallback; pending audit and integration |
+| Portable MP3 decode/encode | Glint | MIT | Linux + Apple fallback; pinned and covered by round-trip tests |
 | Portable M4A container (candidate) | minimp4 | CC0 | ISO BMFF demux/mux only; not an AAC/ALAC codec |
 | Portable ALAC codec (candidate) | AppleALAC (`macosforge/alac`) | Apache-2.0 | Codec layer; M4A/CAF plumbing still required |
 | Sample-rate conversion (offline) | libsamplerate ≥ 0.2.2 | BSD-2 | never < 0.1.9 (GPL) |
@@ -45,11 +45,12 @@ Recommended order:
 
 1. **Glint investigation and legal/security audit.** Pin an upstream revision, verify the complete
    source tree and generated tables, confirm the MIT license, fuzz/fixture-test the MP3 and AAC-LC
-   decoders, and measure output against CoreAudio on macOS. Glint is a candidate, not yet an
-   approved vendored dependency.
-2. **`Cmp3` bridge using Glint.** Route Linux MP3 decode through the bridge and use the same bridge
-   for MP3 encoding on Linux and Apple. Keep AudioToolbox AAC/ALAC encoding unchanged. MP3 output
-   must be an explicit opt-in codec and must not run in the real-time path.
+   decoders, and measure output against CoreAudio on macOS. The pinned source is now vendored in
+   `Sources/CGlint` with its upstream MIT license; fuzzing and macOS parity remain follow-up gates.
+2. **Glint bridge and portable codec IO.** Route Linux MP3 decode through Glint and use the same
+   encoder on Linux and Apple. ADTS AAC decode/encode is also available on Linux; AudioToolbox
+   AAC/ALAC remains authoritative on Apple. MP3 output is an explicit opt-in codec and never runs
+   in the real-time path.
 3. **M4A/ISO-BMFF compatibility.** Evaluate `minimp4` for safe extraction of AAC and ALAC sample
    descriptions, edit lists, priming/padding, and metadata. Add malformed-container and audiobook
    duration/seek tests before using it in production.

@@ -3,6 +3,7 @@
 *.xcodeproj
 DerivedData/
 .DS_Store
+artifacts/
 
 # Test fixtures are downloaded, never committed
 Tests/Fixtures/audio/

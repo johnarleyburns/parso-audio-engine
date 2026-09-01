@@ -67,13 +67,9 @@ public enum FixtureLibrary {
     public static var beatBased: [Fixture] { manifest.tracks.filter { $0.beatBased } }
 
     /// Fixture files that this platform can decode through the package's native
-    /// or Apple-backed readers. Linux has no AVFoundation MP3 reader.
+    /// or portable/Apple-backed readers.
     public static var decodeFixtures: [Fixture] {
-#if canImport(AVFoundation)
         return all
-#else
-        return all.filter { $0.sourceFormat != "mp3" }
-#endif
     }
 
     public static func withRole(_ role: String) -> [Fixture] {

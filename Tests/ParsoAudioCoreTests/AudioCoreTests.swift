@@ -130,6 +130,30 @@ struct CodecRoundtripTests {
         // Lossy: allow codec/priming delay; assert the tone survives, not sample-exactness.
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
+
+    @Test func mp3RoundtripPreservesTheDominantTone() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
+        let url = tempURL("mp3")
+        let writer = try AudioFileWriter(url: url, format: src.format, codec: .mp3(bitrate: 192))
+        try writer.write(src)
+        try writer.finish()
+        let back = try AudioFileReader(url: url, container: .mp3).readAll()
+        #expect(back.frameCount > 0)
+        #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
+    }
+
+#if !canImport(AVFoundation)
+    @Test func portableAacAdtsRoundtripPreservesTheDominantTone() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
+        let url = tempURL("aac")
+        let writer = try AudioFileWriter(url: url, format: src.format, codec: .aac(bitrate: 192))
+        try writer.write(src)
+        try writer.finish()
+        let back = try AudioFileReader(url: url, container: .aac).readAll()
+        #expect(back.frameCount > 0)
+        #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
+    }
+#endif
 }
 
 @Suite("Sample-rate conversion")

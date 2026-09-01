@@ -27,6 +27,7 @@ let package = Package(
         .library(name: "ParsoAudioCore",     targets: ["ParsoAudioCore"]),
         .library(name: "ParsoAudioAnalysis", targets: ["ParsoAudioAnalysis"]),
         .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
+        .executable(name: "ParsoAcceptanceArtifacts", targets: ["ParsoAcceptanceArtifacts"]),
     ],
     targets: [
         // ── Vendored C libraries (permissive upstream licenses; see VENDOR.md) ──
@@ -115,6 +116,14 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(
+            name: "CGlint",
+            path: "Sources/CGlint",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("src")
+            ]
+        ),
+        .target(
             name: "CflacBridge",
             dependencies: ["Cflac"],
             path: "Sources/CflacBridge",
@@ -141,7 +150,7 @@ let package = Package(
         // ── Swift layers (Swift 6 language mode) ──
         .target(
             name: "ParsoAudioCore",
-            dependencies: ["CParsoDSP", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
+            dependencies: ["CParsoDSP", "CGlint", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
                 .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),
@@ -158,6 +167,11 @@ let package = Package(
         .target(
             name: "ParsoDJEngine",
             dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoEngine"]
+        ),
+        .executableTarget(
+            name: "ParsoAcceptanceArtifacts",
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis"],
+            path: "Sources/ParsoAcceptanceArtifacts"
         ),
 
         // ── Tests ──
