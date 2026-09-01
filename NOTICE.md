@@ -14,6 +14,7 @@ retains its own license; none use a prohibited copyleft license.
 | libopus | BSD-3-Clause | https://github.com/xiph/opus | Opus decode |
 | libopusfile | BSD-3-Clause | https://github.com/xiph/opusfile | Ogg Opus file reader |
 | Signalsmith Stretch | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch | Time-stretch / pitch-shift |
+| Signalsmith Linear | MIT | https://github.com/Signalsmith-Audio/linear | Stretch FFT and DSP support |
 | Freeverb (reverb constants) | Public Domain | Jezar at Dreampoint | Reverb tuning reference |
 
 Apple frameworks used under the Apple SDK license (linked, not redistributed):

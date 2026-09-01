@@ -163,7 +163,7 @@ struct IsolatorEQTests {
     }
 }
 
-@Suite("Time / pitch", .disabled("Implement TimePitch — docs/SPEC.md §13.6/§13.7"))
+@Suite("Time / pitch")
 struct TimePitchTests {
     @Test func keyLockStretchesTimeNotPitch() {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0)

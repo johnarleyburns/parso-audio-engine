@@ -778,13 +778,82 @@ public struct LoudnessAnalyzer: Sendable {
 /// (scratch/pitch-bend); `.keyLock` is the Signalsmith phase vocoder.
 public final class TimePitch: @unchecked Sendable {
     public enum Mode: Sendable { case varispeed, keyLock }
-    public var mode: Mode
-    public var tempoRatio: Double   // 0.06 ... 2.0
-    public var pitchSemitones: Double
-    public init(sampleRate: Double, channels: Int, maxBlock: Int) { unimplemented() }
-    public func reset() { unimplemented() }
+    // Created and destroyed on the control side; the C kernel owns all mutable
+    // DSP state and receives only POD values and PCM pointers while rendering.
+    private let handle: OpaquePointer
+    private let channels: Int
+
+    public var mode: Mode = .varispeed {
+        didSet {
+            pd_tp_set_mode(handle, mode == .keyLock ? PD_TP_KEYLOCK : PD_TP_VARISPEED)
+        }
+    }
+    public var tempoRatio: Double = 1.0 { didSet { pd_tp_set_time_ratio(handle, tempoRatio) } }
+    public var pitchSemitones: Double = 0.0 {
+        didSet { pd_tp_set_pitch_semitones(handle, pitchSemitones) }
+    }
+
+    public init(sampleRate: Double, channels: Int, maxBlock: Int) {
+        precondition(sampleRate.isFinite && sampleRate > 0, "sample rate must be positive")
+        precondition(channels > 0, "channel count must be positive")
+        precondition(maxBlock > 0, "max block must be positive")
+        guard let handle = pd_tp_create(sampleRate, Int32(channels), Int32(maxBlock)) else {
+            preconditionFailure("could not create time/pitch processor")
+        }
+        self.handle = handle
+        self.channels = channels
+    }
+
+    deinit { pd_tp_destroy(handle) }
+
+    public func reset() { pd_tp_reset(handle) }
+
     /// Offline convenience: process a whole buffer at the current settings.
-    public func process(_ input: PCMBuffer) -> PCMBuffer { unimplemented() }
+    public func process(_ input: PCMBuffer) -> PCMBuffer {
+        precondition(input.channelCount == channels, "channel count mismatch")
+        precondition(input.frameCount <= Int(Int32.max), "input is too large")
+
+        let ratio: Double
+        switch mode {
+        case .varispeed:
+            ratio = min(2.0, max(0.06, tempoRatio)) * pow(2.0, pitchSemitones / 12.0)
+        case .keyLock:
+            ratio = min(2.0, max(0.06, tempoRatio))
+        }
+        let outputFrames = input.frameCount == 0
+            ? 0
+            : min(Int(Int32.max), max(1, Int(ceil(Double(input.frameCount) / ratio))))
+        let output = PCMBuffer(format: input.format, capacity: outputFrames)
+        guard outputFrames > 0 else { return output }
+
+        var written: Int32 = 0
+        input.withUnsafeChannels { inputChannels, frames in
+            output.withUnsafeChannels { outputChannels, destinationFrames in
+                inputChannels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: channels) {
+                    inputPointers in
+                    outputChannels.withMemoryRebound(
+                        to: UnsafeMutablePointer<Float>?.self, capacity: channels
+                    ) { outputPointers in
+                        written = pd_tp_process(
+                            handle, UnsafePointer(inputPointers), Int32(frames),
+                            UnsafePointer(outputPointers), Int32(destinationFrames)
+                        )
+                    }
+                }
+            }
+        }
+
+        // The offline API sizes its output from the requested ratio, but a C
+        // kernel may return fewer frames for a partial/streaming call.
+        if Int(written) == outputFrames { return output }
+        let trimmed = PCMBuffer(format: input.format, capacity: max(0, Int(written)))
+        for channel in 0..<channels {
+            let source = output.channel(channel)
+            let destination = trimmed.channel(channel)
+            for frame in 0..<trimmed.frameCount { destination[frame] = source[frame] }
+        }
+        return trimmed
+    }
 }
 
 /// 3-band full-kill isolator EQ (Pioneer-style). `-Float.infinity` == kill.

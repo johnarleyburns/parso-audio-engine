@@ -1,6 +1,6 @@
 /*
  * parso_dsp.h — C-clean public API for the real-time DSP kernels.
- * IMPLEMENTATION is C++17 (src/*.cpp) but this header MUST stay C-compatible
+ * IMPLEMENTATION is C++17 (source files) but this header MUST stay C-compatible
  * so Swift/Clang can import it. No classes/templates/namespaces here.
  * All processing is allocation-free and RT-safe (see docs/SPEC.md §7).
  */

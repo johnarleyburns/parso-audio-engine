@@ -2,6 +2,7 @@
 // isolator is implemented here first so its state and processing path are shared
 // by the headless and device builds.
 #include "parso_dsp.h"
+#include "signalsmith-stretch.h"
 
 #include <cmath>
 #include <new>
@@ -117,6 +118,22 @@ struct pd_eq3 {
     bool hasProcessed = false;
 };
 
+struct pd_timepitch {
+    signalsmith::stretch::SignalsmithStretch<float> stretch;
+    double sampleRate;
+    int channels;
+    int maxBlock;
+    pd_tp_mode mode = PD_TP_VARISPEED;
+    double timeRatio = 1.0;
+    double pitchSemitones = 0.0;
+    double varispeedPhase = 0.0;
+
+    pd_timepitch(double sr, int channelCount, int blockSize)
+        : stretch(0x504152534fULL), sampleRate(sr), channels(channelCount), maxBlock(blockSize) {
+        stretch.presetDefault(channels, static_cast<float>(sampleRate), false);
+    }
+};
+
 extern "C" {
 pd_eq3* pd_eq3_create(double sample_rate, double xover_lo_hz, double xover_hi_hz) {
     if (!std::isfinite(sample_rate) || sample_rate <= 0.0 ||
@@ -186,13 +203,88 @@ void pd_filter_set(pd_filter*, float, float) {}
 void pd_filter_process(pd_filter*, const float* in, float* out, int frames) { for (int i=0;i<frames;++i) out[i]=in?in[i]:0.f; }
 void pd_filter_destroy(pd_filter*) {}
 
-pd_timepitch* pd_tp_create(double, int, int) { return nullptr; }
-void pd_tp_set_mode(pd_timepitch*, pd_tp_mode) {}
-void pd_tp_set_time_ratio(pd_timepitch*, double) {}
-void pd_tp_set_pitch_semitones(pd_timepitch*, double) {}
-void pd_tp_reset(pd_timepitch*) {}
-int  pd_tp_process(pd_timepitch*, const float* const*, int, float* const*, int out_frames) { return out_frames; }
-void pd_tp_destroy(pd_timepitch*) {}
+pd_timepitch* pd_tp_create(double sr, int channels, int max_block) {
+    if (!std::isfinite(sr) || sr <= 0.0 || channels <= 0 || max_block <= 0) return nullptr;
+    return new (std::nothrow) pd_timepitch(sr, channels, max_block);
+}
+
+void pd_tp_set_mode(pd_timepitch* tp, pd_tp_mode mode) {
+    if (tp == nullptr) return;
+    tp->mode = mode == PD_TP_KEYLOCK ? PD_TP_KEYLOCK : PD_TP_VARISPEED;
+}
+
+void pd_tp_set_time_ratio(pd_timepitch* tp, double ratio) {
+    if (tp == nullptr) return;
+    if (!std::isfinite(ratio)) ratio = 1.0;
+    tp->timeRatio = std::fmax(0.06, std::fmin(2.0, ratio));
+}
+
+void pd_tp_set_pitch_semitones(pd_timepitch* tp, double semis) {
+    if (tp == nullptr) return;
+    if (!std::isfinite(semis)) semis = 0.0;
+    tp->pitchSemitones = std::fmax(-12.0, std::fmin(12.0, semis));
+    tp->stretch.setTransposeSemitones(static_cast<float>(tp->pitchSemitones));
+}
+
+void pd_tp_reset(pd_timepitch* tp) {
+    if (tp == nullptr) return;
+    tp->stretch.reset();
+    tp->varispeedPhase = 0.0;
+}
+
+static float sampleAt(const float* samples, int frames, int index) {
+    if (frames <= 0 || samples == nullptr) return 0.0f;
+    if (index < 0) index = 0;
+    if (index >= frames) index = frames - 1;
+    return samples[index];
+}
+
+static float hermiteAt(const float* samples, int frames, double position) {
+    const int index = static_cast<int>(std::floor(position));
+    const double fraction = position - index;
+    const double xm1 = sampleAt(samples, frames, index - 1);
+    const double x0 = sampleAt(samples, frames, index);
+    const double x1 = sampleAt(samples, frames, index + 1);
+    const double x2 = sampleAt(samples, frames, index + 2);
+    const double c0 = x0;
+    const double c1 = 0.5 * (x1 - xm1);
+    const double c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
+    const double c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+    return static_cast<float>(((c3 * fraction + c2) * fraction + c1) * fraction + c0);
+}
+
+static int processVarispeed(pd_timepitch* tp, const float* const* in, int in_frames,
+                            float* const* out, int out_frames) {
+    const double pitchFactor = std::pow(2.0, tp->pitchSemitones / 12.0);
+    const double step = tp->timeRatio * pitchFactor;
+    const int writable = std::min(out_frames,
+                                  std::max(0, static_cast<int>(std::ceil(
+                                      (in_frames - tp->varispeedPhase) / step))));
+    for (int channel = 0; channel < tp->channels; ++channel) {
+        if (in[channel] == nullptr || out[channel] == nullptr) continue;
+        for (int frame = 0; frame < writable; ++frame) {
+            out[channel][frame] = hermiteAt(in[channel], in_frames,
+                                             tp->varispeedPhase + frame * step);
+        }
+    }
+    tp->varispeedPhase += writable * step;
+    if (tp->varispeedPhase >= in_frames) tp->varispeedPhase -= in_frames;
+    return writable;
+}
+
+int pd_tp_process(pd_timepitch* tp, const float* const* in, int in_frames,
+                  float* const* out, int out_frames) {
+    if (tp == nullptr || in == nullptr || out == nullptr || in_frames <= 0 || out_frames <= 0) {
+        return 0;
+    }
+    if (tp->mode == PD_TP_VARISPEED) {
+        return processVarispeed(tp, in, in_frames, out, out_frames);
+    }
+    tp->stretch.process(in, in_frames, out, out_frames);
+    return out_frames;
+}
+
+void pd_tp_destroy(pd_timepitch* tp) { delete tp; }
 
 pd_delay* pd_delay_create(double, double) { return nullptr; }
 void pd_delay_set(pd_delay*, double, float, float) {}
