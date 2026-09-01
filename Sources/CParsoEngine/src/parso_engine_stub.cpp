@@ -416,6 +416,16 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                 pushStateEvent(engine, command.deck);
             }
             break;
+        case PE_CMD_SEEK:
+            if (std::isfinite(command.f0) && deck.frames > 0) {
+                const double target = std::max(0.0, std::min(
+                    static_cast<double>(deck.frames), static_cast<double>(command.f0)
+                ));
+                deck.position = target;
+                deck.shadowPosition = target;
+                pushPlayheadEvent(engine, command.deck);
+            }
+            break;
         case PE_CMD_BEATJUMP:
             if (std::isfinite(command.f0)) {
                 deck.position += static_cast<double>(command.f0) * deck.sampleRate;

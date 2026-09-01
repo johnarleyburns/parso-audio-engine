@@ -305,6 +305,7 @@ public final class Deck {
     private let bridge: EngineBridge
     private let index: Int
     private var buffer: PCMBuffer?
+    private var trackAnalysis: TrackAnalysis?
     private var currentPlayhead: TimeInterval = 0
     private var shadowPlayhead: TimeInterval = 0
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
@@ -318,6 +319,8 @@ public final class Deck {
     )
     private var trackBPM: Double = 120
     private var beatPositions: [TimeInterval] = []
+    public private(set) var waveform: Waveform?
+    public private(set) var beatGrid: [TimeInterval] = []
 
     fileprivate init(bridge: EngineBridge, index: Int) {
         self.bridge = bridge
@@ -330,6 +333,8 @@ public final class Deck {
     // Loading / transport
     public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) {
         self.buffer = buffer
+        trackAnalysis = analysis
+        waveform = analysis.waveform
         currentPlayhead = 0
         shadowPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
@@ -341,6 +346,7 @@ public final class Deck {
         savedLoops = Array(repeating: nil, count: 8)
         trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
         beatPositions = analysis.tempo.beatPositions
+        beatGrid = beatPositions
         bridge.setTrackBPM(trackBPM, index: index)
         updatePlaybackRate()
         buffer.withUnsafeChannels { channels, frames in
@@ -354,6 +360,10 @@ public final class Deck {
                     buffer.format.sampleRate
                 )
             }
+        }
+        if autoCue {
+            cueTime = 0
+            post(PE_CMD_SET_CUE)
         }
     }
 
@@ -370,6 +380,14 @@ public final class Deck {
     public private(set) var isPlaying: Bool = false
     /// Latest playhead in seconds (updated from the RT event stream).
     public var playhead: TimeInterval { currentPlayhead }
+
+    /// Normalized phase within the current beat, when a beatgrid is available.
+    public var beatPhase: Double {
+        guard let beat = beatGrid.last(where: { $0 <= currentPlayhead }), effectiveBPM > 0 else { return 0 }
+        let period = 60 / effectiveBPM
+        guard period.isFinite, period > 0 else { return 0 }
+        return max(0, min(1, (currentPlayhead - beat) / period))
+    }
 
     fileprivate func apply(_ event: pe_event) {
         guard event.deck == index else { return }
@@ -417,6 +435,26 @@ public final class Deck {
         post(PE_CMD_PAUSE)
         jumpToCue()
         isPlaying = false
+    }
+
+    /// Stops the deck and returns its transport to frame zero.
+    public func returnToStart() {
+        if isPlaying { pause() }
+        currentPlayhead = 0
+        shadowPlayhead = 0
+        post(PE_CMD_SEEK, f0: 0)
+    }
+
+    /// Makes this deck an instant double of another loaded deck.
+    public func instantDouble(from other: Deck) {
+        guard other !== self, let sourceBuffer = other.buffer, let sourceAnalysis = other.trackAnalysis else { return }
+        let target = other.currentPlayhead
+        load(sourceAnalysis, buffer: sourceBuffer)
+        currentPlayhead = target
+        shadowPlayhead = target
+        let frame = target * sourceBuffer.format.sampleRate
+        post(PE_CMD_SEEK, f0: Float(max(0, frame)))
+        if other.isPlaying { play() }
     }
 
     // Tempo / pitch
@@ -471,6 +509,15 @@ public final class Deck {
         guard deltaSamples.isFinite else { return }
         post(PE_CMD_JOG_MOVE, f0: Float(deltaSamples))
     }
+    /// Searches by an exact number of source frames without changing transport state.
+    public func frameSearch(frames: Double) {
+        jogMoved(deltaSamples: frames)
+    }
+    /// Searches by seconds; positive values move forward and negative values backward.
+    public func fastSearch(seconds: TimeInterval) {
+        guard let buffer, seconds.isFinite else { return }
+        frameSearch(frames: seconds * buffer.format.sampleRate)
+    }
     public func jogTouchEnded() {
         if vinylMode && joggingWasPlaying { isPlaying = true }
         post(PE_CMD_JOG_RELEASE, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
@@ -481,6 +528,12 @@ public final class Deck {
         nudgeRatio = 1 + bend * 0.08
         updatePlaybackRate()
     }   // pitch bend
+    /// Returns the tempo fader and transient nudge to neutral.
+    public func tempoReset() {
+        tempoPercent = 0
+        nudgeRatio = 1
+        updatePlaybackRate()
+    }
 
     // Hot cues (8)
     public func setHotCue(_ index: Int) {
@@ -640,6 +693,14 @@ public final class Deck {
         return max(0, min(trackDuration, target))
     }
     public var quantize: Bool = true
+    public var autoCue: Bool = false {
+        didSet {
+            if autoCue, buffer != nil {
+                cueTime = 0
+                post(PE_CMD_SET_CUE)
+            }
+        }
+    }
     public var slip: Bool = false {
         didSet { post(PE_CMD_SET_SLIP, f0: slip ? 1 : 0) }
     }

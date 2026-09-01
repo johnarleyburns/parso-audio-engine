@@ -460,3 +460,51 @@ struct MasterLimiterTests {
         }
     }
 }
+
+@Suite("Deck acceptance controls")
+@MainActor
+struct DeckAcceptanceControlTests {
+    @Test func returnToStartAndSearchMoveTheSharedTransport() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        #expect(e.deckA.playhead > 0.49)
+
+        e.deckA.frameSearch(frames: 480)
+        _ = e.render(frames: 1)
+        #expect(e.deckA.playhead > 0.50)
+
+        e.deckA.fastSearch(seconds: -0.25)
+        _ = e.render(frames: 1)
+        #expect(e.deckA.playhead > 0.24 && e.deckA.playhead < 0.27)
+
+        e.deckA.returnToStart()
+        _ = e.render(frames: 1)
+        #expect(e.deckA.playhead == 0)
+        #expect(!e.deckA.isPlaying)
+    }
+
+    @Test func instantDoubleCopiesLoadedTrackAndTransportState() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        e.deckB.instantDouble(from: e.deckA)
+        _ = e.render(frames: 1)
+        #expect(e.deckB.isPlaying)
+        #expect(abs(e.deckB.playhead - e.deckA.playhead) < 0.002)
+        #expect(e.deckB.waveform != nil)
+    }
+
+    @Test func autoCueAndTempoResetAreExposedByDeckState() {
+        let e = makeLoadedHeadless()
+        e.deckA.autoCue = true
+        e.deckA.tempoPercent = 8
+        e.deckA.nudge(0.5)
+        e.deckA.tempoReset()
+        _ = e.render(frames: 1)
+        #expect(e.deckA.tempoPercent == 0)
+        #expect(e.deckA.playhead == 0)
+        #expect(e.deckA.waveform != nil)
+        #expect(e.deckA.beatPhase == 0)
+    }
+}
