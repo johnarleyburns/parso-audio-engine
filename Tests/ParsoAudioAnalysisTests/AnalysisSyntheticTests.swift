@@ -50,7 +50,7 @@ struct TempoSyntheticTests {
     }
 }
 
-@Suite("Key (synthetic)", .disabled("Implement KeyEstimator — docs/SPEC.md §10.3"))
+@Suite("Key (synthetic)")
 struct KeySyntheticTests {
     @Test(arguments: [0, 5, 7, 9])   // C, F, G, A
     func detectsMajorTriadTonic(tonic: Int) {

@@ -364,7 +364,166 @@ public struct TempoEstimator: Sendable {
 /// Camelot/Open-Key. See docs/SPEC.md §10.3.
 public struct KeyEstimator: Sendable {
     public init() {}
-    public func analyze(_ buffer: PCMBuffer) -> KeyResult { unimplemented() }
+    public func analyze(_ buffer: PCMBuffer) -> KeyResult {
+        let tonicFallback = 0
+        guard buffer.frameCount > 0 else {
+            return Self.result(tonic: tonicFallback, mode: .major, confidence: 0)
+        }
+
+        let analysisRate = 22_050.0
+        let mono = buffer.downmixedToMono().channel(0)
+        let sourceRate = buffer.format.sampleRate
+        let sampleCount = max(1, Int((Double(buffer.frameCount) * analysisRate / sourceRate).rounded()))
+        var samples = [Float](repeating: 0, count: sampleCount)
+        let scale = sourceRate / analysisRate
+        for index in 0..<sampleCount {
+            let sourcePosition = Double(index) * scale
+            let lower = min(mono.count - 1, max(0, Int(sourcePosition.rounded(.down))))
+            let upper = min(mono.count - 1, lower + 1)
+            let fraction = Float(sourcePosition - Double(lower))
+            samples[index] = mono[lower] + (mono[upper] - mono[lower]) * fraction
+        }
+
+        let fftSize = 4096
+        let hop = 2048
+        let frameCount = max(1, (samples.count + hop - 1) / hop)
+        var window = [Float](repeating: 0, count: fftSize)
+        for index in window.indices {
+            let phase = 2.0 * Double.pi * Double(index) / Double(fftSize)
+            window[index] = Float(0.5 - 0.5 * cos(phase))
+        }
+        var real = [Float](repeating: 0, count: fftSize)
+        var imaginary = [Float](repeating: 0, count: fftSize)
+        var chroma = [Double](repeating: 0, count: 12)
+
+        for frame in 0..<frameCount {
+            let start = frame * hop
+            for index in 0..<fftSize {
+                let sourceIndex = start + index
+                real[index] = sourceIndex < samples.count ? samples[sourceIndex] * window[index] : 0
+                imaginary[index] = 0
+            }
+            Self.fft(real: &real, imaginary: &imaginary)
+            for bin in 1...fftSize / 2 {
+                let frequency = Double(bin) * analysisRate / Double(fftSize)
+                guard frequency >= 100 && frequency <= 5000 else { continue }
+                let magnitude = Double(
+                    (real[bin] * real[bin] + imaginary[bin] * imaginary[bin]).squareRoot()
+                )
+                let midi = Int((12 * log2(frequency / 440.0) + 69).rounded())
+                let pitchClass = (midi % 12 + 12) % 12
+                chroma[pitchClass] += magnitude
+            }
+        }
+
+        let total = chroma.reduce(0, +)
+        if total > 0 {
+            for index in chroma.indices { chroma[index] /= total }
+        }
+
+        var bestTonic = tonicFallback
+        var bestMode = KeyResult.Mode.major
+        var bestCorrelation = -Double.infinity
+        var secondCorrelation = -Double.infinity
+        for mode in [KeyResult.Mode.major, .minor] {
+            let profile = mode == .major ? KeyProfiles.major : KeyProfiles.minor
+            for tonic in 0..<12 {
+                var rotated = [Double](repeating: 0, count: 12)
+                for pitchClass in 0..<12 {
+                    rotated[pitchClass] = profile[(pitchClass - tonic + 12) % 12]
+                }
+                let correlation = Self.pearson(chroma, rotated)
+                if correlation > bestCorrelation {
+                    secondCorrelation = bestCorrelation
+                    bestCorrelation = correlation
+                    bestTonic = tonic
+                    bestMode = mode
+                } else if correlation > secondCorrelation {
+                    secondCorrelation = correlation
+                }
+            }
+        }
+        let confidence = min(1, max(0, (bestCorrelation - secondCorrelation) * 2.0))
+        return Self.result(tonic: bestTonic, mode: bestMode, confidence: confidence)
+    }
+
+    private static func result(tonic: Int, mode: KeyResult.Mode, confidence: Double) -> KeyResult {
+        let camelotMajor = ["8B", "3B", "10B", "5B", "12B", "7B", "2B", "9B", "4B", "11B", "6B", "1B"]
+        let camelotMinor = ["5A", "12A", "7A", "2A", "9A", "4A", "11A", "6A", "1A", "8A", "3A", "10A"]
+        let openMajor = ["1d", "8d", "3d", "10d", "5d", "12d", "7d", "2d", "9d", "4d", "11d", "6d"]
+        let openMinor = ["10m", "5m", "12m", "7m", "2m", "9m", "4m", "11m", "6m", "1m", "8m", "3m"]
+        return KeyResult(
+            tonic: tonic,
+            mode: mode,
+            camelot: mode == .major ? camelotMajor[tonic] : camelotMinor[tonic],
+            openKey: mode == .major ? openMajor[tonic] : openMinor[tonic],
+            confidence: confidence
+        )
+    }
+
+    private static func pearson(_ lhs: [Double], _ rhs: [Double]) -> Double {
+        guard lhs.count == rhs.count, !lhs.isEmpty else { return 0 }
+        let lhsMean = lhs.reduce(0, +) / Double(lhs.count)
+        let rhsMean = rhs.reduce(0, +) / Double(rhs.count)
+        var numerator = 0.0
+        var lhsEnergy = 0.0
+        var rhsEnergy = 0.0
+        for index in lhs.indices {
+            let left = lhs[index] - lhsMean
+            let right = rhs[index] - rhsMean
+            numerator += left * right
+            lhsEnergy += left * left
+            rhsEnergy += right * right
+        }
+        let denominator = (lhsEnergy * rhsEnergy).squareRoot()
+        return denominator > 0 ? numerator / denominator : 0
+    }
+
+    private static func fft(real: inout [Float], imaginary: inout [Float]) {
+        let count = real.count
+        var j = 0
+        for index in 1..<count {
+            var bit = count >> 1
+            while j & bit != 0 {
+                j ^= bit
+                bit >>= 1
+            }
+            j ^= bit
+            if index < j {
+                real.swapAt(index, j)
+                imaginary.swapAt(index, j)
+            }
+        }
+        var length = 2
+        while length <= count {
+            let angle = -2.0 * Double.pi / Double(length)
+            let stepReal = Float(cos(angle))
+            let stepImaginary = Float(sin(angle))
+            let half = length / 2
+            var start = 0
+            while start < count {
+                var twiddleReal: Float = 1
+                var twiddleImaginary: Float = 0
+                for offset in 0..<half {
+                    let even = start + offset
+                    let odd = even + half
+                    let productReal = real[odd] * twiddleReal - imaginary[odd] * twiddleImaginary
+                    let productImaginary = real[odd] * twiddleImaginary + imaginary[odd] * twiddleReal
+                    let evenReal = real[even]
+                    let evenImaginary = imaginary[even]
+                    real[even] = evenReal + productReal
+                    imaginary[even] = evenImaginary + productImaginary
+                    real[odd] = evenReal - productReal
+                    imaginary[odd] = evenImaginary - productImaginary
+                    let nextTwiddleReal = twiddleReal * stepReal - twiddleImaginary * stepImaginary
+                    twiddleImaginary = twiddleReal * stepImaginary + twiddleImaginary * stepReal
+                    twiddleReal = nextTwiddleReal
+                }
+                start += length
+            }
+            length <<= 1
+        }
+    }
 }
 
 /// Beat-synchronous self-similarity + checkerboard novelty; snaps to phrase grid.
