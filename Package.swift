@@ -15,6 +15,7 @@ import PackageDescription
 //   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
 //                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
 //   CGlint (planned) -> Glint portable MP3/AAC-LC compatibility and MP3 encode
+//   Calac    -> AppleALAC codec (Apache-2.0) https://github.com/macosforge/alac
 
 let package = Package(
     name: "parso-audio-engine",
@@ -124,6 +125,17 @@ let package = Package(
             ]
         ),
         .target(
+            name: "Calac",
+            path: "Sources/Calac",
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("vendor/codec")
+            ],
+            cxxSettings: [
+                .headerSearchPath("vendor/codec")
+            ]
+        ),
+        .target(
             name: "CflacBridge",
             dependencies: ["Cflac"],
             path: "Sources/CflacBridge",
@@ -150,7 +162,7 @@ let package = Package(
         // ── Swift layers (Swift 6 language mode) ──
         .target(
             name: "ParsoAudioCore",
-            dependencies: ["CParsoDSP", "CGlint", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
+            dependencies: ["CParsoDSP", "CGlint", "Calac", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
             linkerSettings: [
                 .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
                 .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),
@@ -177,7 +189,7 @@ let package = Package(
         // ── Tests ──
         .testTarget(
             name: "ParsoAudioCoreTests",
-            dependencies: ["ParsoAudioCore", "ParsoTestSupport"]
+            dependencies: ["ParsoAudioCore", "Calac", "ParsoTestSupport"]
         ),
         .testTarget(
             name: "ParsoAudioAnalysisTests",

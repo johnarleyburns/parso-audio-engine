@@ -1,8 +1,18 @@
 # Human-visible acceptance artifacts
 
-The acceptance harness produces a short MP4 with the same audio that was analyzed and a
-frame-by-frame overlay of the analysis results. This makes beat-grid phase, downbeats, waveform
-boundaries, and phrase labels reviewable by ear and eye instead of relying only on numeric tests.
+The acceptance harness produces an MP4 with the same audio that was analyzed and a frame-by-frame
+overlay of the analysis results. This makes beat-grid phase, downbeats, waveform boundaries, and
+phrase labels reviewable by ear and eye instead of relying only on numeric tests.
+
+## Review-duration requirements
+
+Every human-acceptance MP4 must contain at least 30 seconds of audio. Shorter clips do not provide
+enough material to confirm an effect, so both artifact generation and MP4 rendering reject a
+shorter sidecar. A source track shorter than 30 seconds is therefore not eligible for this review.
+
+Phrase/structure acceptance is a separate full-track review: use the `phrase` scenario with
+`--max-seconds 0`. Its MP4 must cover the entire source song, and the sidecar's `audioDuration`
+must equal the complete `analysisDuration`, so every detected phrase can be checked.
 
 ## First artifact: source analysis
 
@@ -19,12 +29,24 @@ python3 scripts/render-acceptance-video.py \
   --audio artifacts/acceptance/gostreyshen/gostreyshen_world-waveform.wav \
   --analysis artifacts/acceptance/gostreyshen/gostreyshen_world-waveform.json \
   --output artifacts/acceptance/gostreyshen/gostreyshen_world-waveform.mp4
+
+# Phrase/structure review: render the entire song.
+swift run ParsoAcceptanceArtifacts \
+  --fixture gostreyshen_world \
+  --scenario phrase \
+  --max-seconds 0 \
+  --output-dir artifacts/acceptance/gostreyshen
+python3 scripts/render-acceptance-video.py \
+  --audio artifacts/acceptance/gostreyshen/gostreyshen_world-phrase.wav \
+  --analysis artifacts/acceptance/gostreyshen/gostreyshen_world-phrase.json \
+  --output artifacts/acceptance/gostreyshen/gostreyshen_world-phrase.mp4
 ```
 
 The JSON sidecar is intentionally part of the review output. It records the fixture, source and
 rendered scenario, audio duration, BPM/key/loudness, beats, downbeats, section labels, and waveform
 points. The video uses the first 30 seconds by default; set `--max-seconds 0` to render the complete
-track. The analysis itself runs on the complete source track before the visible clip is selected.
+track. The analysis itself runs on the complete source track before the visible clip is selected,
+except that the `phrase` scenario also keeps the complete source visible for phrase review.
 
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are

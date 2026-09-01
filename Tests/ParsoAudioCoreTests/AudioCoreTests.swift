@@ -8,6 +8,7 @@ import Testing
 import Foundation
 import ParsoAudioCore
 import ParsoTestSupport
+import Calac
 
 // MARK: - Real now
 
@@ -164,6 +165,102 @@ struct CodecRoundtripTests {
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
 #endif
+}
+
+@Suite("ALAC bridge")
+struct ALACBridgeTests {
+    private func packedPCM(bitDepth: Int, channels: Int, frames: Int) -> [UInt8] {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(frames * channels * ((bitDepth + 7) / 8))
+        for frame in 0..<frames {
+            for channel in 0..<channels {
+                let base = Int32((frame * 37 + channel * 911) % 131_071) - 65_535
+                let sample: Int32
+                switch bitDepth {
+                case 16:
+                    sample = base % 30_000
+                case 20:
+                    sample = (base % 900_000) - 450_000
+                case 24:
+                    sample = (base * 31) % 8_000_000
+                default:
+                    sample = base * 32_001
+                }
+                let stored = bitDepth == 20 ? sample << 4 : sample
+                if bitDepth == 24 || bitDepth == 20 {
+                    let raw = UInt32(bitPattern: stored)
+                    bytes.append(UInt8(truncatingIfNeeded: raw))
+                    bytes.append(UInt8(truncatingIfNeeded: raw >> 8))
+                    bytes.append(UInt8(truncatingIfNeeded: raw >> 16))
+                } else if bitDepth == 16 {
+                    var raw = UInt16(truncatingIfNeeded: stored).littleEndian
+                    withUnsafeBytes(of: &raw) { bytes.append(contentsOf: $0) }
+                } else {
+                    var raw = UInt32(bitPattern: stored).littleEndian
+                    withUnsafeBytes(of: &raw) { bytes.append(contentsOf: $0) }
+                }
+            }
+        }
+        return bytes
+    }
+
+    @Test(arguments: [16, 20, 24, 32])
+    func integerPCMIsBitExact(bitDepth: Int) throws {
+        let channels = 2
+        let frames = 513
+        let source = packedPCM(bitDepth: bitDepth, channels: channels, frames: frames)
+        var encoder: OpaquePointer?
+        #expect(parso_alac_encoder_create(44_100, UInt32(channels), UInt32(bitDepth), 4096, 0, &encoder) == PARSO_ALAC_OK)
+        guard let encoder else { return }
+        defer { parso_alac_encoder_destroy(encoder) }
+
+        var cookie = [UInt8](repeating: 0, count: 48)
+        var cookieSize = UInt32(cookie.count)
+        let cookieResult = cookie.withUnsafeMutableBufferPointer {
+            parso_alac_encoder_copy_magic_cookie(encoder, $0.baseAddress, UInt32($0.count), &cookieSize)
+        }
+        #expect(cookieResult == PARSO_ALAC_OK)
+        #expect(cookieSize == 24)
+
+        var packet: UnsafeMutablePointer<UInt8>?
+        var packetBytes: UInt32 = 0
+        let encodeResult = source.withUnsafeBufferPointer {
+            parso_alac_encoder_encode(encoder, $0.baseAddress, UInt32(frames), &packet, &packetBytes)
+        }
+        #expect(encodeResult == PARSO_ALAC_OK)
+        #expect(packetBytes > 0)
+        guard let packet else { return }
+        defer { parso_alac_free(packet) }
+
+        var decoder: OpaquePointer?
+        let decoderResult = cookie.withUnsafeBufferPointer {
+            parso_alac_decoder_create($0.baseAddress, cookieSize, &decoder)
+        }
+        #expect(decoderResult == PARSO_ALAC_OK)
+        guard let decoder else { return }
+        defer { parso_alac_decoder_destroy(decoder) }
+
+        let maximumDecodedBytes = 4096 * channels * ((bitDepth + 7) / 8)
+        var decoded = [UInt8](repeating: 0, count: maximumDecodedBytes)
+        var decodedFrames: UInt32 = 0
+        let decodeResult = decoded.withUnsafeMutableBufferPointer {
+            parso_alac_decoder_decode(decoder, packet, packetBytes, $0.baseAddress, UInt32($0.count), &decodedFrames)
+        }
+        #expect(decodeResult == PARSO_ALAC_OK)
+        #expect(decodedFrames == UInt32(frames))
+        #expect(Array(decoded.prefix(source.count)) == source)
+        #expect(decoded.dropFirst(source.count).allSatisfy { $0 == 0 })
+    }
+
+    @Test func malformedCookieIsRejected() {
+        var decoder: OpaquePointer?
+        let cookie = [UInt8](repeating: 0, count: 24)
+        let result = cookie.withUnsafeBufferPointer {
+            parso_alac_decoder_create($0.baseAddress, UInt32($0.count), &decoder)
+        }
+        #expect(result == PARSO_ALAC_INVALID_ARGUMENT)
+        #expect(decoder == nil)
+    }
 }
 
 @Suite("Sample-rate conversion")

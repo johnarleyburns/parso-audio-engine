@@ -37,6 +37,8 @@ FONT = {
     ")": "01000 00100 00010 00010 00010 00100 01000", " ": "00000 00000 00000 00000 00000 00000 00000",
 }
 
+MINIMUM_REVIEW_SECONDS = 30.0
+
 
 def color_for_section(kind):
     return {
@@ -203,6 +205,19 @@ def main():
     with open(args.analysis, "r", encoding="utf-8") as stream:
         artifact = json.load(stream)
     duration = max(0.001, float(artifact.get("audioDuration", 0)))
+    if duration < MINIMUM_REVIEW_SECONDS:
+        parser.error(
+            f"human-acceptance MP4s must contain at least {MINIMUM_REVIEW_SECONDS:.0f} "
+            f"seconds of audio; sidecar contains {duration:.2f} seconds"
+        )
+    if artifact.get("scenario") == "phrase":
+        analysis_duration = max(0.0, float(artifact.get("analysisDuration", 0)))
+        if abs(duration - analysis_duration) > 0.01:
+            parser.error(
+                "phrase/structure MP4s must cover the entire source song; "
+                f"sidecar audioDuration={duration:.2f} differs from "
+                f"analysisDuration={analysis_duration:.2f}"
+            )
     frame_count = max(1, int(duration * args.fps + 0.999))
     command = [
         ffmpeg, "-y", "-loglevel", "error",

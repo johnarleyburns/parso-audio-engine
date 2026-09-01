@@ -12,6 +12,8 @@ import ParsoDJEngine
 @main
 @MainActor
 struct ParsoAcceptanceArtifacts {
+    private static let minimumReviewDuration: TimeInterval = 30
+
     private struct Fixture: Decodable {
         let id: String
         let filename: String
@@ -133,6 +135,19 @@ struct ParsoAcceptanceArtifacts {
                     "This artifact validates source analysis and synchronization only; it does not claim Smart Fader/CFX or scratch parity."
                 ]
             )
+        case "phrase":
+            rendering = Rendering(
+                buffer: source,
+                waveform: WaveformGenerator().generate(source),
+                sourceFormat: fixture.sourceFormat,
+                renderedScenario: "complete-source-phrase-analysis",
+                events: [],
+                notes: [
+                    "Audio is the complete downloaded fixture; no clip is selected.",
+                    "Beat, downbeat, waveform, and phrase annotations come from analysis of the complete source track.",
+                    "This artifact is the full-song phrase/structure review and does not claim engine FX parity."
+                ]
+            )
         case "crossfader-sweep":
             let second = try secondFixture(for: fixture, in: manifest.tracks, requestedID: options.fixtureBID)
             let secondURL = audioURL(for: second, directory: options.audioDirectory)
@@ -149,11 +164,17 @@ struct ParsoAcceptanceArtifacts {
             )
         default:
             throw ToolError.message(
-                "scenario '\(options.scenario)' is not implemented; available scenarios: waveform, crossfader-sweep"
+                "scenario '\(options.scenario)' is not implemented; available scenarios: waveform, phrase, crossfader-sweep"
             )
         }
         let visible = rendering.buffer
         let visibleDuration = duration(of: visible)
+        guard visibleDuration >= minimumReviewDuration else {
+            throw ToolError.message(
+                "human-acceptance artifacts must contain at least 30 seconds of audio; " +
+                "the selected source/render is only \(String(format: "%.2f", visibleDuration)) seconds"
+            )
+        }
 
         try FileManager.default.createDirectory(
             at: options.outputDirectory,
@@ -341,7 +362,7 @@ struct ParsoAcceptanceArtifacts {
             while index < arguments.count {
                 let argument = arguments[index]
                 guard argument.hasPrefix("--"), index + 1 < arguments.count else {
-                    throw ToolError.usage("usage: swift run ParsoAcceptanceArtifacts --fixture ID [--fixture-b ID] [--scenario waveform|crossfader-sweep] [--output-dir DIR] [--max-seconds N]")
+                    throw ToolError.usage("usage: swift run ParsoAcceptanceArtifacts --fixture ID [--fixture-b ID] [--scenario waveform|phrase|crossfader-sweep] [--output-dir DIR] [--max-seconds N]")
                 }
                 values[String(argument.dropFirst(2))] = arguments[index + 1]
                 index += 2
