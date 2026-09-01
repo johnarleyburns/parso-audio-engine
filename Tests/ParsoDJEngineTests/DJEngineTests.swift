@@ -181,7 +181,7 @@ struct SmartFaderTests {
     }
 }
 
-@Suite("Pad modes", .disabled("Implement pad modes — docs/SPEC.md §11.3"))
+@Suite("Pad modes")
 @MainActor
 struct PadModeTests {
     @Test func beatLoopPadSetsLoop() {

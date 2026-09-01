@@ -32,6 +32,14 @@ struct DeckState {
     bool loopActive = false;
 };
 
+struct SamplerSlot {
+    const float* channels[2] = {nullptr, nullptr};
+    int channelCount = 0;
+    int64_t frames = 0;
+    int64_t position = 0;
+    bool playing = false;
+};
+
 struct CommandQueue {
     pe_command commands[kCommandCapacity]{};
     std::atomic<uint32_t> writeIndex{0};
@@ -60,6 +68,7 @@ struct pe_engine {
     double sampleRate;
     int maxFrames;
     DeckState decks[2];
+    SamplerSlot sampler[16];
     ControlState control;
     CommandQueue queue;
     EventQueue events;
@@ -93,6 +102,15 @@ static float sampleAt(const DeckState& deck, int channel, double position) {
     const float a = deck.channels[channel][lower];
     const float b = deck.channels[channel][upper];
     return a + (b - a) * fraction;
+}
+
+static float sampleAt(const SamplerSlot& slot, int channel, int64_t position) {
+    if (slot.frames <= 0 || channel < 0 || channel >= slot.channelCount || !slot.channels[channel]) {
+        return 0.0f;
+    }
+    if (position < 0) position = 0;
+    if (position >= slot.frames) position = slot.frames - 1;
+    return slot.channels[channel][position];
 }
 
 static void pushEvent(pe_engine* engine, pe_event event) {
@@ -142,6 +160,18 @@ static void setLoop(DeckState& deck, double start, double end) {
 }
 
 static void applyCommand(pe_engine* engine, const pe_command& command) {
+    if (command.deck == -1) {
+        if (command.type == PE_CMD_SAMPLER_TRIGGER && command.i0 >= 0 && command.i0 < 16) {
+            SamplerSlot& slot = engine->sampler[command.i0];
+            if (slot.frames > 0) {
+                slot.position = 0;
+                slot.playing = true;
+            }
+        } else if (command.type == PE_CMD_SAMPLER_STOP && command.i0 >= 0 && command.i0 < 16) {
+            engine->sampler[command.i0].playing = false;
+        }
+        return;
+    }
     if (!validDeck(command.deck)) return;
     DeckState& deck = engine->decks[command.deck];
     switch (command.type) {
@@ -156,7 +186,6 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             break;
         case PE_CMD_SET_CUE:
         case PE_CMD_JUMP_CUE:
-        case PE_CMD_BEATJUMP:
         case PE_CMD_SET_MASTER:
         case PE_CMD_SET_KEYLOCK:
         case PE_CMD_JOG_TOUCH:
@@ -171,6 +200,17 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_LOAD:
             // These commands are reserved for subsequent engine slices;
             // ignoring them is deterministic and non-blocking.
+            break;
+        case PE_CMD_BEATJUMP:
+            if (std::isfinite(command.f0)) {
+                deck.position += static_cast<double>(command.f0) * deck.sampleRate;
+                if (deck.position < 0.0) deck.position = 0.0;
+                if (deck.position >= static_cast<double>(deck.frames)) {
+                    deck.position = static_cast<double>(deck.frames > 0 ? deck.frames - 1 : 0);
+                }
+                deck.shadowPosition = deck.position;
+                pushPlayheadEvent(engine, command.deck);
+            }
             break;
         case PE_CMD_SYNC:
             // The control actor computes the source position that matches the
@@ -350,6 +390,16 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 pushStateEvent(engine, deckIndex);
             }
         }
+        for (int slotIndex = 0; slotIndex < 16; ++slotIndex) {
+            SamplerSlot& slot = engine->sampler[slotIndex];
+            if (!slot.playing || slot.frames <= 0) continue;
+            const int rightChannel = slot.channelCount > 1 ? 1 : 0;
+            mixed += 0.5f * (
+                sampleAt(slot, 0, slot.position) + sampleAt(slot, rightChannel, slot.position)
+            ) * 0.8f;
+            ++slot.position;
+            if (slot.position >= slot.frames) slot.playing = false;
+        }
         const float output = mixed * master;
         if (left) left[frame] = output;
         if (right) right[frame] = output;
@@ -445,7 +495,22 @@ void pe_deck_set_buffer(
     state.loopActive = false;
 }
 
-void pe_sampler_set_slot(pe_engine*, int, const float* const*, int, int64_t) {}
+void pe_sampler_set_slot(
+    pe_engine* engine,
+    int slot,
+    const float* const* channels,
+    int channel_count,
+    int64_t frames
+) {
+    if (!engine || slot < 0 || slot >= 16 || !channels || channel_count <= 0 || frames < 0) return;
+    SamplerSlot& state = engine->sampler[slot];
+    state.channels[0] = channels[0];
+    state.channels[1] = channel_count > 1 ? channels[1] : channels[0];
+    state.channelCount = channel_count > 1 ? 2 : 1;
+    state.frames = frames;
+    state.position = 0;
+    state.playing = false;
+}
 
 void pe_render(pe_engine* engine, float* left, float* right, int frames) {
     render(engine, left, right, frames);

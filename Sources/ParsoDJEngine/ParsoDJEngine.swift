@@ -48,6 +48,7 @@ fileprivate final class EngineBridge {
     private var trackBPM: [Double] = [120, 120]
     weak var deckA: Deck?
     weak var deckB: Deck?
+    weak var sampler: Sampler?
 
     var handle: OpaquePointer {
         // The C handle is owned and used exclusively on the main/control actor.
@@ -78,6 +79,8 @@ fileprivate final class EngineBridge {
     func register(_ deck: Deck, index: Int) {
         if index == 0 { deckA = deck } else if index == 1 { deckB = deck }
     }
+
+    func register(_ sampler: Sampler) { self.sampler = sampler }
 
     func setTrackBPM(_ bpm: Double, index: Int) {
         guard trackBPM.indices.contains(index), bpm.isFinite, bpm > 0 else { return }
@@ -129,7 +132,7 @@ public final class HeadlessDJEngine {
         deckA = Deck(bridge: bridge, index: 0)
         deckB = Deck(bridge: bridge, index: 1)
         mixer = Mixer(bridge: bridge)
-        sampler = Sampler()
+        sampler = Sampler(bridge: bridge)
     }
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
@@ -422,8 +425,32 @@ public final class Deck {
     public var padMode: PadMode = .hotCue
     /// For `.keyboard` mode: which hot cue is pitched across the pads.
     public var keyboardCueIndex: Int = 0
-    public func padPress(_ index: Int) { unimplemented() }
-    public func padRelease(_ index: Int) { unimplemented() }
+    public func padPress(_ index: Int) {
+        guard (0..<8).contains(index) else { return }
+        switch padMode {
+        case .hotCue:
+            jumpHotCue(index)
+        case .keyboard:
+            pitchSemitones = Double(index - 4)
+        case .padFX1, .padFX2:
+            break
+        case .beatJump:
+            let seconds = trackBPM > 0 ? Double(index - 3) * beatJumpSize * 60 / trackBPM : 0
+            post(PE_CMD_BEATJUMP, f0: Float(seconds))
+        case .beatLoop:
+            let sizes = [1.0, 2, 4, 8, 16, 32, 64, 0.5]
+            autoBeatLoop(beats: sizes[index])
+        case .sampler:
+            bridge.sampler?.trigger(index)
+        case .keyShift:
+            pitchSemitones = Double(index - 3)
+        }
+    }
+
+    public func padRelease(_ index: Int) {
+        guard (0..<8).contains(index) else { return }
+        if padMode == .keyboard { pitchSemitones = 0 }
+    }
     /// Assign an effect to a Pad-FX pad (bank 1 or 2).
     public func assignPadFX(bank: Int, pad: Int, effect: BeatFXUnit.Kind, hold: Bool) { unimplemented() }
     /// Beat-jump size for `.beatJump` mode.
@@ -539,13 +566,59 @@ public final class SmartCFX {
 @MainActor
 public final class Sampler {
     public enum Play: Sendable { case oneShot, loop, gate }
-    public func load(_ slot: Int, buffer: PCMBuffer) { unimplemented() }  // 0..15
-    public func trigger(_ slot: Int) { unimplemented() }
-    public func stop(_ slot: Int) { unimplemented() }
-    public func setMode(_ slot: Int, _ mode: Play) { unimplemented() }
-    public func setGain(_ slot: Int, _ gain: Double) { unimplemented() }
+    private let bridge: EngineBridge
+    private var buffers: [PCMBuffer?] = Array(repeating: nil, count: 16)
+    private var modes: [Play] = Array(repeating: .oneShot, count: 16)
+    private var gains: [Double] = Array(repeating: 1, count: 16)
+
+    fileprivate init(bridge: EngineBridge) {
+        self.bridge = bridge
+        bridge.register(self)
+    }
+
+    public func load(_ slot: Int, buffer: PCMBuffer) {
+        guard buffers.indices.contains(slot) else { return }
+        buffers[slot] = buffer
+        buffer.withUnsafeChannels { channels, frames in
+            channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: buffer.channelCount) { pointers in
+                pe_sampler_set_slot(
+                    bridge.handle,
+                    Int32(slot),
+                    UnsafePointer(pointers),
+                    Int32(buffer.channelCount),
+                    Int64(frames)
+                )
+            }
+        }
+    }
+
+    public func trigger(_ slot: Int) {
+        guard buffers.indices.contains(slot), buffers[slot] != nil else { return }
+        var command = pe_command(
+            type: PE_CMD_SAMPLER_TRIGGER, deck: -1, i0: Int32(slot), i1: 0, i2: 0, f0: 0, f1: 0
+        )
+        _ = pe_post_command(bridge.handle, &command)
+    }
+
+    public func stop(_ slot: Int) {
+        guard buffers.indices.contains(slot) else { return }
+        var command = pe_command(
+            type: PE_CMD_SAMPLER_STOP, deck: -1, i0: Int32(slot), i1: 0, i2: 0, f0: 0, f1: 0
+        )
+        _ = pe_post_command(bridge.handle, &command)
+    }
+
+    public func setMode(_ slot: Int, _ mode: Play) {
+        guard modes.indices.contains(slot) else { return }
+        modes[slot] = mode
+    }
+
+    public func setGain(_ slot: Int, _ gain: Double) {
+        guard gains.indices.contains(slot) else { return }
+        gains[slot] = max(0, gain)
+    }
+
     public var masterGain: Double = 0.8
-    internal init() {}
 }
 
 @MainActor
