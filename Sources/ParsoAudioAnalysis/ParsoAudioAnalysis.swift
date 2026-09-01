@@ -530,7 +530,101 @@ public struct KeyEstimator: Sendable {
 /// Best-effort v1. See docs/SPEC.md §10.4.
 public struct StructureAnalyzer: Sendable {
     public init() {}
-    public func analyze(_ buffer: PCMBuffer, tempo: TempoResult) -> [Section] { unimplemented() }
+    public func analyze(_ buffer: PCMBuffer, tempo: TempoResult) -> [Section] {
+        guard buffer.frameCount > 0 else { return [] }
+        let sampleRate = buffer.format.sampleRate
+        let mono = buffer.downmixedToMono().channel(0)
+        let beatPeriod = tempo.bpm > 0 ? 60.0 / tempo.bpm : 0.5
+        let duration = Double(buffer.frameCount) / sampleRate
+        let beatCount = max(1, Int(ceil(duration / beatPeriod)))
+        var features = [[Double]]()
+        features.reserveCapacity(beatCount)
+
+        for beat in 0..<beatCount {
+            let start = min(buffer.frameCount, Int(Double(beat) * beatPeriod * sampleRate))
+            let end = min(buffer.frameCount, max(start + 1, Int(Double(beat + 1) * beatPeriod * sampleRate)))
+            guard start < end else { continue }
+            var energy = 0.0
+            var low = 0.0
+            var mid = 0.0
+            var high = 0.0
+            var crossings = 0
+            var previous = mono[start]
+            for index in start..<end {
+                let value = Double(mono[index])
+                energy += value * value
+                // Short-time band proxies are intentionally lightweight here;
+                // the feature is used for boundary novelty, not tonal analysis.
+                if abs(value) > 0.35 { high += value * value }
+                else if abs(value) > 0.1 { mid += value * value }
+                else { low += value * value }
+                if index > start && (mono[index] >= 0) != (previous >= 0) { crossings += 1 }
+                previous = mono[index]
+            }
+            let count = Double(end - start)
+            features.append([
+                (energy / count).squareRoot(),
+                low / count,
+                mid / count,
+                high / count,
+                Double(crossings) / count
+            ])
+        }
+
+        guard !features.isEmpty else { return [] }
+        let maximumEnergy = features.map { $0[0] }.max() ?? 0
+        var boundaries = [0]
+        var lastBoundary = 0
+        for index in 1..<features.count {
+            let previous = features[index - 1]
+            let current = features[index]
+            let novelty = Self.cosineDistance(previous, current)
+            let energyChange = abs(current[0] - previous[0])
+            let isPeak = index + 1 == features.count ||
+                novelty >= Self.cosineDistance(current, features[index + 1])
+            if isPeak && energyChange > max(0.02 * maximumEnergy, 0.08) && index - lastBoundary >= 4 {
+                boundaries.append(index)
+                lastBoundary = index
+            }
+        }
+        if boundaries.count == 1 && features.count > 8 {
+            // A gradual transition can have no single dominant novelty peak.
+            let quarter = max(1, features.count / 4)
+            boundaries.append(quarter)
+            boundaries.append(min(features.count - 1, quarter * 2))
+        }
+        boundaries = Array(Set(boundaries)).sorted()
+
+        return boundaries.enumerated().map { position, beatIndex in
+            let start = Double(beatIndex) * beatPeriod
+            let energy = features[min(beatIndex, features.count - 1)][0]
+            let kind: Section.Kind
+            if position == 0 {
+                kind = .intro
+            } else if energy > maximumEnergy * 0.75 {
+                kind = .drop
+            } else if energy < maximumEnergy * 0.25 {
+                kind = .breakdown
+            } else {
+                kind = .unknown
+            }
+            return Section(start: min(duration, start), kind: kind, bar: beatIndex / 4 + 1)
+        }
+    }
+
+    private static func cosineDistance(_ lhs: [Double], _ rhs: [Double]) -> Double {
+        guard lhs.count == rhs.count else { return 1 }
+        var dot = 0.0
+        var lhsNorm = 0.0
+        var rhsNorm = 0.0
+        for index in lhs.indices {
+            dot += lhs[index] * rhs[index]
+            lhsNorm += lhs[index] * lhs[index]
+            rhsNorm += rhs[index] * rhs[index]
+        }
+        let denominator = (lhsNorm * rhsNorm).squareRoot()
+        return denominator > 0 ? 1 - dot / denominator : 1
+    }
 }
 
 public struct WaveformGenerator: Sendable {

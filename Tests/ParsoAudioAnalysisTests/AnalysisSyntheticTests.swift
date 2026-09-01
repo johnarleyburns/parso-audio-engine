@@ -67,7 +67,7 @@ struct KeySyntheticTests {
     }
 }
 
-@Suite("Structure (synthetic)", .disabled("Implement StructureAnalyzer — docs/SPEC.md §10.4"))
+@Suite("Structure (synthetic)")
 struct StructureSyntheticTests {
     @Test func findsEnergyBoundaries() {
         // silence -> low tone -> full-energy noise -> low tone
