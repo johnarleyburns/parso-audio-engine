@@ -77,6 +77,7 @@ struct ControlState {
     std::atomic<float> crossfader{0.0f};
     std::atomic<float> curve{0.0f};
     std::atomic<float> masterLevel{0.8f};
+    std::atomic<float> limiterCeilingDB{-0.3f};
     std::atomic<float> micLevel{0.0f};
     std::atomic<float> cueMasterMix{0.5f};
     std::atomic<float> masterCue{0.0f};
@@ -120,6 +121,7 @@ struct pe_engine {
     int beatFXTailFrames = 0;
     float beatFXDelay[48000] = {};
     uint32_t beatFXDelayIndex = 0;
+    float limiterGain = 1.0f;
 };
 
 namespace {
@@ -156,6 +158,23 @@ static float dbToGain(float db) {
     if (std::isnan(db) || db <= -90.0f) return 0.0f;
     if (!std::isfinite(db)) return 1.0f;
     return std::pow(10.0f, db / 20.0f);
+}
+
+static float processLimiter(pe_engine* engine, float input) {
+    const float ceilingDB = engine->control.limiterCeilingDB.load(std::memory_order_relaxed);
+    const float safeDB = std::isfinite(ceilingDB) ? std::max(-90.0f, std::min(0.0f, ceilingDB)) : -0.3f;
+    const float ceiling = dbToGain(safeDB);
+    const float magnitude = std::fabs(input);
+    const float targetGain = magnitude > ceiling && magnitude > 0.0f ? ceiling / magnitude : 1.0f;
+    if (targetGain < engine->limiterGain) {
+        engine->limiterGain = targetGain;
+    } else {
+        const float release = 1.0f - std::exp(-1.0f / static_cast<float>(engine->sampleRate * 0.050));
+        engine->limiterGain += release * (targetGain - engine->limiterGain);
+    }
+    float output = input * engine->limiterGain;
+    if (std::fabs(output) > ceiling) output = std::copysign(ceiling, output);
+    return output;
 }
 
 static float processEQ(DeckState& deck, float sample, double sampleRate, int deckIndex,
@@ -731,7 +750,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 mixed = processBeatFX(engine, mixed);
             }
         }
-        const float output = mixed * master;
+        const float output = processLimiter(engine, mixed * master);
         const float outputPeak = std::fabs(output);
         if (outputPeak > masterPeak) masterPeak = outputPeak;
         if (left) left[frame] = output;
@@ -839,6 +858,10 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
     engine->control.crossfader.store(control->crossfader, std::memory_order_relaxed);
     engine->control.curve.store(control->xfade_curve, std::memory_order_relaxed);
     engine->control.masterLevel.store(control->master_level, std::memory_order_relaxed);
+    engine->control.limiterCeilingDB.store(
+        std::isfinite(control->limiter_ceiling_db) ? control->limiter_ceiling_db : -0.3f,
+        std::memory_order_relaxed
+    );
     engine->control.micLevel.store(
         std::isfinite(control->mic_level) && control->mic_level >= 0.0f ? control->mic_level : 0.0f,
         std::memory_order_relaxed

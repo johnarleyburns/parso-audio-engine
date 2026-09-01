@@ -425,3 +425,38 @@ struct ColorAndBeatFXRenderTests {
         #expect((tail.map(abs).max() ?? 0) > 0.001)
     }
 }
+
+@Suite("Master limiter and RT stability")
+@MainActor
+struct MasterLimiterTests {
+    @Test func limiterCapsMasterPeakAtConfiguredCeiling() {
+        let e = makeLoadedHeadless()
+        e.mixer.master.level = 1
+        e.mixer.master.limiterCeilingDB = -6
+        e.mixer.channelA.trim = 2
+        e.mixer.channelB.trim = 2
+        e.deckA.play()
+        e.deckB.play()
+        let output = e.render(frames: 4096).left
+        let peak = output.map(abs).max() ?? 0
+        #expect(peak > 0.45)
+        #expect(peak <= pow(10, -6 / 20) + 0.001)
+        #expect(e.mixer.master.peakMeter <= pow(10, -6 / 20) + 0.001)
+    }
+
+    @Test func repeatedEffectBlocksRemainFinite() {
+        let e = makeLoadedHeadless()
+        e.mixer.channelA.colorFX = .dubEcho
+        e.mixer.channelA.colorAmount = 1
+        e.mixer.beatFX.kind = .reverb
+        e.mixer.beatFX.assign = .both
+        e.mixer.beatFX.depth = 1
+        e.mixer.beatFX.isOn = true
+        e.deckA.play()
+        e.deckB.play()
+        for _ in 0..<32 {
+            let output = e.render(frames: 512).left
+            #expect(output.allSatisfy { $0.isFinite })
+        }
+    }
+}

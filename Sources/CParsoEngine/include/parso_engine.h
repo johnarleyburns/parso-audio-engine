@@ -19,6 +19,7 @@ typedef struct {
     float crossfader;        /* -1..+1 */
     float xfade_curve;       /* 0 smooth .. 1 sharp */
     float master_level;      /* 0..1 */
+    float limiter_ceiling_db;/* dBTP, normally -0.3 */
     float mic_level;         /* 0..1 */
     float cue_master_mix;    /* 0..1 (headphone blend) */
     float master_cue;        /* 0/1 */

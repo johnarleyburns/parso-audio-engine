@@ -130,6 +130,7 @@ fileprivate final class EngineBridge {
         control.crossfader = 0
         control.xfade_curve = 0
         control.master_level = 0.8
+        control.limiter_ceiling_db = -0.3
         control.cue_master_mix = 0.5
         control.master_cue = 0
         control.headphone_level = 0.7
@@ -843,7 +844,7 @@ public final class MasterOut {
     public var level: Double = 0.8 { didSet { publishControl() } }
     public var masterCue: Bool = false
     /// Limiter ceiling in dBTP (default −0.3).
-    public var limiterCeilingDB: Double = -0.3
+    public var limiterCeilingDB: Double = -0.3 { didSet { publishControl() } }
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
     fileprivate func updatePeak(_ value: Float) {
@@ -853,6 +854,7 @@ public final class MasterOut {
 
     private func publishControl() {
         bridge.control.master_level = Float(max(0, min(1, level)))
+        bridge.control.limiter_ceiling_db = Float(limiterCeilingDB.isFinite ? limiterCeilingDB : -0.3)
         bridge.publishControl()
     }
 }
