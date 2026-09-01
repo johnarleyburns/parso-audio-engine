@@ -297,3 +297,29 @@ struct SavedLoopAndPadFXTests {
         #expect(!e.mixer.beatFX.isOn)
     }
 }
+
+@Suite("Meters and microphone")
+@MainActor
+struct MeterAndMicTests {
+    @Test func deckAndMasterMetersFollowRenderedPeaks() {
+        let e = makeLoadedHeadless()
+        e.mixer.crossfader = -1
+        e.deckA.play()
+        _ = e.render(frames: 4096)
+        #expect(e.mixer.channelA.peakMeter > 0)
+        #expect(e.mixer.channelB.peakMeter == 0)
+        #expect(e.mixer.master.peakMeter > 0)
+    }
+
+    @Test func unmutedMicIsSummedIntoMaster() {
+        let e = makeLoadedHeadless()
+        e.mic.level = 1
+        e.mic.isMuted = false
+        e.mic.submit(SignalGenerators.sine(frequency: 440, seconds: 0.5, sampleRate: 48_000, channels: 2))
+        let out = e.render(frames: 8192)
+        let buffer = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: out.left.count)
+        for i in out.left.indices { buffer.channel(0)[i] = out.left[i] }
+        #expect(Measure.goertzelMagnitude(buffer, frequency: 440) > 0)
+        #expect(e.mixer.master.peakMeter > 0)
+    }
+}

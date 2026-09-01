@@ -43,7 +43,7 @@ public final class DJEngine {
         deckB = Deck(bridge: bridge, index: 1)
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
-        mic = MicInput()
+        mic = MicInput(bridge: bridge)
         monitoring = Monitoring()
     }
 
@@ -145,6 +145,8 @@ public final class HeadlessDJEngine {
     public let deckB: Deck
     public let mixer: Mixer
     public let sampler: Sampler
+    public let mic: MicInput
+    public let monitoring: Monitoring
     private let bridge: EngineBridge
 
     public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
@@ -153,6 +155,8 @@ public final class HeadlessDJEngine {
         deckB = Deck(bridge: bridge, index: 1)
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
+        mic = MicInput(bridge: bridge)
+        monitoring = Monitoring()
     }
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
@@ -193,6 +197,10 @@ public final class HeadlessDJEngine {
                 case PE_EVT_PLAYHEAD, PE_EVT_STATE:
                     if event.deck == 0 { deckA.apply(event) }
                     if event.deck == 1 { deckB.apply(event) }
+                case PE_EVT_PEAK:
+                    if event.deck == 0 { mixer.channelA.updatePeak(event.f0) }
+                    if event.deck == 1 { mixer.channelB.updatePeak(event.f0) }
+                    if event.deck == -1 { mixer.master.updatePeak(event.f0) }
                 case PE_EVT_END_OF_TRACK:
                     if event.deck == 0 { deckA.applyEndOfTrack(event) }
                     if event.deck == 1 { deckB.applyEndOfTrack(event) }
@@ -673,7 +681,10 @@ public final class Channel {
     public var faderStart: Bool = false
     public var crossfaderAssign: XFAssign = .thru
     /// Latest peak meter (0..1), updated from the RT event stream.
-    public var peakMeter: Float { unimplemented() }
+    public private(set) var peakMeter: Float = 0
+    fileprivate func updatePeak(_ value: Float) {
+        peakMeter = value.isFinite ? max(0, min(1, value)) : 0
+    }
     internal init() {}
 }
 
@@ -700,7 +711,10 @@ public final class MasterOut {
     /// Limiter ceiling in dBTP (default −0.3).
     public var limiterCeilingDB: Double = -0.3
     /// Latest master peak (0..1).
-    public var peakMeter: Float { unimplemented() }
+    public private(set) var peakMeter: Float = 0
+    fileprivate func updatePeak(_ value: Float) {
+        peakMeter = value.isFinite ? max(0, min(1, value)) : 0
+    }
     internal init() {}
 }
 
@@ -799,11 +813,35 @@ public final class Sampler {
 
 @MainActor
 public final class MicInput {
-    public var level: Double = 0
-    public var isMuted: Bool = true
+    private let bridge: EngineBridge
+    private var buffer: PCMBuffer?
+    public var level: Double = 0 {
+        didSet { publishLevel() }
+    }
+    public var isMuted: Bool = true {
+        didSet { publishLevel() }
+    }
     /// Push captured mic PCM (app supplies the capture path).
-    public func submit(_ buffer: PCMBuffer) { unimplemented() }
-    internal init() {}
+    public func submit(_ buffer: PCMBuffer) {
+        self.buffer = buffer
+        buffer.withUnsafeChannels { channels, frames in
+            channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: buffer.channelCount) { pointers in
+                pe_mic_set_buffer(
+                    bridge.handle,
+                    UnsafePointer(pointers),
+                    Int32(buffer.channelCount),
+                    Int64(frames),
+                    buffer.format.sampleRate
+                )
+            }
+        }
+    }
+    fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
+
+    private func publishLevel() {
+        bridge.control.mic_level = Float(isMuted ? 0 : max(0, min(1, level)))
+        bridge.publishControl()
+    }
 }
 
 @MainActor

@@ -42,6 +42,14 @@ struct SamplerSlot {
     bool playing = false;
 };
 
+struct MicState {
+    const float* channels[2] = {nullptr, nullptr};
+    int channelCount = 0;
+    int64_t frames = 0;
+    double sampleRate = 0.0;
+    double position = 0.0;
+};
+
 struct CommandQueue {
     pe_command commands[kCommandCapacity]{};
     std::atomic<uint32_t> writeIndex{0};
@@ -58,6 +66,7 @@ struct ControlState {
     std::atomic<float> crossfader{0.0f};
     std::atomic<float> curve{0.0f};
     std::atomic<float> masterLevel{0.8f};
+    std::atomic<float> micLevel{0.0f};
     std::atomic<float> fader[2]{{1.0f}, {1.0f}};
     std::atomic<float> trim[2]{{0.5f}, {0.5f}};
     std::atomic<float> deckTimeRatio[2]{{1.0f}, {1.0f}};
@@ -71,6 +80,7 @@ struct pe_engine {
     int maxFrames;
     DeckState decks[2];
     SamplerSlot sampler[16];
+    MicState mic;
     ControlState control;
     CommandQueue queue;
     EventQueue events;
@@ -115,6 +125,20 @@ static float sampleAt(const SamplerSlot& slot, int channel, int64_t position) {
     return slot.channels[channel][position];
 }
 
+static float sampleAt(const MicState& mic, int channel, double position) {
+    if (mic.frames <= 0 || channel < 0 || channel >= mic.channelCount || !mic.channels[channel]) {
+        return 0.0f;
+    }
+    if (position < 0.0) position = 0.0;
+    const double last = static_cast<double>(mic.frames - 1);
+    if (position >= last) return mic.channels[channel][mic.frames - 1];
+    const int64_t lower = static_cast<int64_t>(position);
+    const int64_t upper = lower + 1;
+    const float fraction = static_cast<float>(position - static_cast<double>(lower));
+    return mic.channels[channel][lower] +
+        (mic.channels[channel][upper] - mic.channels[channel][lower]) * fraction;
+}
+
 static void pushEvent(pe_engine* engine, pe_event event) {
     const uint32_t write = engine->events.writeIndex.load(std::memory_order_relaxed);
     const uint32_t read = engine->events.readIndex.load(std::memory_order_acquire);
@@ -143,6 +167,10 @@ static void pushPlayheadEvent(pe_engine* engine, int deckIndex) {
         deck.playing ? 1.0f : 0.0f,
         static_cast<float>(deck.shadowPosition)
     });
+}
+
+static void pushPeakEvent(pe_engine* engine, int deckIndex, float peak) {
+    pushEvent(engine, pe_event{PE_EVT_PEAK, deckIndex, 0, peak, 0.0f});
 }
 
 static void setLoop(DeckState& deck, double start, double end) {
@@ -392,6 +420,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
         gainB
     );
     const float master = engine->control.masterLevel.load(std::memory_order_relaxed);
+    const float micLevel = engine->control.micLevel.load(std::memory_order_relaxed);
     const float channelGains[2] = {
         engine->control.trim[0].load(std::memory_order_relaxed) *
             engine->control.fader[0].load(std::memory_order_relaxed) * gainA,
@@ -399,6 +428,8 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             engine->control.fader[1].load(std::memory_order_relaxed) * gainB
     };
 
+    float deckPeaks[2] = {0.0f, 0.0f};
+    float masterPeak = 0.0f;
     for (int frame = 0; frame < frames; ++frame) {
         float mixed = 0.0f;
         for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
@@ -410,6 +441,9 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 sampleAt(deck, 0, sourcePosition) + sampleAt(deck, rightChannel, sourcePosition)
             );
             mixed += sample * channelGains[deckIndex];
+            const float channelSample = sample * channelGains[deckIndex];
+            const float channelPeak = std::fabs(channelSample);
+            if (channelPeak > deckPeaks[deckIndex]) deckPeaks[deckIndex] = channelPeak;
             const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
             const double positionIncrement = deck.sampleRate / engine->sampleRate *
                 (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
@@ -434,6 +468,18 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 pushStateEvent(engine, deckIndex);
             }
         }
+        if (micLevel > 0.0f && engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
+            const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
+            const float micSample = 0.5f * (
+                sampleAt(engine->mic, 0, engine->mic.position) +
+                sampleAt(engine->mic, rightChannel, engine->mic.position)
+            );
+            mixed += micSample * micLevel;
+            engine->mic.position += engine->mic.sampleRate / engine->sampleRate;
+            if (engine->mic.position >= static_cast<double>(engine->mic.frames)) {
+                engine->mic.position = static_cast<double>(engine->mic.frames);
+            }
+        }
         for (int slotIndex = 0; slotIndex < 16; ++slotIndex) {
             SamplerSlot& slot = engine->sampler[slotIndex];
             if (!slot.playing || slot.frames <= 0) continue;
@@ -445,13 +491,17 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             if (slot.position >= slot.frames) slot.playing = false;
         }
         const float output = mixed * master;
+        const float outputPeak = std::fabs(output);
+        if (outputPeak > masterPeak) masterPeak = outputPeak;
         if (left) left[frame] = output;
         if (right) right[frame] = output;
     }
 
     for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
         pushPlayheadEvent(engine, deckIndex);
+        pushPeakEvent(engine, deckIndex, deckPeaks[deckIndex]);
     }
+    pushPeakEvent(engine, -1, masterPeak);
 }
 
 } // namespace
@@ -472,6 +522,10 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
     engine->control.crossfader.store(control->crossfader, std::memory_order_relaxed);
     engine->control.curve.store(control->xfade_curve, std::memory_order_relaxed);
     engine->control.masterLevel.store(control->master_level, std::memory_order_relaxed);
+    engine->control.micLevel.store(
+        std::isfinite(control->mic_level) && control->mic_level >= 0.0f ? control->mic_level : 0.0f,
+        std::memory_order_relaxed
+    );
     for (int index = 0; index < 2; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
@@ -556,6 +610,22 @@ void pe_sampler_set_slot(
     state.frames = frames;
     state.position = 0;
     state.playing = false;
+}
+
+void pe_mic_set_buffer(
+    pe_engine* engine,
+    const float* const* channels,
+    int channel_count,
+    int64_t frames,
+    double sample_rate
+) {
+    if (!engine || !channels || channel_count <= 0 || frames < 0 || !(sample_rate > 0.0)) return;
+    engine->mic.channels[0] = channels[0];
+    engine->mic.channels[1] = channel_count > 1 ? channels[1] : channels[0];
+    engine->mic.channelCount = channel_count > 1 ? 2 : 1;
+    engine->mic.frames = frames;
+    engine->mic.sampleRate = sample_rate;
+    engine->mic.position = 0.0;
 }
 
 void pe_render(pe_engine* engine, float* left, float* right, int frames) {

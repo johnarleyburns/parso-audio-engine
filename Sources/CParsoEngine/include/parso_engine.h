@@ -69,6 +69,9 @@ void pe_deck_set_buffer(pe_engine*, int deck, const float* const* channels, int 
                         int64_t frames, double sample_rate);
 /* Provide a sampler slot buffer (0..15). */
 void pe_sampler_set_slot(pe_engine*, int slot, const float* const* channels, int channel_count, int64_t frames);
+/* Provide a resident mic capture block. The block is consumed from the start on the next render. */
+void pe_mic_set_buffer(pe_engine*, const float* const* channels, int channel_count,
+                       int64_t frames, double sample_rate);
 
 /* RT render entry point (call from the audio render block). Interleaved-out is NOT used;
  * writes non-interleaved stereo master into out_l/out_r. */
