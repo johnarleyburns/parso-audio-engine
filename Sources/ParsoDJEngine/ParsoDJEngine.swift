@@ -156,6 +156,7 @@ public final class Deck {
     private var buffer: PCMBuffer?
     private var currentPlayhead: TimeInterval = 0
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
+    private var trackBPM: Double = 120
 
     fileprivate init(bridge: EngineBridge, index: Int) {
         self.bridge = bridge
@@ -167,6 +168,7 @@ public final class Deck {
         self.buffer = buffer
         currentPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
+        trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
         buffer.withUnsafeChannels { channels, frames in
             channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: buffer.channelCount) { pointers in
                 pe_deck_set_buffer(
@@ -211,8 +213,8 @@ public final class Deck {
         isPlaying = false
     }
 
-    private func post(_ type: pe_cmd_type) {
-        var command = pe_command(type: type, deck: Int32(index), i0: 0, i1: 0, i2: 0, f0: 0, f1: 0)
+    private func post(_ type: pe_cmd_type, i0: Int = 0, f0: Float = 0, f1: Float = 0) {
+        var command = pe_command(type: type, deck: Int32(index), i0: Int32(i0), i1: 0, i2: 0, f0: f0, f1: f1)
         _ = pe_post_command(bridge.handle, &command)
     }
 
@@ -257,13 +259,19 @@ public final class Deck {
     }
 
     // Loops
-    public func loopIn() { unimplemented() }
-    public func loopOut() { unimplemented() }
-    public func reloopExit() { unimplemented() }
-    public func autoBeatLoop(beats: Double) { unimplemented() }
-    public func loopHalve() { unimplemented() }
-    public func loopDouble() { unimplemented() }
-    public func loopMove(beats: Double) { unimplemented() }
+    public func loopIn() { post(PE_CMD_LOOP_IN) }
+    public func loopOut() { post(PE_CMD_LOOP_OUT) }
+    public func reloopExit() { post(PE_CMD_RELOOP_EXIT) }
+    public func autoBeatLoop(beats: Double) {
+        guard beats > 0, trackBPM > 0 else { return }
+        post(PE_CMD_BEATLOOP, f0: Float(beats * 60 / trackBPM))
+    }
+    public func loopHalve() { post(PE_CMD_LOOP_SCALE, f0: 0.5) }
+    public func loopDouble() { post(PE_CMD_LOOP_SCALE, f0: 2) }
+    public func loopMove(beats: Double) {
+        guard trackBPM > 0 else { return }
+        post(PE_CMD_LOOP_MOVE, f0: Float(beats * 60 / trackBPM))
+    }
     public func saveLoop(_ slot: Int) { unimplemented() }
     public func callLoop(_ slot: Int) { unimplemented() }
     public func setActiveLoop(_ enabled: Bool) { unimplemented() }
@@ -285,10 +293,6 @@ public final class Deck {
     /// Beat-jump size for `.beatJump` mode.
     public var beatJumpSize: Double = 4
 
-    private func post(_ type: pe_cmd_type, i0: Int = 0) {
-        var command = pe_command(type: type, deck: Int32(index), i0: Int32(i0), i1: 0, i2: 0, f0: 0, f1: 0)
-        _ = pe_post_command(bridge.handle, &command)
-    }
 }
 
 // MARK: - Mixer / channels / FX

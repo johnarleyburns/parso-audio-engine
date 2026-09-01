@@ -108,7 +108,7 @@ struct SyncTests {
     }
 }
 
-@Suite("Loops", .disabled("Implement looping — docs/SPEC.md §11.2"))
+@Suite("Loops")
 @MainActor
 struct LoopTests {
     @Test func autoBeatLoopProducesPeriodicOutput() {
@@ -120,6 +120,16 @@ struct LoopTests {
         // A 4-beat loop at 120 BPM is 2 s, so within 1 s output must be non-empty and bounded.
         let peak = out.left.map(abs).max() ?? 0
         #expect(peak > 0 && peak <= 1.0001)
+    }
+
+    @Test func autoBeatLoopWrapsThePlayhead() {
+        let e = makeLoadedHeadless(bpmA: 120)
+        e.deckA.play()
+        e.mixer.crossfader = -1
+        e.deckA.autoBeatLoop(beats: 4)
+        _ = e.render(frames: 120_000) // 2.5 s; a 4-beat loop is 2 s at 120 BPM
+        #expect(e.deckA.playhead > 0.45 && e.deckA.playhead < 0.55)
+        #expect(e.deckA.isPlaying)
     }
 }
 
