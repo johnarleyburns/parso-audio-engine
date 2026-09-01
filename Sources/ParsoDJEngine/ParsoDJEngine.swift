@@ -44,7 +44,7 @@ public final class DJEngine {
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
-        monitoring = Monitoring()
+        monitoring = Monitoring(bridge: bridge)
     }
 
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
@@ -82,6 +82,10 @@ fileprivate final class EngineBridge {
         control.crossfader = 0
         control.xfade_curve = 0
         control.master_level = 0.8
+        control.cue_master_mix = 0.5
+        control.master_cue = 0
+        control.headphone_level = 0.7
+        control.cue_pfl = (0, 0)
         control.trim = (0.5, 0.5)
         control.fader = (1, 1)
         control.deck_time_ratio = (1, 1)
@@ -156,7 +160,7 @@ public final class HeadlessDJEngine {
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
-        monitoring = Monitoring()
+        monitoring = Monitoring(bridge: bridge)
     }
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
@@ -647,9 +651,9 @@ public final class Mixer {
 
     fileprivate init(bridge: EngineBridge) {
         self.bridge = bridge
-        channelA = Channel()
-        channelB = Channel()
-        master = MasterOut()
+        channelA = Channel(bridge: bridge, index: 0)
+        channelB = Channel(bridge: bridge, index: 1)
+        master = MasterOut(bridge: bridge)
         beatFX = BeatFXUnit()
         smartFader = SmartFader()
         smartCFX = SmartCFX()
@@ -670,14 +674,16 @@ public enum XFAssign: Sendable { case a, b, thru }
 
 @MainActor
 public final class Channel {
-    public var trim: Double = 0.5                     // gain
+    private let bridge: EngineBridge
+    private let index: Int
+    public var trim: Double = 0.5 { didSet { publishControl() } } // gain
     public var eqLow: Double = 0                      // dB, -inf(kill)..+6
     public var eqMid: Double = 0
     public var eqHigh: Double = 0
     public var colorFX: ColorFX = .filter
     public var colorAmount: Double = 0                // -1..+1 (center = off)
-    public var fader: Double = 1                      // 0..1
-    public var cuePFL: Bool = false                   // headphone pre-listen
+    public var fader: Double = 1 { didSet { publishControl() } } // 0..1
+    public var cuePFL: Bool = false { didSet { publishControl() } } // headphone pre-listen
     public var faderStart: Bool = false
     public var crossfaderAssign: XFAssign = .thru
     /// Latest peak meter (0..1), updated from the RT event stream.
@@ -685,7 +691,26 @@ public final class Channel {
     fileprivate func updatePeak(_ value: Float) {
         peakMeter = value.isFinite ? max(0, min(1, value)) : 0
     }
-    internal init() {}
+    fileprivate init(bridge: EngineBridge, index: Int) {
+        self.bridge = bridge
+        self.index = index
+    }
+
+    private func publishControl() {
+        let gain = Float(max(0, trim))
+        let channelFader = Float(max(0, min(1, fader)))
+        let pfl = cuePFL ? Float(1) : Float(0)
+        if index == 0 {
+            bridge.control.trim.0 = gain
+            bridge.control.fader.0 = channelFader
+            bridge.control.cue_pfl.0 = pfl
+        } else {
+            bridge.control.trim.1 = gain
+            bridge.control.fader.1 = channelFader
+            bridge.control.cue_pfl.1 = pfl
+        }
+        bridge.publishControl()
+    }
 }
 
 @MainActor
@@ -706,7 +731,8 @@ public final class BeatFXUnit {
 
 @MainActor
 public final class MasterOut {
-    public var level: Double = 0.8
+    private let bridge: EngineBridge
+    public var level: Double = 0.8 { didSet { publishControl() } }
     public var masterCue: Bool = false
     /// Limiter ceiling in dBTP (default −0.3).
     public var limiterCeilingDB: Double = -0.3
@@ -715,7 +741,12 @@ public final class MasterOut {
     fileprivate func updatePeak(_ value: Float) {
         peakMeter = value.isFinite ? max(0, min(1, value)) : 0
     }
-    internal init() {}
+    fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
+
+    private func publishControl() {
+        bridge.control.master_level = Float(max(0, min(1, level)))
+        bridge.publishControl()
+    }
 }
 
 // MARK: - Smart features
@@ -846,10 +877,18 @@ public final class MicInput {
 
 @MainActor
 public final class Monitoring {
-    public var masterCue: Bool = false
-    public var cueMasterMix: Double = 0.5   // 0 = cue only, 1 = master only
-    public var headphoneLevel: Double = 0.7
-    internal init() {}
+    private let bridge: EngineBridge
+    public var masterCue: Bool = false { didSet { publishControl() } }
+    public var cueMasterMix: Double = 0.5 { didSet { publishControl() } } // 0 = cue only, 1 = master only
+    public var headphoneLevel: Double = 0.7 { didSet { publishControl() } }
+    fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
+
+    private func publishControl() {
+        bridge.control.master_cue = masterCue ? 1 : 0
+        bridge.control.cue_master_mix = Float(max(0, min(1, cueMasterMix)))
+        bridge.control.headphone_level = Float(max(0, min(1, headphoneLevel)))
+        bridge.publishControl()
+    }
 }
 
 /// Records the master bus off the RT thread. **No MP3** (see `ExportCodec`).

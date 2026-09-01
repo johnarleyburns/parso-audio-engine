@@ -3,6 +3,7 @@
 // resident caller-owned PCM and fixed-size command/control state.
 #include "parso_engine.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -67,6 +68,10 @@ struct ControlState {
     std::atomic<float> curve{0.0f};
     std::atomic<float> masterLevel{0.8f};
     std::atomic<float> micLevel{0.0f};
+    std::atomic<float> cueMasterMix{0.5f};
+    std::atomic<float> masterCue{0.0f};
+    std::atomic<float> headphoneLevel{0.7f};
+    std::atomic<float> cuePFL[2]{{0.0f}, {0.0f}};
     std::atomic<float> fader[2]{{1.0f}, {1.0f}};
     std::atomic<float> trim[2]{{0.5f}, {0.5f}};
     std::atomic<float> deckTimeRatio[2]{{1.0f}, {1.0f}};
@@ -468,7 +473,8 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                 pushStateEvent(engine, deckIndex);
             }
         }
-        if (micLevel > 0.0f && engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
+        if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
+            engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
             const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
             const float micSample = 0.5f * (
                 sampleAt(engine->mic, 0, engine->mic.position) +
@@ -504,6 +510,75 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
     pushPeakEvent(engine, -1, masterPeak);
 }
 
+static void renderMonitor(pe_engine* engine, float* left, float* right, int frames) {
+    if (!engine || frames <= 0) {
+        clearOutput(left, right, frames);
+        return;
+    }
+
+    clearOutput(left, right, frames);
+    drainCommands(engine);
+
+    float gainA = 0.0f;
+    float gainB = 0.0f;
+    crossfadeGains(
+        engine->control.crossfader.load(std::memory_order_relaxed),
+        engine->control.curve.load(std::memory_order_relaxed),
+        gainA,
+        gainB
+    );
+    const float masterLevel = engine->control.masterLevel.load(std::memory_order_relaxed);
+    const float micLevel = engine->control.micLevel.load(std::memory_order_relaxed);
+    const float mix = engine->control.cueMasterMix.load(std::memory_order_relaxed);
+    const float masterCue = engine->control.masterCue.load(std::memory_order_relaxed);
+    const float headphoneLevel = engine->control.headphoneLevel.load(std::memory_order_relaxed);
+    const float channelGains[2] = {
+        engine->control.trim[0].load(std::memory_order_relaxed) *
+            engine->control.fader[0].load(std::memory_order_relaxed) * gainA,
+        engine->control.trim[1].load(std::memory_order_relaxed) *
+            engine->control.fader[1].load(std::memory_order_relaxed) * gainB
+    };
+    const float cueGains[2] = {
+        engine->control.trim[0].load(std::memory_order_relaxed) *
+            engine->control.fader[0].load(std::memory_order_relaxed),
+        engine->control.trim[1].load(std::memory_order_relaxed) *
+            engine->control.fader[1].load(std::memory_order_relaxed)
+    };
+
+    for (int frame = 0; frame < frames; ++frame) {
+        float cueSignal = 0.0f;
+        float masterSignal = 0.0f;
+        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+            const DeckState& deck = engine->decks[deckIndex];
+            if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) continue;
+            const int rightChannel = deck.channelCount > 1 ? 1 : 0;
+            const float sample = 0.5f * (
+                sampleAt(deck, 0, deck.position) + sampleAt(deck, rightChannel, deck.position)
+            );
+            masterSignal += sample * channelGains[deckIndex];
+            if (engine->control.cuePFL[deckIndex].load(std::memory_order_relaxed) > 0.5f) {
+                cueSignal += sample * cueGains[deckIndex];
+            }
+        }
+        if (masterCue > 0.5f) {
+            masterSignal *= masterLevel;
+            if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
+                engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
+                const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
+                masterSignal += micLevel * 0.5f * (
+                    sampleAt(engine->mic, 0, engine->mic.position) +
+                    sampleAt(engine->mic, rightChannel, engine->mic.position)
+                );
+            }
+        } else {
+            masterSignal = 0.0f;
+        }
+        const float output = ((1.0f - mix) * cueSignal + mix * masterSignal) * headphoneLevel;
+        if (left) left[frame] = output;
+        if (right) right[frame] = output;
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -526,9 +601,21 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
         std::isfinite(control->mic_level) && control->mic_level >= 0.0f ? control->mic_level : 0.0f,
         std::memory_order_relaxed
     );
+    engine->control.cueMasterMix.store(
+        std::isfinite(control->cue_master_mix) ?
+            std::max(0.0f, std::min(1.0f, control->cue_master_mix)) : 0.5f,
+        std::memory_order_relaxed
+    );
+    engine->control.masterCue.store(control->master_cue > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
+    engine->control.headphoneLevel.store(
+        std::isfinite(control->headphone_level) ?
+            std::max(0.0f, std::min(1.0f, control->headphone_level)) : 0.7f,
+        std::memory_order_relaxed
+    );
     for (int index = 0; index < 2; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
+        engine->control.cuePFL[index].store(control->cue_pfl[index] > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
         const float ratio = control->deck_time_ratio[index];
         engine->control.deckTimeRatio[index].store(
             std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f,
@@ -633,7 +720,7 @@ void pe_render(pe_engine* engine, float* left, float* right, int frames) {
 }
 
 void pe_render_monitor(pe_engine* engine, float* left, float* right, int frames) {
-    render(engine, left, right, frames);
+    renderMonitor(engine, left, right, frames);
 }
 
 void pe_step(pe_engine* engine, float* left, float* right, int frames) {

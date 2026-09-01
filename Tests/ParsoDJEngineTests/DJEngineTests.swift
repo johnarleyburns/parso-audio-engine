@@ -323,3 +323,36 @@ struct MeterAndMicTests {
         #expect(e.mixer.master.peakMeter > 0)
     }
 }
+
+@Suite("Monitoring")
+@MainActor
+struct MonitoringTests {
+    @Test func channelPFLFeedsMonitorWithoutAdvancingDeck() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        e.deckB.pause()
+        e.mixer.channelA.cuePFL = true
+        e.monitoring.masterCue = false
+        e.monitoring.cueMasterMix = 0
+        _ = e.render(frames: 1) // primary bus drains the play commands first
+        let out = e.renderMonitor(frames: 4096)
+
+        let buffer = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: out.left.count)
+        for i in out.left.indices { buffer.channel(0)[i] = out.left[i] }
+        #expect(Measure.goertzelMagnitude(buffer, frequency: 220) > 0)
+        #expect(abs(e.deckA.playhead) < 0.001)
+    }
+
+    @Test func masterCueFeedsMonitorAtConfiguredHeadphoneLevel() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        e.mixer.crossfader = -1
+        e.monitoring.masterCue = true
+        e.monitoring.cueMasterMix = 1
+        e.monitoring.headphoneLevel = 0.5
+        _ = e.render(frames: 1) // primary bus drains the play command first
+        let out = e.renderMonitor(frames: 4096)
+        #expect((out.left.map(abs).max() ?? 0) > 0)
+        #expect(abs(e.deckA.playhead) < 0.001)
+    }
+}
