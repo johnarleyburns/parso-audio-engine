@@ -144,7 +144,7 @@ struct SampleRateTests {
     }
 }
 
-@Suite("Isolator EQ", .disabled("Implement Isolator3Band — docs/SPEC.md §13.2"))
+@Suite("Isolator EQ")
 struct IsolatorEQTests {
     @Test func lowKillRemovesBass() {
         let bass = SignalGenerators.sine(frequency: 60, seconds: 0.5)

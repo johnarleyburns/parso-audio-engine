@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import CParsoDSP
 import Cebur128
 import Csrc
 import CflacBridge
@@ -788,9 +789,31 @@ public final class TimePitch: @unchecked Sendable {
 
 /// 3-band full-kill isolator EQ (Pioneer-style). `-Float.infinity` == kill.
 public final class Isolator3Band: @unchecked Sendable {
-    public init(sampleRate: Double, crossoverLow: Double = 200, crossoverHigh: Double = 2000) { unimplemented() }
-    public func set(lowDB: Float, midDB: Float, highDB: Float) { unimplemented() }
-    public func processInPlace(_ buffer: PCMBuffer) { unimplemented() }
+    // The handle is created/destroyed by the control-side object. Processing only
+    // exchanges PCM pointers with the allocation-free C kernel.
+    private let handle: OpaquePointer
+
+    public init(sampleRate: Double, crossoverLow: Double = 200, crossoverHigh: Double = 2000) {
+        guard let handle = pd_eq3_create(sampleRate, crossoverLow, crossoverHigh) else {
+            preconditionFailure("invalid isolator EQ configuration")
+        }
+        self.handle = handle
+    }
+
+    deinit { pd_eq3_destroy(handle) }
+
+    public func set(lowDB: Float, midDB: Float, highDB: Float) {
+        pd_eq3_set(handle, lowDB, midDB, highDB)
+    }
+
+    public func processInPlace(_ buffer: PCMBuffer) {
+        buffer.withUnsafeChannels { channels, frames in
+            guard frames > 0, frames <= Int(Int32.max) else { return }
+            for channel in 0..<buffer.channelCount {
+                pd_eq3_process(handle, channels[channel], channels[channel], Int32(frames))
+            }
+        }
+    }
 }
 
 /// Sweepable resonant filter (Color-FX default). `knob` -1..0 = LPF, 0..+1 = HPF.
