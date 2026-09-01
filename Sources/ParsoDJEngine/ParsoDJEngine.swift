@@ -10,6 +10,7 @@
 import Foundation
 import ParsoAudioCore
 import ParsoAudioAnalysis
+import CParsoEngine
 
 @inline(never)
 func unimplemented(_ fn: StaticString = #function, file: StaticString = #file, line: UInt = #line) -> Never {
@@ -39,17 +40,76 @@ public final class DJEngine {
     public func makeHeadless() -> HeadlessDJEngine { unimplemented() }
 }
 
+@MainActor
+fileprivate final class EngineBridge {
+    private let handleBits: UInt
+    var control: pe_control
+
+    var handle: OpaquePointer {
+        // The C handle is owned and used exclusively on the main/control actor.
+        OpaquePointer(bitPattern: handleBits)!
+    }
+
+    init(sampleRate: Double, maxFrames: Int) {
+        guard let handle = pe_create(sampleRate, Int32(maxFrames)) else {
+            fatalError("CParsoEngine could not be created")
+        }
+        self.handleBits = UInt(bitPattern: handle)
+        var control = pe_control()
+        control.crossfader = 0
+        control.xfade_curve = 0
+        control.master_level = 0.8
+        control.trim = (0.5, 0.5)
+        control.fader = (1, 1)
+        self.control = control
+        pe_set_control(handle, &self.control)
+    }
+
+    deinit { pe_destroy(OpaquePointer(bitPattern: handleBits)) }
+
+    func publishControl() { pe_set_control(handle, &control) }
+}
+
 /// Synchronous render harness for tests. Same DSP as `DJEngine`, no audio device.
+@MainActor
 public final class HeadlessDJEngine {
     public let deckA: Deck
     public let deckB: Deck
     public let mixer: Mixer
     public let sampler: Sampler
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) { unimplemented() }
+    private let bridge: EngineBridge
+
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
+        bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
+        deckA = Deck(bridge: bridge, index: 0)
+        deckB = Deck(bridge: bridge, index: 1)
+        mixer = Mixer(bridge: bridge)
+        sampler = Sampler()
+    }
     /// Advance `frames` and return non-interleaved stereo master output.
-    public func render(frames: Int) -> (left: [Float], right: [Float]) { unimplemented() }
+    public func render(frames: Int) -> (left: [Float], right: [Float]) {
+        let count = max(0, frames)
+        var left = [Float](repeating: 0, count: count)
+        var right = [Float](repeating: 0, count: count)
+        left.withUnsafeMutableBufferPointer { leftPointer in
+            right.withUnsafeMutableBufferPointer { rightPointer in
+                pe_step(bridge.handle, leftPointer.baseAddress, rightPointer.baseAddress, Int32(count))
+            }
+        }
+        return (left, right)
+    }
     /// Advance the monitor/headphone bus.
-    public func renderMonitor(frames: Int) -> (left: [Float], right: [Float]) { unimplemented() }
+    public func renderMonitor(frames: Int) -> (left: [Float], right: [Float]) {
+        let count = max(0, frames)
+        var left = [Float](repeating: 0, count: count)
+        var right = [Float](repeating: 0, count: count)
+        left.withUnsafeMutableBufferPointer { leftPointer in
+            right.withUnsafeMutableBufferPointer { rightPointer in
+                pe_render_monitor(bridge.handle, leftPointer.baseAddress, rightPointer.baseAddress, Int32(count))
+            }
+        }
+        return (left, right)
+    }
 }
 
 // MARK: - Deck (mirror ×2)
@@ -67,13 +127,52 @@ public enum PadMode: Sendable {
 
 @MainActor
 public final class Deck {
+    private let bridge: EngineBridge
+    private let index: Int
+    private var buffer: PCMBuffer?
+    private var currentPlayhead: TimeInterval = 0
+
+    fileprivate init(bridge: EngineBridge, index: Int) {
+        self.bridge = bridge
+        self.index = index
+    }
+
     // Loading / transport
-    public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) { unimplemented() }
-    public func play() { unimplemented() }
-    public func pause() { unimplemented() }
+    public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) {
+        self.buffer = buffer
+        currentPlayhead = 0
+        buffer.withUnsafeChannels { channels, frames in
+            channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: buffer.channelCount) { pointers in
+                pe_deck_set_buffer(
+                    bridge.handle,
+                    Int32(index),
+                    UnsafePointer(pointers),
+                    Int32(buffer.channelCount),
+                    Int64(frames),
+                    buffer.format.sampleRate
+                )
+            }
+        }
+    }
+
+    public func play() {
+        post(PE_CMD_PLAY)
+        isPlaying = true
+    }
+
+    public func pause() {
+        post(PE_CMD_PAUSE)
+        isPlaying = false
+    }
+
     public private(set) var isPlaying: Bool = false
     /// Latest playhead in seconds (updated from the RT event stream).
-    public var playhead: TimeInterval { unimplemented() }
+    public var playhead: TimeInterval { currentPlayhead }
+
+    private func post(_ type: pe_cmd_type) {
+        var command = pe_command(type: type, deck: Int32(index), i0: 0, i1: 0, i2: 0, f0: 0, f1: 0)
+        _ = pe_post_command(bridge.handle, &command)
+    }
 
     // Temporary cue
     public func setCue() { unimplemented() }
@@ -144,11 +243,27 @@ public final class Mixer {
     public let smartFader: SmartFader
     public let smartCFX: SmartCFX
 
-    public var crossfader: Double = 0                 // -1..+1
-    public enum Curve: Sendable { case smooth, linear, sharp }
-    public var crossfaderCurve: Curve = .smooth
+    private let bridge: EngineBridge
 
-    internal init() { unimplemented() }
+    public var crossfader: Double = 0 { didSet { publishControl() } } // -1..+1
+    public enum Curve: Sendable { case smooth, linear, sharp }
+    public var crossfaderCurve: Curve = .smooth { didSet { publishControl() } }
+
+    fileprivate init(bridge: EngineBridge) {
+        self.bridge = bridge
+        channelA = Channel()
+        channelB = Channel()
+        master = MasterOut()
+        beatFX = BeatFXUnit()
+        smartFader = SmartFader()
+        smartCFX = SmartCFX()
+    }
+
+    private func publishControl() {
+        bridge.control.crossfader = Float(max(-1, min(1, crossfader)))
+        bridge.control.xfade_curve = crossfaderCurve == .smooth ? 0 : (crossfaderCurve == .linear ? 0.5 : 1)
+        bridge.publishControl()
+    }
 }
 
 public enum ColorFX: Sendable { case filter, space, dubEcho, sweep, noise, crush, pitch }
@@ -169,7 +284,7 @@ public final class Channel {
     public var crossfaderAssign: XFAssign = .thru
     /// Latest peak meter (0..1), updated from the RT event stream.
     public var peakMeter: Float { unimplemented() }
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 @MainActor
@@ -185,7 +300,7 @@ public final class BeatFXUnit {
     public var assign: Assign = .chA
     public var isOn: Bool = false
     public func releaseFX() { unimplemented() }       // tail on release
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 @MainActor
@@ -196,7 +311,7 @@ public final class MasterOut {
     public var limiterCeilingDB: Double = -0.3
     /// Latest master peak (0..1).
     public var peakMeter: Float { unimplemented() }
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 // MARK: - Smart features
@@ -209,7 +324,7 @@ public final class SmartFader {
     /// Optional: call once to run an automated transition (§11.5). Normally the
     /// engine reacts to fader movement while enabled.
     public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) { unimplemented() }
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 @MainActor
@@ -217,7 +332,7 @@ public final class SmartCFX {
     public var isEnabled: Bool = false
     public var amount: Double = 0                     // single control
     public var preset: Int = 0                        // curated multi-FX chains
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 // MARK: - Sampler / mic / monitoring / recording
@@ -231,7 +346,7 @@ public final class Sampler {
     public func setMode(_ slot: Int, _ mode: Play) { unimplemented() }
     public func setGain(_ slot: Int, _ gain: Double) { unimplemented() }
     public var masterGain: Double = 0.8
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 @MainActor

@@ -50,7 +50,7 @@ private func makeLoadedHeadless(bpmA: Double = 120, bpmB: Double = 128) -> Headl
     return engine
 }
 
-@Suite("Crossfader", .disabled("Implement RT engine — docs/SPEC.md §11"))
+@Suite("Crossfader")
 @MainActor
 struct CrossfaderTests {
     @Test func fullLeftIsolatesDeckA() {
