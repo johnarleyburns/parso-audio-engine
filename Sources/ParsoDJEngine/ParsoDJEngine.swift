@@ -11,10 +11,17 @@ import Foundation
 import ParsoAudioCore
 import ParsoAudioAnalysis
 import CParsoEngine
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 
 @inline(never)
 func unimplemented(_ fn: StaticString = #function, file: StaticString = #file, line: UInt = #line) -> Never {
     fatalError("unimplemented: \(fn) — implement per docs/SPEC.md §11", file: file, line: line)
+}
+
+public enum AudioEngineError: Error, Sendable {
+    case invalidOutputFormat
 }
 
 // MARK: - Top-level engine
@@ -33,6 +40,9 @@ public final class DJEngine {
     private let sampleRate: Double
     private let maxFramesPerRender: Int
     public private(set) var isRunning: Bool = false
+#if canImport(AVFoundation)
+    private var audioEngine: AVAudioEngine?
+#endif
 
     public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
         let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
@@ -48,8 +58,46 @@ public final class DJEngine {
     }
 
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
-    public func start() throws { isRunning = true }
-    public func stop() { isRunning = false }
+    public func start() throws {
+#if canImport(AVFoundation)
+        guard !isRunning else { return }
+        let audioEngine = AVAudioEngine()
+        let outputFormat = audioEngine.outputNode.inputFormat(forBus: 0)
+        guard let sourceFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: outputFormat.sampleRate,
+            channels: 2,
+            interleaved: false
+        ) else {
+            throw AudioEngineError.invalidOutputFormat
+        }
+
+        let handle = bridge.handle
+        let sourceNode = AVAudioSourceNode(format: sourceFormat) { _, _, frameCount, audioBufferList in
+            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard buffers.count >= 2,
+                  let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
+                  let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else {
+                return noErr
+            }
+            pe_render(handle, left, right, Int32(frameCount))
+            return noErr
+        }
+        audioEngine.attach(sourceNode)
+        audioEngine.connect(sourceNode, to: audioEngine.mainMixerNode, format: sourceFormat)
+        try audioEngine.start()
+        self.audioEngine = audioEngine
+#endif
+        isRunning = true
+    }
+
+    public func stop() {
+#if canImport(AVFoundation)
+        audioEngine?.stop()
+        audioEngine = nil
+#endif
+        isRunning = false
+    }
 
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
