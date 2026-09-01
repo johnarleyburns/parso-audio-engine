@@ -121,6 +121,7 @@ struct CodecRoundtripTests {
         #expect(back.frameCount == src.frameCount)
     }
 
+#if canImport(AVFoundation)
     @Test func aacRoundtripIsBounded() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
         let url = tempURL("m4a")
@@ -130,6 +131,15 @@ struct CodecRoundtripTests {
         // Lossy: allow codec/priming delay; assert the tone survives, not sample-exactness.
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
+#else
+    @Test func m4aIsRejectedUntilPortableContainerSupportExists() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
+        let url = tempURL("m4a")
+        let writer = try AudioFileWriter(url: url, format: src.format, codec: .aac(bitrate: 256_000))
+        #expect(throws: AudioFileError.self) { try writer.write(src) }
+        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
+    }
+#endif
 
     @Test func mp3RoundtripPreservesTheDominantTone() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)

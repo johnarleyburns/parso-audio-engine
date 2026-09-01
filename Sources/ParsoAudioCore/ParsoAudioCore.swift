@@ -220,9 +220,7 @@ public struct AudioFileReader: Sendable {
 #if canImport(AVFoundation)
             return try decodeApple(url: url)
 #else
-            // Linux CI has no AVFoundation. This also permits the codec tests to
-            // inspect their WAV fallback files, which retain a valid PCM stream.
-            return try decodeWAV(url: url)
+            throw AudioFileError.unsupportedContainer(container)
 #endif
         case .auto:
             throw AudioFileError.unsupportedContainer(container)
@@ -431,18 +429,18 @@ public struct AudioFileWriter {
             if url.pathExtension.lowercased() == "aac" {
                 try writeGlint(buffer, format: Int32(GLINT_ENC_AAC.rawValue), bitrate: bitrate)
             } else {
-                // M4A remains an Apple-native container until the planned
-                // minimp4 + AAC/ALAC container layer is integrated.
-                do { try WAVCodec.write(buffer, bitDepth: 32, to: url) }
-                catch { throw AudioFileError.writeFailed(error.localizedDescription) }
+                throw AudioFileError.writeFailed(
+                    "portable AAC currently emits ADTS only; M4A requires the planned minimp4 container layer"
+                )
             }
 #endif
         case .alac:
 #if canImport(AVFoundation)
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
 #else
-            do { try WAVCodec.write(buffer, bitDepth: 32, to: url) }
-            catch { throw AudioFileError.writeFailed(error.localizedDescription) }
+            throw AudioFileError.writeFailed(
+                "portable ALAC/M4A is not available until the planned AppleALAC codec integration"
+            )
 #endif
         case .mp3(let bitrate):
             try writeGlint(buffer, format: Int32(GLINT_ENC_MP3.rawValue), bitrate: bitrate)

@@ -16,11 +16,11 @@ with rekordbox), with **no copyleft dependencies**.
 1. **Three SPM library products**, layered: `ParsoAudioCore` ← `ParsoAudioAnalysis` ← `ParsoDJEngine`. Standalone; no dependency on any external app.
 2. **MIT** first-party; only **MIT / BSD / Apache-2.0 / public-domain** third-party + Apple frameworks. **No GPL/LGPL/AGPL.**
 3. **Swift 6 language mode** package-wide (`swiftLanguageModes: [.v6]`, tools 6.0).
-4. **Decode scope:** FLAC (libFLAC/`Cflac`), **Ogg Vorbis** (stb_vorbis/`Cvorbis`), **Opus** (libopus+libopusfile/`Copus`), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF.
-5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC + ALAC (AudioToolbox on Apple), and a planned
-   portable MP3 encoder behind the Linux Swift compatibility workstream. No MP3 encoder is vendored
-   yet; the Apple-native baseline remains AAC/ALAC until the portable encoder passes license,
-   security, compatibility, and CoreAudio cross-checks.
+4. **Decode scope:** FLAC (libFLAC/`Cflac`), **Ogg Vorbis** (stb_vorbis/`Cvorbis`), **Opus** (libopus+libopusfile/`Copus`), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF and portable Glint MP3/ADTS-AAC on Linux.
+5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC + ALAC (AudioToolbox on Apple), and portable
+   Glint MP3/ADTS-AAC. M4A/ALAC remains an explicit Linux gap until permissive ISO-BMFF container
+   and AppleALAC integration is complete; Linux must reject it rather than write WAV bytes under an
+   `.m4a` extension.
 6. **Real-time DSP core is C/C++**; Swift is the API/orchestration skin. Apple-native (Accelerate/AVFoundation/AudioToolbox) where it is the best free option.
 7. **Targets:** iOS 15+, iPadOS 15+, macCatalyst 15+, macOS 13+.
 8. **Goal:** replicate the *audio + DJ* functionality of a DDJ-FLX4 in software. Physical-only aspects (jog motor, jacks, soundcard, USB, Bluetooth-in) are **N/A** (§15).
@@ -64,7 +64,7 @@ concept. Only `ParsoDJEngine`/`CParsoEngine` know about decks/crossfader/cues.
 | `Csrc` | libsamplerate ≥ 0.2.2 | BSD-2 | Offline sample-rate conversion (**never < 0.1.9 — GPL**) |
 | `CParsoDSP` | Signalsmith Stretch | MIT | Time-stretch + pitch-shift (key-lock) |
 | — | Apple AVFoundation / AudioToolbox / Accelerate | Apple SDK | Engine graph, MP3/AAC/ALAC/WAV/AIFF decode, AAC/ALAC encode, FFT/vector |
-| `CGlint` (candidate) | Glint | MIT | Portable MP3/AAC-LC decode and MP3 encode; pending audit, not yet vendored |
+| `CGlint` | Glint | MIT | Portable MP3/ADTS-AAC decode and MP3/AAC encode; pinned/vendored, macOS parity/fuzz gates remain |
 | `Cminimp4` (candidate) | minimp4 | CC0 | Portable ISO BMFF/M4A container parsing; codec-independent |
 | `Calac` (candidate) | AppleALAC | Apache-2.0 | Portable ALAC codec; M4A/CAF integration pending |
 | — | Freeverb constants (§13.4) | Public Domain | Reverb tuning |
