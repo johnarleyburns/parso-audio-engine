@@ -656,7 +656,59 @@ public final class Monitoring {
 /// Records the master bus off the RT thread. **No MP3** (see `ExportCodec`).
 @MainActor
 public final class MixRecorder {
-    public init(codec: ExportCodec, url: URL) throws { unimplemented() }
-    public func start() { unimplemented() }
-    public func stop() throws { unimplemented() }
+    private let codec: ExportCodec
+    private let url: URL
+    private var chunks: [PCMBuffer] = []
+    private var captureFormat: AudioFormat?
+    public private(set) var isRecording: Bool = false
+
+    public init(codec: ExportCodec, url: URL) throws {
+        self.codec = codec
+        self.url = url
+    }
+
+    public func start() {
+        chunks.removeAll(keepingCapacity: true)
+        captureFormat = nil
+        isRecording = true
+    }
+
+    /// Append a non-interleaved master-bus block. The engine may call this
+    /// from its off-thread capture handoff; the recorder performs final file
+    /// encoding only when `stop()` is called on the control actor.
+    public func append(_ buffer: PCMBuffer) {
+        guard isRecording else { return }
+        if let captureFormat {
+            guard captureFormat == buffer.format else { return }
+        } else {
+            captureFormat = buffer.format
+        }
+        chunks.append(buffer)
+    }
+
+    public func stop() throws {
+        guard isRecording else { return }
+        defer {
+            isRecording = false
+            chunks.removeAll(keepingCapacity: true)
+            captureFormat = nil
+        }
+
+        let format = captureFormat ?? AudioFormat(sampleRate: 48_000, channelCount: 2)
+        let frameCount = chunks.reduce(0) { $0 + $1.frameCount }
+        let output = PCMBuffer(format: format, capacity: frameCount)
+        var offset = 0
+        for chunk in chunks {
+            for channel in 0..<format.channelCount {
+                for frame in 0..<chunk.frameCount {
+                    output.channel(channel)[offset + frame] = chunk.channel(channel)[frame]
+                }
+            }
+            offset += chunk.frameCount
+        }
+
+        let writer = try AudioFileWriter(url: url, format: format, codec: codec)
+        try writer.write(output)
+        try writer.finish()
+    }
 }
