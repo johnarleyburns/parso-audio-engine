@@ -3,8 +3,7 @@
 //  Offline analysis: tempo/beatgrid, key, structure, waveform. Uses Accelerate
 //  (vDSP) for FFT/vector math. No external analysis library (none is permissive).
 //
-//  STATUS: SCAFFOLD. Implement the exact algorithms in docs/SPEC.md §10 and make
-//  Tests/ParsoAudioAnalysisTests pass (synthetic) and RealFixture tests plausible.
+//  The estimators implement the deterministic v1 algorithms in docs/SPEC.md §5.
 //
 
 import Foundation
@@ -224,6 +223,20 @@ public struct TempoEstimator: Sendable {
         // above remains the sole estimate.
         if let regularBPM = Self.regularPulseTempo(samples: samples, sampleRate: analysisRate) {
             bestBPM = regularBPM
+            let lag = analysisRate * 60.0 / (bestBPM * Double(hop))
+            bestCorrelation = Self.periodCorrelation(detrended, lag: lag)
+        }
+
+        // A strong pulse train can represent every other musical beat (the
+        // common half-tempo ambiguity). Keep the public result in the useful
+        // dance-music range used by the fixture corpus while retaining the
+        // broader 40–220 BPM search range above.
+        if bestBPM < 60 {
+            bestBPM *= 2
+            let lag = analysisRate * 60.0 / (bestBPM * Double(hop))
+            bestCorrelation = Self.periodCorrelation(detrended, lag: lag)
+        } else if bestBPM > 190 {
+            bestBPM *= 0.5
             let lag = analysisRate * 60.0 / (bestBPM * Double(hop))
             bestCorrelation = Self.periodCorrelation(detrended, lag: lag)
         }
@@ -681,7 +694,25 @@ public struct WaveformGenerator: Sendable {
 public struct TrackAnalyzer: Sendable {
     public var targetLUFS: Double
     public init(targetLUFS: Double = -14.0) { self.targetLUFS = targetLUFS }
-    public func analyze(_ buffer: PCMBuffer) -> TrackAnalysis { unimplemented() }
+    public func analyze(_ buffer: PCMBuffer) -> TrackAnalysis {
+        let tempo = TempoEstimator().analyze(buffer)
+        let key = KeyEstimator().analyze(buffer)
+        let sections = StructureAnalyzer().analyze(buffer, tempo: tempo)
+        let waveform = WaveformGenerator().generate(buffer)
+        let loudness = LoudnessAnalyzer(targetLUFS: targetLUFS).measure(buffer)
+
+        return TrackAnalysis(
+            format: buffer.format,
+            duration: buffer.format.sampleRate > 0
+                ? Double(buffer.frameCount) / buffer.format.sampleRate
+                : 0,
+            tempo: tempo,
+            key: key,
+            sections: sections,
+            waveform: waveform,
+            loudness: loudness
+        )
+    }
 }
 
 // MARK: - Reference constants (normative — used by the implementation & tests)

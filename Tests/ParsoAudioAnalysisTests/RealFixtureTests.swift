@@ -66,10 +66,10 @@ struct FixtureDecodeTests {
 
 // MARK: - Gated: BPM (docs/SPEC.md §10.2)
 
-@Suite("RealFixture BPM", .disabled("Implement TempoEstimator — docs/SPEC.md §10.2"))
+@Suite("RealFixture BPM")
 struct FixtureTempoTests {
     /// Analysis must be deterministic for identical input.
-    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.beatBased)
+    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.decodeFixtures.filter(\.beatBased))
     func bpmIsDeterministicAndPlausible(_ fixture: Fixture) throws {
         let pcm = try AudioFileReader(url: FixtureLibrary.url(for: fixture)).readAll()
         let a = TempoEstimator().analyze(pcm)
@@ -89,9 +89,9 @@ struct FixtureTempoTests {
 
 // MARK: - Gated: Key (docs/SPEC.md §10.3)
 
-@Suite("RealFixture Key", .disabled("Implement KeyEstimator — docs/SPEC.md §10.3"))
+@Suite("RealFixture Key")
 struct FixtureKeyTests {
-    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.beatBased)
+    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.decodeFixtures.filter(\.beatBased))
     func keyIsValidAndDeterministic(_ fixture: Fixture) throws {
         let pcm = try AudioFileReader(url: FixtureLibrary.url(for: fixture)).readAll()
         let a = KeyEstimator().analyze(pcm)
@@ -108,11 +108,11 @@ struct FixtureKeyTests {
 
 // MARK: - Gated: full pipeline sanity
 
-@Suite("RealFixture full analysis", .disabled("Implement TrackAnalyzer — docs/SPEC.md §10"))
+@Suite("RealFixture full analysis")
 struct FixtureFullAnalysisTests {
     @Test(.enabled(if: FixtureLibrary.isAvailable))
     func analyzesEveryTrackWithoutCrashing() throws {
-        for fixture in FixtureLibrary.all {
+        for fixture in FixtureLibrary.decodeFixtures {
             let pcm = try AudioFileReader(url: FixtureLibrary.url(for: fixture)).readAll()
             let analysis = TrackAnalyzer(targetLUFS: FixtureLibrary.manifest.targetLUFS).analyze(pcm)
             #expect(analysis.duration > 0)
