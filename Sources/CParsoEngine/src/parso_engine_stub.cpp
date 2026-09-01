@@ -358,8 +358,15 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             pushStateEvent(engine, command.deck);
             break;
         case PE_CMD_SET_CUE:
-            deck.cueFrame = static_cast<int64_t>(deck.position);
-            deck.cueSet = true;
+            if (deck.frames > 0) {
+                const double target = std::isfinite(command.f0)
+                    ? static_cast<double>(command.f0) * deck.sampleRate
+                    : deck.position;
+                deck.cueFrame = static_cast<int64_t>(std::max(
+                    0.0, std::min(static_cast<double>(deck.frames), target)
+                ));
+                deck.cueSet = true;
+            }
             break;
         case PE_CMD_JUMP_CUE:
             if (deck.cueSet) {
@@ -454,12 +461,18 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             if (deck.slip) deck.shadowPosition = deck.position;
             break;
         case PE_CMD_LOOP_IN:
-            deck.loopIn = deck.position;
+            deck.loopIn = std::isfinite(command.f0)
+                ? static_cast<double>(command.f0) * deck.sampleRate
+                : deck.position;
+            deck.loopIn = std::max(0.0, std::min(static_cast<double>(deck.frames), deck.loopIn));
             deck.loopInSet = true;
             break;
         case PE_CMD_LOOP_OUT:
             if (deck.loopInSet) {
-                setLoop(deck, deck.loopIn, deck.position);
+                const double loopOut = std::isfinite(command.f0)
+                    ? static_cast<double>(command.f0) * deck.sampleRate
+                    : deck.position;
+                setLoop(deck, deck.loopIn, loopOut);
                 deck.loopInSet = false;
             }
             break;
@@ -481,7 +494,10 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_BEATLOOP:
             if (command.f0 > 0.0f) {
                 double length = static_cast<double>(command.f0) * deck.sampleRate;
-                double start = deck.position;
+                double start = std::isfinite(command.f1)
+                    ? static_cast<double>(command.f1) * deck.sampleRate
+                    : deck.position;
+                start = std::max(0.0, std::min(static_cast<double>(deck.frames), start));
                 if (length > static_cast<double>(deck.frames)) length = static_cast<double>(deck.frames);
                 if (start + length > static_cast<double>(deck.frames)) {
                     start = static_cast<double>(deck.frames) - length;
@@ -521,7 +537,12 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_HOTCUE_SET:
             if (command.i0 >= 0 && command.i0 < 8) {
                 const int slot = command.i0;
-                deck.hotCueFrames[slot] = static_cast<int64_t>(deck.position);
+                const double target = std::isfinite(command.f0)
+                    ? static_cast<double>(command.f0) * deck.sampleRate
+                    : deck.position;
+                deck.hotCueFrames[slot] = static_cast<int64_t>(std::max(
+                    0.0, std::min(static_cast<double>(deck.frames), target)
+                ));
                 deck.hotCueSet[slot] = true;
             }
             break;

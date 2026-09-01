@@ -313,6 +313,8 @@ public final class Deck {
     private var joggingWasPlaying = false
     private var loopStartTime: TimeInterval?
     private var loopEndTime: TimeInterval?
+    private var loopRollActive = false
+    private var loopRollWasSlipping = false
     private var savedLoops: [SavedLoop?] = Array(repeating: nil, count: 8)
     private var padFXAssignments: [[PadFXAssignment?]] = Array(
         repeating: Array(repeating: nil, count: 8), count: 2
@@ -343,6 +345,8 @@ public final class Deck {
         isPlaying = false
         loopStartTime = nil
         loopEndTime = nil
+        loopRollActive = false
+        loopRollWasSlipping = false
         savedLoops = Array(repeating: nil, count: 8)
         trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
         beatPositions = analysis.tempo.beatPositions
@@ -415,8 +419,8 @@ public final class Deck {
 
     // Temporary cue
     public func setCue() {
-        cueTime = currentPlayhead
-        post(PE_CMD_SET_CUE)
+        cueTime = quantizedTime(currentPlayhead)
+        post(PE_CMD_SET_CUE, f0: Float(cueTime ?? currentPlayhead))
     }
     public func jumpToCue() {
         guard let cueTime else { return }
@@ -538,8 +542,8 @@ public final class Deck {
     // Hot cues (8)
     public func setHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index) else { return }
-        hotCueTimes[index] = currentPlayhead
-        post(PE_CMD_HOTCUE_SET, i0: index)
+        hotCueTimes[index] = quantizedTime(currentPlayhead)
+        post(PE_CMD_HOTCUE_SET, i0: index, f0: Float(hotCueTimes[index] ?? currentPlayhead))
     }
     public func jumpHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index), let time = hotCueTimes[index] else { return }
@@ -554,6 +558,10 @@ public final class Deck {
 
     // Loops
     public private(set) var isLoopActive: Bool = false
+    /// The current loop-in point in seconds, when a loop has been defined.
+    public var loopStart: TimeInterval? { loopStartTime }
+    /// The current loop-out point in seconds, when a loop has been defined.
+    public var loopEnd: TimeInterval? { loopEndTime }
 
     private var trackDuration: TimeInterval {
         guard let buffer, buffer.format.sampleRate > 0 else { return 0 }
@@ -571,6 +579,35 @@ public final class Deck {
         isLoopActive = active
     }
 
+    private func publishLoop(start: TimeInterval, end: TimeInterval, active: Bool) {
+        setLocalLoop(start: start, end: end, active: active)
+        guard let loopStartTime, let loopEndTime else { return }
+        post(
+            PE_CMD_SET_LOOP,
+            i0: active ? 1 : 0,
+            f0: Float(loopStartTime),
+            f1: Float(loopEndTime)
+        )
+    }
+
+    /// Returns the nearest beat-grid point. Tracks without an analyzed grid
+    /// use the analyzed BPM and a zero-based quarter-note grid.
+    private func quantizedTime(_ time: TimeInterval) -> TimeInterval {
+        guard time.isFinite else { return currentPlayhead }
+        let duration = trackDuration
+        let clamped = max(0, min(time, duration))
+        guard quantize else { return clamped }
+
+        let grid = beatPositions.filter { $0.isFinite && $0 >= 0 && $0 <= duration }
+        if let nearest = grid.min(by: { abs($0 - clamped) < abs($1 - clamped) }) {
+            return nearest
+        }
+        guard trackBPM.isFinite, trackBPM > 0 else { return clamped }
+        let beatLength = 60 / trackBPM
+        guard beatLength.isFinite, beatLength > 0 else { return clamped }
+        return max(0, min(duration, (clamped / beatLength).rounded() * beatLength))
+    }
+
     private func resizeLocalLoop(by multiplier: Double) {
         guard let start = loopStartTime, let end = loopEndTime, multiplier > 0 else { return }
         let center = (start + end) * 0.5
@@ -584,14 +621,17 @@ public final class Deck {
     }
 
     public func loopIn() {
-        loopStartTime = max(0, currentPlayhead)
+        loopStartTime = quantizedTime(currentPlayhead)
         isLoopActive = false
-        post(PE_CMD_LOOP_IN)
+        post(PE_CMD_LOOP_IN, f0: Float(loopStartTime ?? currentPlayhead))
     }
     public func loopOut() {
         guard let start = loopStartTime else { return }
-        setLocalLoop(start: min(start, currentPlayhead), end: max(start, currentPlayhead))
-        post(PE_CMD_LOOP_OUT)
+        let endpoint = quantizedTime(currentPlayhead)
+        let loopStart = min(start, endpoint)
+        let loopEnd = max(start, endpoint)
+        guard loopEnd > loopStart else { return }
+        publishLoop(start: loopStart, end: loopEnd, active: true)
     }
     public func reloopExit() {
         if isLoopActive {
@@ -605,28 +645,80 @@ public final class Deck {
     public func autoBeatLoop(beats: Double) {
         guard beats > 0, trackBPM > 0 else { return }
         let length = beats * 60 / trackBPM
-        let start = min(max(0, currentPlayhead), max(0, trackDuration - length))
-        setLocalLoop(start: start, end: start + min(length, trackDuration - start))
-        post(PE_CMD_BEATLOOP, f0: Float(length))
+        let start = min(quantizedTime(currentPlayhead), max(0, trackDuration - length))
+        let end = start + min(length, trackDuration - start)
+        setLocalLoop(start: start, end: end)
+        post(PE_CMD_BEATLOOP, f0: Float(length), f1: Float(start))
     }
     public func loopHalve() {
         resizeLocalLoop(by: 0.5)
-        post(PE_CMD_LOOP_SCALE, f0: 0.5)
+        if let loopStartTime, let loopEndTime {
+            publishLoop(start: loopStartTime, end: loopEndTime, active: isLoopActive)
+        }
     }
     public func loopDouble() {
         resizeLocalLoop(by: 2)
-        post(PE_CMD_LOOP_SCALE, f0: 2)
+        if let loopStartTime, let loopEndTime {
+            publishLoop(start: loopStartTime, end: loopEndTime, active: isLoopActive)
+        }
     }
     public func loopMove(beats: Double) {
         guard trackBPM > 0 else { return }
         if let start = loopStartTime, let end = loopEndTime {
             let shift = beats * 60 / trackBPM
             let length = end - start
-            let newStart = min(max(0, start + shift), max(0, trackDuration - length))
-            setLocalLoop(start: newStart, end: newStart + length, active: isLoopActive)
+            let newStart = min(
+                max(0, quantizedTime(start + shift)),
+                max(0, trackDuration - length)
+            )
+            publishLoop(start: newStart, end: newStart + length, active: isLoopActive)
         }
-        post(PE_CMD_LOOP_MOVE, f0: Float(beats * 60 / trackBPM))
     }
+
+    /// Moves the loop-in edge while preserving the loop-out edge.
+    public func adjustLoopIn(by seconds: TimeInterval) {
+        guard seconds.isFinite, let end = loopEndTime else { return }
+        let candidate = quantizedTime((loopStartTime ?? currentPlayhead) + seconds)
+        let minimumLength = buffer.map { 1 / $0.format.sampleRate } ?? 0.000001
+        let start = min(max(0, candidate), end - minimumLength)
+        guard end > start else { return }
+        publishLoop(start: start, end: end, active: isLoopActive)
+    }
+
+    /// Moves the loop-out edge while preserving the loop-in edge.
+    public func adjustLoopOut(by seconds: TimeInterval) {
+        guard seconds.isFinite, let start = loopStartTime else { return }
+        let candidate = quantizedTime((loopEndTime ?? currentPlayhead) + seconds)
+        let end = max(start + (buffer.map { 1 / $0.format.sampleRate } ?? 0.000001), candidate)
+        guard end <= trackDuration else { return }
+        publishLoop(start: start, end: end, active: isLoopActive)
+    }
+
+    public func adjustLoopIn(seconds: TimeInterval) { adjustLoopIn(by: seconds) }
+    public func adjustLoopOut(seconds: TimeInterval) { adjustLoopOut(by: seconds) }
+
+    /// Starts a temporary slip-style loop. Playback resumes from the
+    /// continuous shadow position when `loopRollRelease()` is called.
+    public func loopRoll(beats: Double) {
+        guard beats > 0, beats.isFinite else { return }
+        if !loopRollActive {
+            loopRollActive = true
+            loopRollWasSlipping = slip
+            if !slip { slip = true }
+        }
+        autoBeatLoop(beats: beats)
+    }
+
+    public func loopRollRelease() {
+        guard loopRollActive else { return }
+        if isLoopActive { reloopExit() }
+        loopRollActive = false
+        slip = loopRollWasSlipping
+        loopRollWasSlipping = false
+    }
+
+    public func startLoopRoll(beats: Double) { loopRoll(beats: beats) }
+    public func endLoopRoll() { loopRollRelease() }
     public func saveLoop(_ slot: Int) {
         guard savedLoops.indices.contains(slot), let start = loopStartTime, let end = loopEndTime else { return }
         savedLoops[slot] = SavedLoop(start: start, end: end)
@@ -722,8 +814,7 @@ public final class Deck {
             bridge.mixer?.beatFX.kind = assignment.effect
             bridge.mixer?.beatFX.isOn = true
         case .beatJump:
-            let seconds = trackBPM > 0 ? Double(index - 3) * beatJumpSize * 60 / trackBPM : 0
-            post(PE_CMD_BEATJUMP, f0: Float(seconds))
+            beatJump(beats: Double(index - 3) * beatJumpSize)
         case .beatLoop:
             let sizes = [1.0, 2, 4, 8, 16, 32, 64, 0.5]
             autoBeatLoop(beats: sizes[index])
@@ -751,6 +842,17 @@ public final class Deck {
     }
     /// Beat-jump size for `.beatJump` mode.
     public var beatJumpSize: Double = 4
+
+    /// Jumps by musical beats and snaps the destination when quantize is on.
+    public func beatJump(beats: Double) {
+        guard beats.isFinite, trackBPM > 0 else { return }
+        let rawTarget = currentPlayhead + beats * 60 / trackBPM
+        let target = quantizedTime(rawTarget)
+        let seconds = target - currentPlayhead
+        currentPlayhead = target
+        shadowPlayhead = target
+        post(PE_CMD_BEATJUMP, f0: Float(seconds))
+    }
 
 }
 

@@ -33,13 +33,24 @@ struct DJAPITests {
 
 /// Loads two analyzed tone tracks into a headless engine for deterministic assertions.
 @MainActor
-private func makeLoadedHeadless(bpmA: Double = 120, bpmB: Double = 128) -> HeadlessDJEngine {
+private func makeLoadedHeadless(
+    bpmA: Double = 120,
+    bpmB: Double = 128,
+    beatGridA: [TimeInterval] = [],
+    beatGridB: [TimeInterval] = []
+) -> HeadlessDJEngine {
     let engine = HeadlessDJEngine()
     func load(_ deck: Deck, bpm: Double, freq: Double) {
         let pcm = SignalGenerators.sine(frequency: freq, seconds: 8, sampleRate: 48_000, channels: 2)
         let analysis = TrackAnalysis(
             format: pcm.format, duration: 8,
-            tempo: .init(bpm: bpm, confidence: 1, beatPositions: [], downbeatPositions: [], isConstantTempo: true),
+            tempo: .init(
+                bpm: bpm,
+                confidence: 1,
+                beatPositions: deck === engine.deckA ? beatGridA : beatGridB,
+                downbeatPositions: [],
+                isConstantTempo: true
+            ),
             key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
             sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
             loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
@@ -190,6 +201,42 @@ struct LoopTests {
         #expect(e.deckA.playhead > 0.45 && e.deckA.playhead < 0.55)
         #expect(e.deckA.isPlaying)
     }
+
+    @Test func loopEdgesCanBeAdjustedAndStaySynchronized() {
+        let e = makeLoadedHeadless(
+            bpmA: 120,
+            beatGridA: stride(from: 0.0, through: 8.0, by: 0.5).map { $0 }
+        )
+        e.deckA.autoBeatLoop(beats: 4)
+        #expect(e.deckA.loopStart == 0)
+        #expect(e.deckA.loopEnd == 2)
+
+        e.deckA.adjustLoopIn(by: 0.5)
+        e.deckA.adjustLoopOut(by: -0.5)
+        #expect(e.deckA.loopStart == 0.5)
+        #expect(e.deckA.loopEnd == 1.5)
+
+        e.deckA.play()
+        _ = e.render(frames: 72_000)
+        #expect(e.deckA.playhead > 0.49 && e.deckA.playhead < 0.51)
+    }
+
+    @Test func loopRollUsesSlipAndReturnsToTheShadowPlayhead() {
+        let e = makeLoadedHeadless(
+            bpmA: 120,
+            beatGridA: stride(from: 0.0, through: 8.0, by: 0.5).map { $0 }
+        )
+        e.deckA.play()
+        _ = e.render(frames: 36_000)
+        e.deckA.loopRoll(beats: 1)
+        _ = e.render(frames: 24_000)
+        #expect(e.deckA.isLoopActive)
+
+        e.deckA.loopRollRelease()
+        _ = e.render(frames: 1)
+        #expect(!e.deckA.isLoopActive)
+        #expect(e.deckA.playhead > 1.2)
+    }
 }
 
 @Suite("Hot cues")
@@ -204,6 +251,29 @@ struct HotCueTests {
         e.deckA.jumpHotCue(0)
         let after = e.deckA.playhead
         #expect(abs(after - 0.5) < 0.05)
+    }
+
+    @Test func quantizeSnapsCueAndHotCueActionsToTheBeatGrid() {
+        let e = makeLoadedHeadless(
+            bpmA: 120,
+            beatGridA: stride(from: 0.0, through: 8.0, by: 0.5).map { $0 }
+        )
+        e.deckA.play()
+        _ = e.render(frames: 25_440) // 0.53 s
+        e.deckA.pause()
+        e.deckA.setCue()
+        e.deckA.setHotCue(0)
+        e.deckA.cuePlayPress()
+        _ = e.render(frames: 1)
+        #expect(abs(e.deckA.playhead - 0.5) < 0.002)
+
+        e.deckA.quantize = false
+        e.deckA.jogMoved(deltaSamples: 1_440) // 0.53 s
+        _ = e.render(frames: 1)
+        e.deckA.setCue()
+        e.deckA.cuePlayPress()
+        _ = e.render(frames: 1)
+        #expect(e.deckA.playhead > 0.52 && e.deckA.playhead < 0.55)
     }
 }
 
