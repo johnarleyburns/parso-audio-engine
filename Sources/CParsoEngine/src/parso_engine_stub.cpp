@@ -22,6 +22,8 @@ struct DeckState {
     double shadowPosition = 0.0;
     bool playing = false;
     bool slip = false;
+    int64_t cueFrame = 0;
+    bool cueSet = false;
     int64_t hotCueFrames[8] = {};
     bool hotCueSet[8] = {};
     double loopIn = 0.0;
@@ -185,12 +187,18 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             pushStateEvent(engine, command.deck);
             break;
         case PE_CMD_SET_CUE:
+            deck.cueFrame = static_cast<int64_t>(deck.position);
+            deck.cueSet = true;
+            break;
         case PE_CMD_JUMP_CUE:
+            if (deck.cueSet) {
+                deck.position = static_cast<double>(deck.cueFrame);
+                deck.shadowPosition = deck.position;
+                pushPlayheadEvent(engine, command.deck);
+            }
+            break;
         case PE_CMD_SET_MASTER:
         case PE_CMD_SET_KEYLOCK:
-        case PE_CMD_JOG_TOUCH:
-        case PE_CMD_JOG_MOVE:
-        case PE_CMD_JOG_RELEASE:
         case PE_CMD_COLORFX_KIND:
         case PE_CMD_BEATFX_KIND:
         case PE_CMD_BEATFX_ONOFF:
@@ -200,6 +208,31 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_LOAD:
             // These commands are reserved for subsequent engine slices;
             // ignoring them is deterministic and non-blocking.
+            break;
+        case PE_CMD_JOG_TOUCH:
+            // i0 is vinyl mode. A vinyl touch pauses transport while preserving
+            // the pre-touch play state in i1 for the matching release command.
+            if (command.i0 != 0 && deck.playing) {
+                deck.playing = false;
+                pushStateEvent(engine, command.deck);
+            }
+            break;
+        case PE_CMD_JOG_MOVE:
+            if (std::isfinite(command.f0) && deck.frames > 0) {
+                deck.position += static_cast<double>(command.f0);
+                if (deck.position < 0.0) deck.position = 0.0;
+                if (deck.position > static_cast<double>(deck.frames)) {
+                    deck.position = static_cast<double>(deck.frames);
+                }
+                deck.shadowPosition = deck.position;
+                pushPlayheadEvent(engine, command.deck);
+            }
+            break;
+        case PE_CMD_JOG_RELEASE:
+            if (command.i0 != 0 && command.i1 != 0 && deck.position < static_cast<double>(deck.frames)) {
+                deck.playing = true;
+                pushStateEvent(engine, command.deck);
+            }
             break;
         case PE_CMD_BEATJUMP:
             if (std::isfinite(command.f0)) {
@@ -483,6 +516,8 @@ void pe_deck_set_buffer(
     state.shadowPosition = 0.0;
     state.playing = false;
     state.slip = false;
+    state.cueFrame = 0;
+    state.cueSet = false;
     for (int slot = 0; slot < 8; ++slot) {
         state.hotCueFrames[slot] = 0;
         state.hotCueSet[slot] = false;

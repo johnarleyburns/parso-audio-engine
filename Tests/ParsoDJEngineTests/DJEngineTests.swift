@@ -94,6 +94,65 @@ struct HeadlessTransportTests {
     }
 }
 
+@Suite("Cue, jog, and nudge")
+@MainActor
+struct CueJogNudgeTests {
+    @Test func temporaryCuePreviewsAndReturnsOnRelease() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        e.deckA.pause()
+        e.deckA.setCue()
+        e.deckA.cuePlayPress()
+        _ = e.render(frames: 24_000)
+        #expect(e.deckA.playhead > 0.95 && e.deckA.playhead < 1.05)
+
+        e.deckA.cuePlayRelease()
+        #expect(abs(e.deckA.playhead - 0.5) < 0.02)
+        #expect(!e.deckA.isPlaying)
+    }
+
+    @Test func vinylJogSeeksAndRestoresTransport() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        e.deckA.jogTouchBegan()
+        e.deckA.jogMoved(deltaSamples: 4_800)
+        _ = e.render(frames: 1)
+        #expect(abs(e.deckA.playhead - 0.6) < 0.02)
+        #expect(!e.deckA.isPlaying)
+
+        e.deckA.jogTouchEnded()
+        _ = e.render(frames: 24_000)
+        #expect(e.deckA.isPlaying)
+        #expect(e.deckA.playhead > 1.0)
+    }
+
+    @Test func nudgeTemporarilyChangesPlaybackRate() {
+        let e = makeLoadedHeadless()
+        e.deckA.nudge(1)
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        #expect(e.deckA.playhead > 0.53)
+        e.deckA.nudge(0)
+    }
+}
+
+@Suite("DJ engine lifecycle")
+@MainActor
+struct DJEngineLifecycleTests {
+    @Test func deviceLifecycleAndHeadlessFactoryAreUsable() throws {
+        let engine = DJEngine(sampleRate: 44_100, maxFramesPerRender: 128)
+        #expect(!engine.isRunning)
+        try engine.start()
+        #expect(engine.isRunning)
+        engine.stop()
+        #expect(!engine.isRunning)
+        let headless = engine.makeHeadless()
+        #expect(headless.render(frames: 4).left.count == 4)
+    }
+}
+
 @Suite("Sync")
 @MainActor
 struct SyncTests {

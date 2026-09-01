@@ -29,15 +29,32 @@ public final class DJEngine {
     public let sampler: Sampler
     public let mic: MicInput
     public let monitoring: Monitoring
+    private let bridge: EngineBridge
+    private let sampleRate: Double
+    private let maxFramesPerRender: Int
+    public private(set) var isRunning: Bool = false
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) { unimplemented() }
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
+        self.bridge = bridge
+        self.sampleRate = sampleRate
+        self.maxFramesPerRender = maxFramesPerRender
+        deckA = Deck(bridge: bridge, index: 0)
+        deckB = Deck(bridge: bridge, index: 1)
+        mixer = Mixer(bridge: bridge)
+        sampler = Sampler(bridge: bridge)
+        mic = MicInput()
+        monitoring = Monitoring()
+    }
 
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
-    public func start() throws { unimplemented() }
-    public func stop() { unimplemented() }
+    public func start() throws { isRunning = true }
+    public func stop() { isRunning = false }
 
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
-    public func makeHeadless() -> HeadlessDJEngine { unimplemented() }
+    public func makeHeadless() -> HeadlessDJEngine {
+        HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender)
+    }
 }
 
 @MainActor
@@ -205,6 +222,8 @@ public final class Deck {
     private var currentPlayhead: TimeInterval = 0
     private var shadowPlayhead: TimeInterval = 0
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
+    private var cueTime: TimeInterval?
+    private var joggingWasPlaying = false
     private var trackBPM: Double = 120
     private var beatPositions: [TimeInterval] = []
 
@@ -222,6 +241,9 @@ public final class Deck {
         currentPlayhead = 0
         shadowPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
+        cueTime = nil
+        nudgeRatio = 1
+        isPlaying = false
         trackBPM = analysis.tempo.bpm > 0 ? analysis.tempo.bpm : 120
         beatPositions = analysis.tempo.beatPositions
         bridge.setTrackBPM(trackBPM, index: index)
@@ -273,16 +295,34 @@ public final class Deck {
         isPlaying = false
     }
 
-    private func post(_ type: pe_cmd_type, i0: Int = 0, f0: Float = 0, f1: Float = 0) {
-        var command = pe_command(type: type, deck: Int32(index), i0: Int32(i0), i1: 0, i2: 0, f0: f0, f1: f1)
+    private func post(_ type: pe_cmd_type, i0: Int = 0, i1: Int = 0, f0: Float = 0, f1: Float = 0) {
+        var command = pe_command(type: type, deck: Int32(index), i0: Int32(i0), i1: Int32(i1), i2: 0, f0: f0, f1: f1)
         _ = pe_post_command(bridge.handle, &command)
     }
 
     // Temporary cue
-    public func setCue() { unimplemented() }
-    public func jumpToCue() { unimplemented() }
-    public func cuePlayPress() { unimplemented() }   // preview from cue while held
-    public func cuePlayRelease() { unimplemented() }
+    public func setCue() {
+        cueTime = currentPlayhead
+        post(PE_CMD_SET_CUE)
+    }
+    public func jumpToCue() {
+        guard let cueTime else { return }
+        currentPlayhead = cueTime
+        shadowPlayhead = cueTime
+        post(PE_CMD_JUMP_CUE)
+    }
+    public func cuePlayPress() {
+        if cueTime == nil { setCue() }
+        jumpToCue()
+        post(PE_CMD_PLAY)
+        isPlaying = true
+    }
+    public func cuePlayRelease() {
+        guard cueTime != nil else { return }
+        post(PE_CMD_PAUSE)
+        jumpToCue()
+        isPlaying = false
+    }
 
     // Tempo / pitch
     public enum TempoRange: Sendable { case p6, p10, p16, wide }
@@ -319,16 +359,33 @@ public final class Deck {
         return max(0.01, 1 + percent / 100)
     }
 
+    private var nudgeRatio: Double = 1
+
     private func updatePlaybackRate() {
-        bridge.setDeckPlayback(index: index, tempoRatio: playbackRatio, pitchSemitones: pitchSemitones)
+        bridge.setDeckPlayback(index: index, tempoRatio: playbackRatio * nudgeRatio, pitchSemitones: pitchSemitones)
     }
 
     // Jog / scratch (engages varispeed transiently)
     public var vinylMode: Bool = true
-    public func jogTouchBegan() { unimplemented() }
-    public func jogMoved(deltaSamples: Double) { unimplemented() }
-    public func jogTouchEnded() { unimplemented() }
-    public func nudge(_ amount: Double) { unimplemented() }   // pitch bend
+    public func jogTouchBegan() {
+        joggingWasPlaying = isPlaying
+        if vinylMode { isPlaying = false }
+        post(PE_CMD_JOG_TOUCH, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
+    }
+    public func jogMoved(deltaSamples: Double) {
+        guard deltaSamples.isFinite else { return }
+        post(PE_CMD_JOG_MOVE, f0: Float(deltaSamples))
+    }
+    public func jogTouchEnded() {
+        if vinylMode && joggingWasPlaying { isPlaying = true }
+        post(PE_CMD_JOG_RELEASE, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
+        joggingWasPlaying = false
+    }
+    public func nudge(_ amount: Double) {
+        let bend = max(-1.0, min(1.0, amount.isFinite ? amount : 0))
+        nudgeRatio = 1 + bend * 0.08
+        updatePlaybackRate()
+    }   // pitch bend
 
     // Hot cues (8)
     public func setHotCue(_ index: Int) {
@@ -642,7 +699,7 @@ public final class MicInput {
     public var isMuted: Bool = true
     /// Push captured mic PCM (app supplies the capture path).
     public func submit(_ buffer: PCMBuffer) { unimplemented() }
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 @MainActor
@@ -650,7 +707,7 @@ public final class Monitoring {
     public var masterCue: Bool = false
     public var cueMasterMix: Double = 0.5   // 0 = cue only, 1 = master only
     public var headphoneLevel: Double = 0.7
-    internal init() { unimplemented() }
+    internal init() {}
 }
 
 /// Records the master bus off the RT thread. **No MP3** (see `ExportCodec`).
