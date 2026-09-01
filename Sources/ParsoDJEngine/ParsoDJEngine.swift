@@ -214,6 +214,8 @@ public final class Deck {
         bridge.register(self, index: index)
     }
 
+    fileprivate var channelIndex: Int { index }
+
     // Loading / transport
     public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) {
         self.buffer = buffer
@@ -483,6 +485,7 @@ public final class Mixer {
         beatFX = BeatFXUnit()
         smartFader = SmartFader()
         smartCFX = SmartCFX()
+        smartFader.attach(to: self)
     }
 
     private func publishControl() {
@@ -545,11 +548,23 @@ public final class MasterOut {
 @MainActor
 public final class SmartFader {
     public enum Tail: Sendable { case echo, reverb }
+    private weak var mixer: Mixer?
     public var isEnabled: Bool = false
     public var tail: Tail = .echo
     /// Optional: call once to run an automated transition (§11.5). Normally the
     /// engine reacts to fader movement while enabled.
-    public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) { unimplemented() }
+    fileprivate func attach(to mixer: Mixer) { self.mixer = mixer }
+
+    public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) {
+        guard isEnabled, seconds > 0, from !== to else { return }
+        from.setAsMaster()
+        to.sync()
+        if from.channelIndex == 0 {
+            mixer?.channelA.eqLow = -6
+        } else if from.channelIndex == 1 {
+            mixer?.channelB.eqLow = -6
+        }
+    }
     internal init() {}
 }
 

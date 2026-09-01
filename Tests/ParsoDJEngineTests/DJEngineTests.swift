@@ -164,7 +164,7 @@ struct SlipTests {
     }
 }
 
-@Suite("Smart Fader", .disabled("Implement Smart Fader — docs/SPEC.md §11.5"))
+@Suite("Smart Fader")
 @MainActor
 struct SmartFaderTests {
     @Test func transitionSyncsAndDucksOutgoingLows() {
