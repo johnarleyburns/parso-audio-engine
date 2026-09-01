@@ -1,6 +1,6 @@
 # Audio Library Sourcing — Permissive-Only
 
-Why the dependency set is what it is. Constraint: **MIT / BSD / Apache / public-domain only** (no
+Why the dependency set is what it is. Constraint: **MIT / BSD / Apache / APSL-2.0 / public-domain** (no
 GPL/LGPL/AGPL), shippable in the App Store, Apple-native where that is the best free option, and
 as much of the behavior as possible independently testable on Linux.
 
@@ -9,7 +9,10 @@ as much of the behavior as possible independently testable on Linux.
   without a paid commercial licence. This removes the best time-stretch and *every* strong analysis
   library (aubio, libKeyFinder, Essentia, QM-DSP, BTrack).
 - **LGPL is excluded here too** to keep static linking + distribution unambiguous.
-- **Permissive = link freely** (attribution only). This is the target tier.
+- **Permissive = link freely** (attribution only). This is the target tier for MIT/BSD/Apache/public
+  domain dependencies. APSL-2.0 is also permitted, but it requires preserving notices and the license,
+  marking modifications, and meeting its source-availability and executable-notice terms for external
+  deployments; follow the checklist in `AGENTS.md`.
 
 ## What we use, by function
 

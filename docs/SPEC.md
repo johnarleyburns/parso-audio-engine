@@ -14,7 +14,7 @@ with rekordbox), with **no copyleft dependencies**.
 ## 0. Non-negotiable inputs (locked)
 
 1. **Three SPM library products**, layered: `ParsoAudioCore` ← `ParsoAudioAnalysis` ← `ParsoDJEngine`. Standalone; no dependency on any external app.
-2. **MIT** first-party; only **MIT / BSD / Apache-2.0 / public-domain** third-party + Apple frameworks. **No GPL/LGPL/AGPL.**
+2. **MIT** first-party; third-party code may use **MIT / BSD / Apache-2.0 / APSL-2.0 / public-domain** terms, plus Apple frameworks. **No GPL/LGPL/AGPL.** APSL-2.0 code must retain its notices and license, mark modifications, and satisfy its source-availability and executable-notice requirements when externally deployed; it does not relicense unrelated project code. See `AGENTS.md` for the operational compliance checklist.
 3. **Swift 6 language mode** package-wide (`swiftLanguageModes: [.v6]`, tools 6.0).
 4. **Decode scope:** FLAC (libFLAC/`Cflac`), **Ogg Vorbis** (stb_vorbis/`Cvorbis`), **Opus** (libopus+libopusfile/`Copus`), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF and portable Glint MP3/ADTS-AAC on Linux.
 5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC + ALAC (AudioToolbox on Apple), and portable
