@@ -28,7 +28,7 @@ track. The analysis itself runs on the complete source track before the visible 
 
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
-downbeats; blue markers are ordinary beats; the white line is the synchronized playhead. Section
+downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. Section
 labels use the analyzer's current best-effort classifications (`intro`,
 `buildup`, `drop`, `verse`, `chorus`, `breakdown`, and `outro`). A generated artifact is an
 acceptance aid, not ground truth: verify questionable phrases by listening and record verified
@@ -42,7 +42,7 @@ seeing the exact crossfader, EQ, FX, loop, or scratch timeline. Planned scenario
 
 | Scenario | Review target | Current status |
 |---|---|---|
-| `crossfader-sweep` | manual auto/long-cut style crossfades | engine plumbing exists; artifact adapter next |
+| `crossfader-sweep` | manual auto/long-cut style crossfades | implemented through `HeadlessDJEngine` |
 | `smart-fader` | BPM match, bass duck, level automation, echo/reverb tail | Smart Fader automation incomplete |
 | `smart-cfx` | one-knob filter/space/dub-echo chains | Smart CFX rendering incomplete |
 | `beatfx-echo-out` | tail release and drop timing | engine scenario adapter next |

@@ -163,12 +163,28 @@ def make_frame(artifact, width, height, now):
         marker_top = plot_top - (38 if is_downbeat else 12)
         line(frame, width, height, x, marker_top, x, plot_bottom + 22, marker_color)
 
+    # Engine control events share the timeline with the audio. This keeps a
+    # transition review auditable: the viewer can hear the change while seeing
+    # when the control was issued.
+    for event in artifact.get("events", []):
+        event_time = float(event.get("time", 0))
+        if event_time < 0 or event_time > duration:
+            continue
+        x = left + plot_width * event_time / duration
+        line(frame, width, height, x, plot_bottom + 34, x, plot_bottom + 48, (235, 110, 205))
+        if event_time == 0 or x - left > 90:
+            label = str(event.get("type", "event")).replace("-", " ")
+            text(frame, width, height, label, x + 4, plot_bottom + 38,
+                 color=(235, 140, 215), scale=1)
+
     line(frame, width, height, left, center, right, center, (45, 55, 70))
     cursor_x = left + plot_width * min(max(now / duration, 0), 1)
     line(frame, width, height, cursor_x, plot_top - 42, cursor_x, plot_bottom + 35, (255, 255, 255))
     text(frame, width, height, f"TIME {now:06.2f} / {duration:06.2f}", left, height - 75,
          color=(230, 235, 245), scale=2)
     text(frame, width, height, "DOWNBEAT", right - 170, height - 75, color=(245, 215, 90), scale=1)
+    if artifact.get("events"):
+        text(frame, width, height, "EVENTS", right - 170, height - 55, color=(235, 140, 215), scale=1)
     return frame
 
 

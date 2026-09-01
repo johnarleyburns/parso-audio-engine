@@ -170,7 +170,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "ParsoAcceptanceArtifacts",
-            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis"],
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "ParsoDJEngine"],
             path: "Sources/ParsoAcceptanceArtifacts"
         ),
 

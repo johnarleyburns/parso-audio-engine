@@ -1,6 +1,7 @@
 import Foundation
 import ParsoAudioAnalysis
 import ParsoAudioCore
+import ParsoDJEngine
 
 /// Generates deterministic, human-inspectable acceptance inputs.
 ///
@@ -65,6 +66,15 @@ struct ParsoAcceptanceArtifacts {
         let notes: [String]
     }
 
+    private struct Rendering {
+        let buffer: PCMBuffer
+        let waveform: Waveform
+        let sourceFormat: String
+        let renderedScenario: String
+        let events: [EventPoint]
+        let notes: [String]
+    }
+
     private enum ToolError: LocalizedError {
         case usage(String)
         case message(String)
@@ -88,12 +98,6 @@ struct ParsoAcceptanceArtifacts {
     }
 
     private static func generate(_ options: Options) throws {
-        guard options.scenario == "waveform" else {
-            throw ToolError.message(
-                "scenario '\(options.scenario)' is not implemented; available scenario: waveform"
-            )
-        }
-
         let manifestURL = URL(fileURLWithPath: options.manifest)
         let manifestData: Data
         do { manifestData = try Data(contentsOf: manifestURL) }
@@ -106,16 +110,49 @@ struct ParsoAcceptanceArtifacts {
             throw ToolError.message("unknown fixture '\(options.fixtureID)'; available: \(available)")
         }
 
-        let audioURL = URL(fileURLWithPath: options.audioDirectory)
-            .appendingPathComponent("\(fixture.id).\((fixture.filename as NSString).pathExtension)")
-        guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            throw ToolError.message("fixture is not downloaded: \(audioURL.path)\nRun ./scripts/download-fixtures.sh first.")
+        let primaryURL = audioURL(for: fixture, directory: options.audioDirectory)
+        guard FileManager.default.fileExists(atPath: primaryURL.path) else {
+            throw ToolError.message("fixture is not downloaded: \(primaryURL.path)\nRun ./scripts/download-fixtures.sh first.")
         }
 
-        let source = try AudioFileReader(url: audioURL).readAll()
+        let source = try AudioFileReader(url: primaryURL).readAll()
         let completeAnalysis = TrackAnalyzer().analyze(source)
-        let visible = try clipped(source, maximumSeconds: options.maximumSeconds)
-        let visibleWaveform = WaveformGenerator().generate(visible)
+        let rendering: Rendering
+        switch options.scenario {
+        case "waveform":
+            let visible = try clipped(source, maximumSeconds: options.maximumSeconds)
+            rendering = Rendering(
+                buffer: visible,
+                waveform: WaveformGenerator().generate(visible),
+                sourceFormat: fixture.sourceFormat,
+                renderedScenario: "source-analysis",
+                events: [],
+                notes: [
+                    "Audio is the first \(String(format: "%.1f", duration(of: visible))) seconds of the downloaded fixture.",
+                    "Beat and section annotations come from analysis of the complete source track.",
+                    "This artifact validates source analysis and synchronization only; it does not claim Smart Fader/CFX or scratch parity."
+                ]
+            )
+        case "crossfader-sweep":
+            let second = try secondFixture(for: fixture, in: manifest.tracks, requestedID: options.fixtureBID)
+            let secondURL = audioURL(for: second, directory: options.audioDirectory)
+            guard FileManager.default.fileExists(atPath: secondURL.path) else {
+                throw ToolError.message("fixture-b is not downloaded: \(secondURL.path)")
+            }
+            let secondBuffer = try AudioFileReader(url: secondURL).readAll()
+            let secondAnalysis = TrackAnalyzer().analyze(secondBuffer)
+            rendering = try renderCrossfaderSweep(
+                first: (source, completeAnalysis),
+                second: (secondBuffer, secondAnalysis),
+                sourceFormat: "\(fixture.sourceFormat) + \(second.sourceFormat)",
+                maximumSeconds: options.maximumSeconds
+            )
+        default:
+            throw ToolError.message(
+                "scenario '\(options.scenario)' is not implemented; available scenarios: waveform, crossfader-sweep"
+            )
+        }
+        let visible = rendering.buffer
         let visibleDuration = duration(of: visible)
 
         try FileManager.default.createDirectory(
@@ -139,9 +176,9 @@ struct ParsoAcceptanceArtifacts {
         let artifact = Artifact(
             schema: 1,
             fixtureID: fixture.id,
-            sourceFormat: fixture.sourceFormat,
+            sourceFormat: rendering.sourceFormat,
             scenario: options.scenario,
-            renderedScenario: "source-analysis",
+            renderedScenario: rendering.renderedScenario,
             sampleRate: visible.format.sampleRate,
             channelCount: visible.channelCount,
             frameCount: visible.frameCount,
@@ -151,35 +188,114 @@ struct ParsoAcceptanceArtifacts {
             tempoConfidence: completeAnalysis.tempo.confidence,
             key: key,
             keyConfidence: completeAnalysis.key.confidence,
-            loudnessLUFS: completeAnalysis.loudness.integratedLUFS,
+            loudnessLUFS: LoudnessAnalyzer().measure(visible).integratedLUFS,
             beats: completeAnalysis.tempo.beatPositions.filter { $0 < visibleDuration },
             downbeats: completeAnalysis.tempo.downbeatPositions.filter { $0 < visibleDuration },
             sections: completeAnalysis.sections
                 .filter { $0.start < visibleDuration }
                 .map { SectionPoint(start: $0.start, kind: sectionName($0.kind), bar: $0.bar) },
-            waveform: zip(
-                visibleWaveform.overviewMinMax,
-                zip(visibleWaveform.detailRMS, visibleWaveform.bandEnergy)
-            ).map { pair in
-                let (bounds, detail) = pair
-                let (rms, bands) = detail
-                return WaveformPoint(
-                    min: bounds.x, max: bounds.y, rms: rms,
-                    low: bands.x, mid: bands.y, high: bands.z
-                )
-            },
-            events: [],
-            notes: [
-                "Audio is the first \(String(format: "%.1f", visibleDuration)) seconds of the downloaded fixture.",
-                "Beat and section annotations come from analysis of the complete source track.",
-                "This artifact validates source analysis and synchronization only; it does not claim Smart Fader/CFX or scratch parity."
-            ]
+            waveform: waveformPoints(rendering.waveform),
+            events: rendering.events,
+            notes: rendering.notes
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(artifact).write(to: jsonURL, options: .atomic)
         print("audio: \(wavURL.path)")
         print("analysis: \(jsonURL.path)")
+    }
+
+    private static func waveformPoints(_ waveform: Waveform) -> [WaveformPoint] {
+        zip(waveform.overviewMinMax, zip(waveform.detailRMS, waveform.bandEnergy)).map { pair in
+            let (bounds, detail) = pair
+            let (rms, bands) = detail
+            return WaveformPoint(
+                min: bounds.x, max: bounds.y, rms: rms,
+                low: bands.x, mid: bands.y, high: bands.z
+            )
+        }
+    }
+
+    private static func audioURL(for fixture: Fixture, directory: String) -> URL {
+        URL(fileURLWithPath: directory)
+            .appendingPathComponent("\(fixture.id).\((fixture.filename as NSString).pathExtension)")
+    }
+
+    private static func secondFixture(
+        for first: Fixture,
+        in fixtures: [Fixture],
+        requestedID: String?
+    ) throws -> Fixture {
+        if let requestedID {
+            guard let fixture = fixtures.first(where: { $0.id == requestedID }) else {
+                throw ToolError.message("unknown fixture-b '\(requestedID)'")
+            }
+            return fixture
+        }
+        guard let fixture = fixtures.first(where: { $0.id != first.id && $0.sourceFormat != "flac" }) else {
+            throw ToolError.message("manifest has no second fixture for crossfader-sweep")
+        }
+        return fixture
+    }
+
+    private static func renderCrossfaderSweep(
+        first: (PCMBuffer, TrackAnalysis),
+        second: (PCMBuffer, TrackAnalysis),
+        sourceFormat: String,
+        maximumSeconds: TimeInterval
+    ) throws -> Rendering {
+        let sampleRate = 48_000.0
+        let requestedDuration = maximumSeconds > 0 && maximumSeconds.isFinite ? maximumSeconds : 30
+        let duration = min(requestedDuration, 60)
+        let frameCount = max(1, Int(duration * sampleRate))
+        let engine = HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: 512)
+        engine.deckA.load(first.1, buffer: first.0)
+        engine.deckB.load(second.1, buffer: second.0)
+        engine.mixer.crossfader = -1
+        engine.deckA.play()
+        engine.deckB.play()
+
+        var left = [Float]()
+        var right = [Float]()
+        left.reserveCapacity(frameCount)
+        right.reserveCapacity(frameCount)
+        let blockSize = 512
+        while left.count < frameCount {
+            let time = Double(left.count) / sampleRate
+            engine.mixer.crossfader = crossfaderValue(at: time, duration: duration)
+            let block = engine.render(frames: min(blockSize, frameCount - left.count))
+            left.append(contentsOf: block.left)
+            right.append(contentsOf: block.right)
+        }
+        let output = PCMBuffer(format: AudioFormat(sampleRate: sampleRate, channelCount: 2), capacity: frameCount)
+        for frame in 0..<frameCount {
+            output.channel(0)[frame] = left[frame]
+            output.channel(1)[frame] = right[frame]
+        }
+        return Rendering(
+            buffer: output,
+            waveform: WaveformGenerator().generate(output),
+            sourceFormat: sourceFormat,
+            renderedScenario: "headless-crossfader-sweep",
+            events: [
+                EventPoint(time: 0, type: "deck-a-play", deck: 0, value: nil),
+                EventPoint(time: 0, type: "deck-b-play", deck: 1, value: nil),
+                EventPoint(time: 0, type: "crossfader", deck: nil, value: -1),
+                EventPoint(time: min(5, duration), type: "crossfader-ramp-start", deck: nil, value: -1),
+                EventPoint(time: min(15, duration), type: "crossfader-ramp-end", deck: nil, value: 1),
+            ],
+            notes: [
+                "Audio is the actual stereo output of HeadlessDJEngine with both decks playing.",
+                "Crossfader is held at -1 for 5 seconds, swept to +1 over 10 seconds, then held at +1.",
+                "Beat and section annotations are from fixture-a; inspect the event timeline alongside the audio."
+            ]
+        )
+    }
+
+    private static func crossfaderValue(at time: TimeInterval, duration: TimeInterval) -> Double {
+        if time <= 5 || duration <= 5 { return -1 }
+        if time >= min(15, duration) { return 1 }
+        return -1 + 2 * ((time - 5) / 10)
     }
 
     private static func duration(of buffer: PCMBuffer) -> TimeInterval {
@@ -216,6 +332,7 @@ struct ParsoAcceptanceArtifacts {
         let audioDirectory: String
         let outputDirectory: URL
         let scenario: String
+        let fixtureBID: String?
         let maximumSeconds: TimeInterval
 
         init(arguments: [String]) throws {
@@ -224,7 +341,7 @@ struct ParsoAcceptanceArtifacts {
             while index < arguments.count {
                 let argument = arguments[index]
                 guard argument.hasPrefix("--"), index + 1 < arguments.count else {
-                    throw ToolError.usage("usage: swift run ParsoAcceptanceArtifacts --fixture ID [--scenario waveform] [--output-dir DIR] [--max-seconds N]")
+                    throw ToolError.usage("usage: swift run ParsoAcceptanceArtifacts --fixture ID [--fixture-b ID] [--scenario waveform|crossfader-sweep] [--output-dir DIR] [--max-seconds N]")
                 }
                 values[String(argument.dropFirst(2))] = arguments[index + 1]
                 index += 2
@@ -237,6 +354,7 @@ struct ParsoAcceptanceArtifacts {
             self.audioDirectory = values["audio-dir"] ?? "Tests/Fixtures/audio"
             self.outputDirectory = URL(fileURLWithPath: values["output-dir"] ?? "artifacts/acceptance")
             self.scenario = values["scenario"] ?? "waveform"
+            self.fixtureBID = values["fixture-b"]
             self.maximumSeconds = TimeInterval(values["max-seconds"] ?? "30") ?? 30
         }
     }
