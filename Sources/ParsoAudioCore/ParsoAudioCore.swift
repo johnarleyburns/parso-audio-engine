@@ -19,6 +19,11 @@ import CopusBridge
 import Calac
 #if canImport(AVFoundation)
 import AVFoundation
+#endif
+// AudioToolbox is absent from the watchOS SDK; the AVFAudio-based encode/decode
+// paths below only need the format constants, which AVFoundation re-exports
+// from CoreAudioTypes (docs/UNIFICATION_PLAN.md §5).
+#if canImport(AudioToolbox)
 import AudioToolbox
 #endif
 

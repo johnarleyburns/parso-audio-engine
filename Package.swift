@@ -20,14 +20,21 @@ import PackageDescription
 let package = Package(
     name: "parso-audio-engine",
     platforms: [
-        .iOS(.v15),
-        .macCatalyst(.v15),
-        .macOS(.v13)
+        .iOS(.v17),
+        .macCatalyst(.v17),
+        .macOS(.v14),
+        .watchOS(.v10)
     ],
     products: [
         .library(name: "ParsoAudioCore",     targets: ["ParsoAudioCore"]),
         .library(name: "ParsoAudioAnalysis", targets: ["ParsoAudioAnalysis"]),
+        .library(name: "ParsoAudioPlayback",  targets: ["ParsoAudioPlayback"]),
+        .library(name: "ParsoAudioStreaming", targets: ["ParsoAudioStreaming"]),
         .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
+        // Host-side developer tool. It is a command-line executable and so cannot
+        // link for watchOS; app targets depend on the library products above and
+        // never build it. Verify watchOS with the per-product schemes, not the
+        // whole-package scheme (docs/UNIFICATION_PLAN.md §5).
         .executable(name: "ParsoAcceptanceArtifacts", targets: ["ParsoAcceptanceArtifacts"]),
     ],
     targets: [
@@ -104,10 +111,10 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("vendor/signalsmith"),
                 .headerSearchPath("src"),
-                .define("SIGNALSMITH_USE_ACCELERATE", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+                .define("SIGNALSMITH_USE_ACCELERATE", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
             ],
             linkerSettings: [
-                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS]))
+                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS]))
             ]
         ),
         .target(
@@ -158,26 +165,41 @@ let package = Package(
             name: "ParsoAudioCore",
             dependencies: ["CParsoDSP", "CGlint", "Calac", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
             linkerSettings: [
-                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS])),
-                .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),
-                .linkedFramework("Accelerate",   .when(platforms: [.iOS, .macCatalyst, .macOS])),
+                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .linkedFramework("Accelerate",   .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
             ]
         ),
         .target(
             name: "ParsoAudioAnalysis",
             dependencies: ["ParsoAudioCore"],
             linkerSettings: [
-                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS]))
+                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS]))
             ]
-        ),
-        .target(
-            name: "ParsoDJEngine",
-            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoEngine"]
         ),
         .executableTarget(
             name: "ParsoAcceptanceArtifacts",
             dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "ParsoDJEngine"],
             path: "Sources/ParsoAcceptanceArtifacts"
+        ),
+        .target(
+            name: "ParsoAudioPlayback",
+            dependencies: ["ParsoAudioCore"],
+            linkerSettings: [
+                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .linkedFramework("Accelerate",   .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+            ]
+        ),
+        .target(
+            name: "ParsoAudioStreaming",
+            dependencies: ["ParsoAudioCore"],
+            linkerSettings: [
+                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+            ]
+        ),
+        .target(
+            name: "ParsoDJEngine",
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoEngine"]
         ),
 
         // ── Tests ──
@@ -188,6 +210,14 @@ let package = Package(
         .testTarget(
             name: "ParsoAudioAnalysisTests",
             dependencies: ["ParsoAudioAnalysis", "ParsoTestSupport"]
+        ),
+        .testTarget(
+            name: "ParsoAudioPlaybackTests",
+            dependencies: ["ParsoAudioPlayback", "ParsoTestSupport"]
+        ),
+        .testTarget(
+            name: "ParsoAudioStreamingTests",
+            dependencies: ["ParsoAudioStreaming", "ParsoTestSupport"]
         ),
         .testTarget(
             name: "ParsoDJEngineTests",
