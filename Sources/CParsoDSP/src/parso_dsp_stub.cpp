@@ -69,6 +69,26 @@ struct Biquad {
         );
     }
 
+    void setLowPass(double sampleRate, double frequency, double q) {
+        const double w0 = 2.0 * kPi * frequency / sampleRate;
+        const double cosine = std::cos(w0);
+        const double alpha = std::sin(w0) / (2.0 * q);
+        setCoefficients(
+            (1.0 - cosine) * 0.5, 1.0 - cosine, (1.0 - cosine) * 0.5,
+            1.0 + alpha, -2.0 * cosine, 1.0 - alpha
+        );
+    }
+
+    void setHighPass(double sampleRate, double frequency, double q) {
+        const double w0 = 2.0 * kPi * frequency / sampleRate;
+        const double cosine = std::cos(w0);
+        const double alpha = std::sin(w0) / (2.0 * q);
+        setCoefficients(
+            (1.0 + cosine) * 0.5, -(1.0 + cosine), (1.0 + cosine) * 0.5,
+            1.0 + alpha, -2.0 * cosine, 1.0 - alpha
+        );
+    }
+
     float process(float input) {
         const double x = static_cast<double>(input);
         const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
@@ -116,6 +136,16 @@ struct pd_eq3 {
     double targetMidDB = 0.0;
     double targetHighDB = 0.0;
     bool hasProcessed = false;
+};
+
+struct pd_filter {
+    double sampleRate;
+    double smoothing;
+    float knob = 0.0f;
+    float targetKnob = 0.0f;
+    float resonance = 0.3f;
+    float targetResonance = 0.3f;
+    Biquad biquad;
 };
 
 struct pd_timepitch {
@@ -198,10 +228,61 @@ void pd_eq3_process(pd_eq3* eq, const float* in, float* out, int frames) {
 
 void pd_eq3_destroy(pd_eq3* eq) { delete eq; }
 
-pd_filter* pd_filter_create(double) { return nullptr; }
-void pd_filter_set(pd_filter*, float, float) {}
-void pd_filter_process(pd_filter*, const float* in, float* out, int frames) { for (int i=0;i<frames;++i) out[i]=in?in[i]:0.f; }
-void pd_filter_destroy(pd_filter*) {}
+pd_filter* pd_filter_create(double sample_rate) {
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;
+    pd_filter* filter = new (std::nothrow) pd_filter;
+    if (filter == nullptr) return nullptr;
+    filter->sampleRate = sample_rate;
+    filter->smoothing = 1.0 - std::exp(-1.0 / (sample_rate * 0.010));
+    return filter;
+}
+
+void pd_filter_set(pd_filter* filter, float knob, float resonance) {
+    if (filter == nullptr) return;
+    filter->targetKnob = std::isfinite(knob) ?
+        std::fmax(-1.0f, std::fmin(1.0f, knob)) : 0.0f;
+    filter->targetResonance = std::isfinite(resonance) ?
+        std::fmax(0.0f, std::fmin(1.0f, resonance)) : 0.3f;
+}
+
+void pd_filter_process(pd_filter* filter, const float* in, float* out, int frames) {
+    if (filter == nullptr || out == nullptr || frames <= 0) return;
+    if (in == nullptr) {
+        for (int frame = 0; frame < frames; ++frame) out[frame] = 0.0f;
+        return;
+    }
+
+    const double logRange = std::log(1000.0);
+    const double minimumCutoff = std::min(20.0, filter->sampleRate * 0.02);
+    const double maximumCutoff = filter->sampleRate * 0.49;
+    for (int frame = 0; frame < frames; ++frame) {
+        filter->knob += static_cast<float>(filter->smoothing) *
+            (filter->targetKnob - filter->knob);
+        filter->resonance += static_cast<float>(filter->smoothing) *
+            (filter->targetResonance - filter->resonance);
+        if (std::fabs(filter->knob) < 0.0001f) {
+            out[frame] = in[frame];
+            continue;
+        }
+
+        const double normalized = filter->knob < 0.0f
+            ? 1.0 + static_cast<double>(filter->knob)
+            : 1.0 - static_cast<double>(filter->knob);
+        const double cutoff = std::fmax(
+            minimumCutoff,
+            std::fmin(maximumCutoff, minimumCutoff * std::exp(logRange * normalized))
+        );
+        const double q = 0.5 + 9.5 * static_cast<double>(filter->resonance);
+        if (filter->knob < 0.0f) {
+            filter->biquad.setLowPass(filter->sampleRate, cutoff, q);
+        } else {
+            filter->biquad.setHighPass(filter->sampleRate, cutoff, q);
+        }
+        out[frame] = filter->biquad.process(in[frame]);
+    }
+}
+
+void pd_filter_destroy(pd_filter* filter) { delete filter; }
 
 pd_timepitch* pd_tp_create(double sr, int channels, int max_block) {
     if (!std::isfinite(sr) || sr <= 0.0 || channels <= 0 || max_block <= 0) return nullptr;

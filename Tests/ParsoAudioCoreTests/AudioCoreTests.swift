@@ -450,6 +450,25 @@ struct IsolatorEQTests {
     }
 }
 
+@Suite("Sweep filter")
+struct SweepFilterTests {
+    @Test func lowPassSuppressesHighFrequency() {
+        let input = SignalGenerators.sine(frequency: 8_000, seconds: 1.0)
+        let filter = SweepFilter(sampleRate: 44_100)
+        filter.set(knob: -1, resonance: 0)
+        filter.processInPlace(input)
+        #expect(Measure.dB(Measure.rms(input)) < -20)
+    }
+
+    @Test func highPassSuppressesLowFrequency() {
+        let input = SignalGenerators.sine(frequency: 10, seconds: 1.0)
+        let filter = SweepFilter(sampleRate: 44_100)
+        filter.set(knob: 1, resonance: 0)
+        filter.processInPlace(input)
+        #expect(Measure.dB(Measure.rms(input)) < -20)
+    }
+}
+
 @Suite("Time / pitch")
 struct TimePitchTests {
     @Test func keyLockStretchesTimeNotPitch() {

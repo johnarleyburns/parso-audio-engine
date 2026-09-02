@@ -1035,9 +1035,29 @@ public final class Isolator3Band: @unchecked Sendable {
 
 /// Sweepable resonant filter (Color-FX default). `knob` -1..0 = LPF, 0..+1 = HPF.
 public final class SweepFilter: @unchecked Sendable {
-    public init(sampleRate: Double) { unimplemented() }
-    public func set(knob: Float, resonance: Float = 0.3) { unimplemented() }
-    public func processInPlace(_ buffer: PCMBuffer) { unimplemented() }
+    private let handle: OpaquePointer
+
+    public init(sampleRate: Double) {
+        guard let handle = pd_filter_create(sampleRate) else {
+            preconditionFailure("invalid sweep filter sample rate")
+        }
+        self.handle = handle
+    }
+
+    deinit { pd_filter_destroy(handle) }
+
+    public func set(knob: Float, resonance: Float = 0.3) {
+        pd_filter_set(handle, knob, resonance)
+    }
+
+    public func processInPlace(_ buffer: PCMBuffer) {
+        buffer.withUnsafeChannels { channels, frames in
+            guard frames > 0, frames <= Int(Int32.max) else { return }
+            for channel in 0..<buffer.channelCount {
+                pd_filter_process(handle, channels[channel], channels[channel], Int32(frames))
+            }
+        }
+    }
 }
 
 /// Freeverb-topology reverb (offline convenience wrapper).
