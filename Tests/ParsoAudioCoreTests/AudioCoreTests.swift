@@ -524,6 +524,42 @@ struct ReverbTests {
     }
 }
 
+@Suite("Limiter")
+struct LimiterTests {
+    @Test func capsLinkedStereoPeakAtCeiling() {
+        let input = PCMBuffer(format: .init(sampleRate: 1_000, channelCount: 2), capacity: 256)
+        for frame in 0..<input.frameCount {
+            input.channel(0)[frame] = 2
+            input.channel(1)[frame] = -1.5
+        }
+        let limiter = Limiter(sampleRate: 1_000, ceilingDB: -6)
+        limiter.processInPlace(input)
+
+        let leftPeak = input.channel(0).map { abs($0) }.max() ?? 0
+        let rightPeak = input.channel(1).map { abs($0) }.max() ?? 0
+        let peak = max(leftPeak, rightPeak)
+        #expect(peak <= pow(10, -6.0 / 20.0) + 1e-5)
+    }
+
+    @Test func releaseRecoversAfterLoudPassage() {
+        let loud = PCMBuffer(format: .init(sampleRate: 1_000, channelCount: 2), capacity: 128)
+        for frame in 0..<loud.frameCount {
+            loud.channel(0)[frame] = 2
+            loud.channel(1)[frame] = 2
+        }
+        let quiet = PCMBuffer(format: .init(sampleRate: 1_000, channelCount: 2), capacity: 1_000)
+        for frame in 0..<quiet.frameCount {
+            quiet.channel(0)[frame] = 0.25
+            quiet.channel(1)[frame] = 0.25
+        }
+        let limiter = Limiter(sampleRate: 1_000, ceilingDB: -6)
+        limiter.processInPlace(loud)
+        limiter.processInPlace(quiet)
+
+        #expect(quiet.channel(0)[999] > 0.24)
+    }
+}
+
 @Suite("Time / pitch")
 struct TimePitchTests {
     @Test func keyLockStretchesTimeNotPitch() {

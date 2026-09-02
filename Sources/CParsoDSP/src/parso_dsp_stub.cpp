@@ -4,6 +4,7 @@
 #include "parso_dsp.h"
 #include "signalsmith-stretch.h"
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <new>
@@ -242,6 +243,34 @@ struct pd_reverb {
             allpassLeft[i].initialize(baseLength);
             allpassRight[i].initialize(baseLength + spread);
         }
+        return true;
+    }
+};
+
+struct pd_limiter {
+    double sampleRate;
+    float ceiling;
+    float gain = 1.0f;
+    float release;
+    std::vector<float> leftDelay;
+    std::vector<float> rightDelay;
+    size_t index = 0;
+
+    pd_limiter(double sr, float ceilingDB)
+        : sampleRate(sr),
+          ceiling(std::pow(10.0f, ceilingDB / 20.0f)),
+          release(static_cast<float>(1.0 - std::exp(-1.0 / (sr * 0.075)))) {}
+
+    bool initialize() {
+        // Two milliseconds gives the detector time to react while keeping
+        // master-output latency below the specified 1–5 ms range.
+        const double delayFrames = std::ceil(sampleRate * 0.002);
+        if (!std::isfinite(delayFrames) || delayFrames < 1.0 || delayFrames > 1'000'000.0) {
+            return false;
+        }
+        const size_t length = static_cast<size_t>(delayFrames) + 1;
+        leftDelay.assign(length, 0.0f);
+        rightDelay.assign(length, 0.0f);
         return true;
     }
 };
@@ -621,9 +650,52 @@ void pd_reverb_process(pd_reverb* reverb, const float* in_left, const float* in_
 
 void pd_reverb_destroy(pd_reverb* reverb) { delete reverb; }
 
-pd_limiter* pd_limiter_create(double, float) { return nullptr; }
-void pd_limiter_process(pd_limiter*, float*, float*, int) {}
-void pd_limiter_destroy(pd_limiter*) {}
+pd_limiter* pd_limiter_create(double sample_rate, float ceiling_db) {
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;
+    if (!std::isfinite(ceiling_db)) ceiling_db = -0.3f;
+    ceiling_db = std::fmax(-60.0f, std::fmin(0.0f, ceiling_db));
+    try {
+        pd_limiter* limiter = new (std::nothrow) pd_limiter(sample_rate, ceiling_db);
+        if (limiter == nullptr || !limiter->initialize()) {
+            delete limiter;
+            return nullptr;
+        }
+        return limiter;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void pd_limiter_process(pd_limiter* limiter, float* left, float* right, int frames) {
+    if (limiter == nullptr || frames <= 0 || limiter->leftDelay.empty() ||
+        limiter->rightDelay.empty()) return;
+    for (int frame = 0; frame < frames; ++frame) {
+        const float inputLeft = left == nullptr ? 0.0f : left[frame];
+        const float inputRight = right == nullptr ? 0.0f : right[frame];
+        const float peak = std::fmax(std::fabs(inputLeft), std::fabs(inputRight));
+        const float desiredGain = peak > limiter->ceiling ? limiter->ceiling / peak : 1.0f;
+        if (desiredGain < limiter->gain) {
+            limiter->gain = desiredGain;
+        } else {
+            limiter->gain += (1.0f - limiter->gain) * limiter->release;
+        }
+
+        const float delayedLeft = limiter->leftDelay[limiter->index];
+        const float delayedRight = limiter->rightDelay[limiter->index];
+        limiter->leftDelay[limiter->index] = inputLeft;
+        limiter->rightDelay[limiter->index] = inputRight;
+        limiter->index = limiter->index + 1 < limiter->leftDelay.size()
+            ? limiter->index + 1 : 0;
+
+        const float delayedPeak = std::fmax(std::fabs(delayedLeft), std::fabs(delayedRight));
+        const float outputGain = delayedPeak > limiter->ceiling
+            ? std::fmin(limiter->gain, limiter->ceiling / delayedPeak) : limiter->gain;
+        if (left != nullptr) left[frame] = delayedLeft * outputGain;
+        if (right != nullptr) right[frame] = delayedRight * outputGain;
+    }
+}
+
+void pd_limiter_destroy(pd_limiter* limiter) { delete limiter; }
 
 pd_ring* pd_ring_create(size_t, size_t) { return nullptr; }
 int  pd_ring_push(pd_ring*, const void*) { return 0; }

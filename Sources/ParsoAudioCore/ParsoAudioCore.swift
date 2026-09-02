@@ -1116,3 +1116,28 @@ public final class Reverb: @unchecked Sendable {
         }
     }
 }
+
+/// Stereo look-ahead brick-wall limiter with a 75 ms release.
+public final class Limiter: @unchecked Sendable {
+    private let handle: OpaquePointer
+
+    public init(sampleRate: Double, ceilingDB: Float = -0.3) {
+        guard let handle = pd_limiter_create(sampleRate, ceilingDB) else {
+            preconditionFailure("invalid limiter configuration")
+        }
+        self.handle = handle
+    }
+
+    deinit { pd_limiter_destroy(handle) }
+
+    public func processInPlace(_ buffer: PCMBuffer) {
+        buffer.withUnsafeChannels { channels, frames in
+            guard frames > 0, frames <= Int(Int32.max) else { return }
+            if buffer.channelCount == 1 {
+                pd_limiter_process(handle, channels[0], channels[0], Int32(frames))
+            } else {
+                pd_limiter_process(handle, channels[0], channels[1], Int32(frames))
+            }
+        }
+    }
+}
