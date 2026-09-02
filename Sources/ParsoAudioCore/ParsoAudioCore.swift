@@ -191,8 +191,9 @@ public struct AudioFileMetadata: Sendable, Equatable {
 /// Reads PCM from disk. Routing by container:
 /// `.flac` → libFLAC (`Cflac`); `.oggVorbis` → stb_vorbis (`Cvorbis`);
 /// `.opus` → libopusfile (`Copus`); Apple uses AVAudioFile for native formats,
-/// while Linux uses Glint for MP3/ADTS AAC and the portable narrow M4A AAC/ALAC
-/// profiles.
+/// while Linux uses Glint for MP3/ADTS AAC and the portable narrow M4A AAC
+/// profile. Portable ALAC is unavailable pending an independently authored
+/// implementation.
 public struct AudioFileReader: Sendable {
     public let format: AudioFormat
     public let frameCount: Int
@@ -253,8 +254,7 @@ public struct AudioFileReader: Sendable {
                 let data: Data
                 do { data = try Data(contentsOf: url) }
                 catch { throw AudioFileError.invalidFile(error.localizedDescription) }
-                do { return try MP4AACCodec.decode(data) }
-                catch { return try MP4ALACCodec.decode(data) }
+                return try MP4AACCodec.decode(data)
             }
             throw AudioFileError.unsupportedContainer(container)
 #endif
@@ -444,6 +444,7 @@ public struct AudioFileReader: Sendable {
 }
 
 /// Export codecs. MP3 uses the portable Glint encoder; AAC/ALAC use AudioToolbox on Apple.
+/// Portable ALAC remains unavailable until an independently authored implementation is added.
 public enum ExportCodec: Sendable, Equatable {
     case wavPCM(bitDepth: Int)   // via AVAudioFile / ExtAudioFile
     case flac(compression: Int)  // via libFLAC (Cflac)
@@ -490,10 +491,7 @@ public struct AudioFileWriter {
 #if canImport(AVFoundation)
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
 #else
-            guard url.pathExtension.lowercased() == "m4a" || url.pathExtension.lowercased() == "alac" else {
-                throw AudioFileError.writeFailed("portable ALAC requires an .m4a or .alac output path")
-            }
-            try MP4ALACCodec.write(buffer, to: url)
+            throw AudioFileError.writeFailed("portable ALAC is unavailable; use Apple AudioToolbox on Apple platforms")
 #endif
         case .mp3(let bitrate):
             try writeGlint(buffer, format: Int32(GLINT_ENC_MP3.rawValue), bitrate: bitrate)

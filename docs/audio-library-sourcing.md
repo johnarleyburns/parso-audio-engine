@@ -28,7 +28,7 @@ as much of the behavior as possible independently testable on Linux.
 | Encode lossy | AAC (AudioToolbox) | Apple | **no MP3 encoder exists permissively** |
 | Portable MP3 decode/encode | Glint | MIT | Linux + Apple fallback; pinned and covered by round-trip tests |
 | Portable M4A container (candidate) | minimp4 | CC0 | ISO BMFF demux/mux only; not an AAC/ALAC codec |
-| Portable ALAC codec (candidate) | AppleALAC (`macosforge/alac`) | Apache-2.0 | Codec layer; M4A/CAF plumbing still required |
+| Portable ALAC codec | None currently | — | Apple public-source implementation removed after legal review; independently authored BSD-only replacement pending |
 | Sample-rate conversion (offline) | libsamplerate ≥ 0.2.2 | BSD-2 | never < 0.1.9 (GPL) |
 | Time-stretch + pitch (key-lock) | Signalsmith Stretch | MIT | Accelerate FFT flag |
 | Varispeed / scratch | custom Hermite / windowed-sinc | — | RT-safe, in `CParsoDSP` |
@@ -57,9 +57,10 @@ Recommended order:
 3. **M4A/ISO-BMFF compatibility.** Evaluate `minimp4` for safe extraction of AAC and ALAC sample
    descriptions, edit lists, priming/padding, and metadata. Add malformed-container and audiobook
    duration/seek tests before using it in production.
-4. **ALAC codec integration.** Evaluate the Apache-2.0 AppleALAC codec for Linux decode/encode;
-   initially target CAF and a narrowly defined M4A profile, then cross-check bit-exact lossless
-   round trips against AudioToolbox.
+4. **ALAC codec integration.** Do not use implementation code from Apple's public-source ALAC
+   repository. Retained upstream Apache-2.0 headers are not compiled or linked. Create an
+   independently authored BSD-only ALAC implementation for Linux, initially target CAF and a
+   narrowly defined M4A profile, then cross-check bit-exact lossless round trips against AudioToolbox.
 5. **Portable test parity.** Add Linux tests for MP3 decode/encode and supported M4A/ALAC profiles;
    retain macOS tests for AVAudioEngine, AVAudioFile, AudioToolbox AAC/ALAC, and all native Apple
    containers. Unsupported profiles must fail explicitly rather than silently writing WAV bytes
@@ -67,7 +68,7 @@ Recommended order:
 
 Glint: https://github.com/CrispStrobe/glint
 minimp4: https://github.com/lieff/minimp4
-AppleALAC: https://github.com/macosforge/alac
+AppleALAC public-source repository (headers retained only; implementation not used): https://github.com/macosforge/alac
 
 This workstream does not relax the copyleft policy. FAAD2 is GPL, FDK-AAC has a separate license
 with patent conditions, and FFmpeg/libavcodec or LGPL audio stacks are not acceptable dependencies

@@ -11,6 +11,7 @@ public struct FixtureExpectation: Decodable, Sendable {
     public let bpm: Double?
     public let bpmTolerance: Double?
     public let key: String?
+    public let confidenceFloor: Double?
 }
 
 public struct Fixture: Decodable, Sendable {

@@ -66,7 +66,7 @@ concept. Only `ParsoDJEngine`/`CParsoEngine` know about decks/crossfader/cues.
 | — | Apple AVFoundation / AudioToolbox / Accelerate | Apple SDK | Engine graph, MP3/AAC/ALAC/WAV/AIFF decode, AAC/ALAC encode, FFT/vector |
 | `CGlint` | Glint | MIT | Portable MP3/ADTS-AAC decode and MP3/AAC encode; pinned/vendored, macOS parity/fuzz gates remain |
 | `Cminimp4` (candidate) | minimp4 | CC0 | Portable ISO BMFF/M4A container parsing; codec-independent |
-| `Calac` (candidate) | AppleALAC | Apache-2.0 | Portable ALAC codec; M4A/CAF integration pending |
+| `Calac` | First-party API placeholder | — | Portable ALAC unavailable; independently authored BSD-only implementation pending |
 | — | Freeverb constants (§13.4) | Public Domain | Reverb tuning |
 
 **Rejected (do not use):** Rubber Band, SoundTouch, sbsms, soxr, aubio, libKeyFinder, Essentia,
@@ -202,6 +202,8 @@ Apple-native gates:
    and Apple platforms. Keep AudioToolbox as the Apple AAC/ALAC implementation.
 3. Add `Cminimp4` only for the supported ISO BMFF/M4A profiles, with malformed-file, duration,
    seek, priming, and metadata tests.
-4. Evaluate Apache-2.0 AppleALAC for Linux ALAC and cross-check lossless output with AudioToolbox.
+4. Do not use implementation code from Apple's public-source ALAC repository. Retained Apache-2.0
+   headers are not compiled or linked. Create an independently authored BSD-only ALAC implementation
+   for Linux and cross-check lossless output with AudioToolbox.
 5. Make Linux the independent correctness host for Swift, analysis, DSP, headless render, and all
    portable codecs. Keep macOS/iOS CI as the native Apple framework and hardware-family gate.

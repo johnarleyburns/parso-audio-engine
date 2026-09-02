@@ -1,15 +1,13 @@
-# AppleALAC vendored codec
+# Portable ALAC status
 
-This target vendors the codec implementation from
-`https://github.com/macosforge/alac` at revision
-`c38887c5c5e64a4b31108733bd79ca9b2496d987`.
+The Apple public-source ALAC implementation previously present in this target
+was removed on 2026-09-02 after legal review. The upstream Apache-2.0 headers
+remain only because that review permits retaining the declarations; they are not
+compiled or linked. No implementation code from Apple's public-source ALAC
+repository is used by this project.
 
-The selected codec source files carry Apple Apache License 2.0 headers and are
-distributed with the upstream Apache-2.0 `LICENSE` file. The converter utility,
-its file/container code, build artifacts, and the separate `APPLE_LICENSE.txt`
-file are not part of this target. Container parsing and muxing remain a
-separate layer.
-
-The files under `vendor/codec` are unmodified upstream sources. The C-clean
-wrapper in `include/` and `src/` is first-party MIT-licensed code and does not
-expose the upstream C++ classes through the module interface.
+`include/parso_alac.h` and `src/parso_alac.cpp` are first-party C API material.
+The current bridge deliberately reports portable ALAC as unavailable. A future
+replacement must be independently authored and use only the project's approved
+BSD-only permissive dependency policy. Until then, Apple platforms use
+AudioToolbox for ALAC and Linux rejects portable ALAC encoding/decoding.

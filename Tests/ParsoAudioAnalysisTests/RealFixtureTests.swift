@@ -20,7 +20,7 @@ import ParsoTestSupport
 @Suite("RealFixture manifest")
 struct FixtureManifestTests {
     @Test func manifestLoadsAndHasTracks() {
-        #expect(FixtureLibrary.all.count >= 18)
+        #expect(FixtureLibrary.all.count >= 27)
     }
 
     @Test func idsAreUnique() {
@@ -35,9 +35,11 @@ struct FixtureManifestTests {
 
     @Test func plausibleRangeCoversHouseDiscoHipHopLofi() {
         let r = FixtureLibrary.plausibleBPMRange
+        #expect(r.contains(62.5))  // slow hip-hop
         #expect(r.contains(72))    // lofi / hip-hop
         #expect(r.contains(115))   // disco
         #expect(r.contains(126))   // house
+        #expect(r.contains(174))   // drum and bass / electronic
     }
 
     @Test func corpusSpansMultipleGenres() {
@@ -76,7 +78,7 @@ struct FixtureTempoTests {
         let b = TempoEstimator().analyze(pcm)
         #expect(a.bpm == b.bpm)                                 // deterministic
         #expect(FixtureLibrary.plausibleBPMRange.contains(a.bpm))
-        #expect(a.confidence > 0.2)
+        #expect(a.confidence > (fixture.expected.confidenceFloor ?? 0.2))
 
         // Strict regression once ground truth is filled in fixtures.json.
         if let expected = fixture.expected.bpm {

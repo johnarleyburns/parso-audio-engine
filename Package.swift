@@ -15,7 +15,7 @@ import PackageDescription
 //   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
 //                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
 //   CGlint (planned) -> Glint portable MP3/AAC-LC compatibility and MP3 encode
-//   Calac    -> AppleALAC codec (Apache-2.0) https://github.com/macosforge/alac
+//   Calac    -> first-party portable ALAC API placeholder; implementation pending legal review
 
 let package = Package(
     name: "parso-audio-engine",
@@ -127,16 +127,7 @@ let package = Package(
         .target(
             name: "Calac",
             path: "Sources/Calac",
-            publicHeadersPath: "include",
-            cSettings: [
-                .headerSearchPath("vendor/codec"),
-                // AppleALAC's legacy EndianPortable.c predates arm64 and only
-                // detects x86 little-endian targets itself.
-                .define("TARGET_RT_LITTLE_ENDIAN", to: "1")
-            ],
-            cxxSettings: [
-                .headerSearchPath("vendor/codec")
-            ]
+            publicHeadersPath: "include"
         ),
         .target(
             name: "CflacBridge",

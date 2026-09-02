@@ -423,9 +423,12 @@ let w = try AudioFileWriter(url: outURL, format: pcm.format, codec: .flac(compre
 try w.write(pcm); try w.finish()
 ```
 
-Supported decode: FLAC, Ogg Vorbis, Opus, MP3, AAC, ALAC, WAV, AIFF, CAF.
-Supported encode: WAV/PCM, FLAC, AAC, ALAC. Portable MP3 encode is planned through the Linux Swift
-compatibility workstream using an audited permissive codec; Apple AAC/ALAC remains the native path.
+Supported decode: FLAC, Ogg Vorbis, Opus, MP3, AAC, WAV, AIFF, CAF, and Apple-native ALAC.
+Supported encode: WAV/PCM, FLAC, AAC, and Apple-native ALAC. Portable MP3 encode is planned through
+the Linux Swift compatibility workstream using an audited permissive codec. Portable ALAC is
+currently unavailable: no implementation code from Apple's public-source ALAC repository is used;
+only its permitted headers remain uncompiled while an independently authored BSD-only replacement
+is pending. Apple AAC/ALAC remains the native path.
 
 ## Loudness / auto-gain
 
@@ -463,3 +466,7 @@ integration, then tagged 1.0.0.
 
 MIT (`LICENSE`). Third-party permissive components: `NOTICE.md`. Test-fixture audio (Creative Commons,
 fetched not redistributed): `ATTRIBUTION.md`.
+
+The portable-codec policy is BSD-only permissive (BSD-2-Clause/BSD-3-Clause, or public domain) for
+replacement implementation code. This project does not use any implementation code from Apple's
+public-source ALAC repository; only permitted upstream header declarations remain uncompiled.

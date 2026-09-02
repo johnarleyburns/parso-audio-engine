@@ -15,7 +15,6 @@ retains its own license; none use a prohibited copyleft license.
 | libopusfile | BSD-3-Clause | https://github.com/xiph/opusfile | Ogg Opus file reader |
 | Signalsmith Stretch | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch | Time-stretch / pitch-shift |
 | Signalsmith Linear | MIT | https://github.com/Signalsmith-Audio/linear | Stretch FFT and DSP support |
-| AppleALAC codec subset | Apache-2.0 | https://github.com/macosforge/alac | Portable ALAC encode/decode; vendored revision is recorded in `Sources/Calac/VENDOR.md` |
 | Freeverb (reverb constants) | Public Domain | Jezar at Dreampoint | Reverb tuning reference |
 
 Apple frameworks used under the Apple SDK license (linked, not redistributed):
@@ -28,3 +27,14 @@ AVFoundation, AudioToolbox, Accelerate.
 
 Test-only audio fixtures (Creative Commons, **fetched at test time, not
 redistributed in this repo**) are attributed in `ATTRIBUTION.md`.
+
+## BSD-only portable-codec notice
+
+The portable replacement for any removed Apple public-source codec material
+must be independently authored and use only BSD-2-Clause/BSD-3-Clause (or
+public-domain) implementation code. No implementation code from Apple's
+public-source ALAC repository is used in this project. Its implementation files
+were removed; only the upstream Apache-2.0 header declarations remain in
+`Sources/Calac/vendor/codec`, are not compiled or linked, and do not provide a
+portable ALAC implementation. Apple platforms use the system AudioToolbox
+implementation; portable ALAC is currently unavailable elsewhere.

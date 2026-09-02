@@ -1,7 +1,8 @@
 {
   "_comment": [
     "Creative Commons audio fixtures from Wikimedia Commons, used to exercise the analysis",
-    "and decode pipelines on real-world material across genres (house, disco, hip-hop, lofi).",
+    "and decode pipelines on real-world material across genres and tempos (house, disco,",
+    "hip-hop, lofi, electronic, neurofunk, and classical).",
     "These files are FETCHED AT TEST TIME by scripts/download-fixtures.sh and are NEVER",
     "committed (see .gitignore, ATTRIBUTION.md). License/author for each are on the linked",
     "Commons page.",
@@ -139,6 +140,69 @@
       "sourceFormat": "opus", "genre": "slap-house", "beatBased": true,
       "roles": ["analysis", "decode-opus"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
       "note": "Human reference: G / 126.0 BPM. The v1 estimator reports 123.25 BPM and D major (10B); strict assertions remain pending estimator refinement.",
-      "expected": { "bpm": 126.0, "bpmTolerance": 4.0, "key": null } }
+      "expected": { "bpm": 126.0, "bpmTolerance": 4.0, "key": null } },
+
+    { "id": "harlequin_persona", "filename": "Harlequin_-_Persona.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Harlequin_-_Persona.ogg",
+      "sourceFormat": "oggVorbis", "genre": "neurofunk", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: B / 170.0 BPM. The current v1 tempo estimator reports 112.5 BPM; strict BPM/key assertions remain pending estimator refinement.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "ars_niemo_small_talk_build_iv", "filename": "Ars_Niemo_-_Small_Talk_Build_IV.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Ars_Niemo_-_Small_Talk_Build_IV.ogg",
+      "sourceFormat": "oggVorbis", "genre": "electronic", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: Dm / 170.0 BPM. The current v1 tempo estimator reports 112.5 BPM; strict BPM/key assertions remain pending estimator refinement.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "aces_r_temple_dab", "filename": "Aces.R_-_Temple_Dab.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Aces.R_-_Temple_Dab.ogg",
+      "sourceFormat": "oggVorbis", "genre": "electronic", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: Fm / 174.0 BPM. Strict key assertion remains pending robust key-estimator refinement.",
+      "expected": { "bpm": 174.0, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "crookedcop", "filename": "CrookedCop.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:CrookedCop.ogg",
+      "sourceFormat": "oggVorbis", "genre": "hip-hop", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: D-sharp-m / 62.5 BPM. The current v1 tempo estimator reports 136.0 BPM; strict BPM/key assertions remain pending estimator refinement.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "tea_roots_isrc_usuan1100472", "filename": "Tea_Roots_(ISRC_USUAN1100472).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Tea_Roots_(ISRC_USUAN1100472).mp3",
+      "sourceFormat": "mp3", "genre": "electronic", "beatBased": true,
+      "roles": ["analysis", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: Cm / 73.0 BPM. Strict key assertion remains pending robust key-estimator refinement.",
+      "expected": { "bpm": 73.0, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "elysian_bailey_come_home", "filename": "Elysian_Bailey_-_01_-_Come_Home.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Elysian_Bailey_-_01_-_Come_Home.ogg",
+      "sourceFormat": "oggVorbis", "genre": "electronic", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: Dm / 70.0 BPM. The current v1 tempo estimator reports 76.0 BPM; strict BPM/key assertions remain pending estimator refinement.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "josh_woodward_little_tomcat", "filename": "Josh_Woodward_-_17_-_Little_Tomcat.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_17_-_Little_Tomcat.ogg",
+      "sourceFormat": "oggVorbis", "genre": "unknown", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: D-flat / 89.3 BPM. Strict key assertion remains pending robust key-estimator refinement.",
+      "expected": { "bpm": 89.3, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "bach_toccata_fugue_d_minor_norbert_schenk", "filename": "Bach,_Toccata_und_Fuge_d-moll_BWV_565,_Norbert_Schenk.mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Bach,_Toccata_und_Fuge_d-moll_BWV_565,_Norbert_Schenk.mp3",
+      "sourceFormat": "mp3", "genre": "classical", "beatBased": true,
+      "roles": ["analysis", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: Dm / 98.1 BPM. Strict key assertion remains pending robust key-estimator refinement.",
+      "expected": { "bpm": 98.1, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "enrique_granados_danza_espanola_arabesca", "filename": "Enrique_Granados_-_danza_espanola,_op._37,_h._142_-_xii._arabesca.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Enrique_Granados_-_danza_espanola,_op._37,_h._142_-_xii._arabesca.ogg",
+      "sourceFormat": "oggVorbis", "genre": "classical", "beatBased": true,
+      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Human reference: Am / 85.5 BPM. The current v1 tempo estimator reports 152.0 BPM with 0.19 confidence; strict BPM/key assertions remain pending estimator refinement.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null, "confidenceFloor": 0.1 } }
   ]
 }

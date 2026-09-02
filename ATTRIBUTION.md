@@ -26,5 +26,15 @@ the exact license (CC0 / CC-BY / CC-BY-SA, etc.) and required attribution before
 | ᴼᴬᵇᵉᵃᵗˢ - I Need U (Deep House Instrumental Vocal Deep Slap House Type Beat) | slap-house | opus | https://commons.wikimedia.org/wiki/File:%E1%B4%BC%E1%B4%AC%E1%B5%87%E1%B5%89%E1%B5%83%E1%B5%97%CB%A2_-_I_Need_U_(Deep_House_Instrumental_Vocal_Deep_Slap_House_Type_Beat).opus |
 | ᴼᴬᵇᵉᵃᵗˢ - Universe | slap-house | opus | https://commons.wikimedia.org/wiki/File:%E1%B4%BC%E1%B4%AC%E1%B5%87%E1%B5%89%E1%B5%83%E1%B5%97%CB%A2_-_Universe.opus |
 
+| Harlequin - Persona | neurofunk | oggVorbis | https://commons.wikimedia.org/wiki/File:Harlequin_-_Persona.ogg |
+| Ars Niemo - Small Talk Build IV | electronic | oggVorbis | https://commons.wikimedia.org/wiki/File:Ars_Niemo_-_Small_Talk_Build_IV.ogg |
+| Aces.R - Temple Dab | electronic | oggVorbis | https://commons.wikimedia.org/wiki/File:Aces.R_-_Temple_Dab.ogg |
+| CrookedCop | hip-hop | oggVorbis | https://commons.wikimedia.org/wiki/File:CrookedCop.ogg |
+| Tea Roots (ISRC USUAN1100472) | electronic | mp3 | https://commons.wikimedia.org/wiki/File:Tea_Roots_(ISRC_USUAN1100472).mp3 |
+| Elysian Bailey - 01 - Come Home | electronic | oggVorbis | https://commons.wikimedia.org/wiki/File:Elysian_Bailey_-_01_-_Come_Home.ogg |
+| Josh Woodward - 17 - Little Tomcat | unknown | oggVorbis | https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_17_-_Little_Tomcat.ogg |
+| Bach, Toccata und Fuge d-moll BWV 565, Norbert Schenk | classical | mp3 | https://commons.wikimedia.org/wiki/File:Bach,_Toccata_und_Fuge_d-moll_BWV_565,_Norbert_Schenk.mp3 |
+| Enrique Granados - danza espanola, op. 37, h. 142 - xii. arabesca | classical | oggVorbis | https://commons.wikimedia.org/wiki/File:Enrique_Granados_-_danza_espanola,_op._37,_h._142_-_xii._arabesca.ogg |
+
 > To lock verified BPM/key ground truth for regression tests, edit the matching
 > `expected` entry in `Tests/Fixtures/fixtures.json`.
