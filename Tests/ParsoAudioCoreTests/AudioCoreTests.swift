@@ -256,6 +256,26 @@ struct CodecRoundtripTests {
         #expect(abs(Measure.dominantFrequency(decoded, searchRange: 300...600) - 440) <= 2)
     }
 
+    @Test func portableM4aRejectsSampleToChunkTableThatDoesNotCoverSamples() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/m4a_external_aac_stereo_48k.m4a.b64")
+        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var fixture = Data(base64Encoded: encoded) else {
+            throw AudioFileError.invalidFile("external stereo AAC M4A fixture is not valid base64")
+        }
+        let stsc = Data([0, 0, 0, 28, 0x73, 0x74, 0x73, 0x63])
+        guard let stscOffset = fixture.firstRange(of: stsc)?.lowerBound else {
+            throw AudioFileError.invalidFile("AAC fixture has no sample-to-chunk atom")
+        }
+        fixture[stscOffset + 20] = 1 // one sample in the only chunk; 25 are declared
+        let url = tempURL("m4a")
+        try fixture.write(to: url)
+
+        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
+    }
+
     @Test func portableM4aRejectsUnsupportedAACProfile() throws {
         let fixtureURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

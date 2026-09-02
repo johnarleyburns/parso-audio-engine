@@ -27,6 +27,20 @@ func unimplemented(_ fn: StaticString = #function, file: StaticString = #file, l
     fatalError("unimplemented: \(fn) — implement per docs/SPEC.md", file: file, line: line)
 }
 
+/// Glint's whole-file AAC decoder currently has process-global initialization
+/// state. Keep offline package decodes serialized until that upstream boundary
+/// becomes intrinsically thread-safe; this lock is never reachable from the
+/// real-time render path.
+enum GlintDecodeGate {
+    private static let lock = NSLock()
+
+    static func withLock<R>(_ body: () -> R) -> R {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
 // MARK: - Buffers & formats
 
 /// A PCM stream description.
@@ -315,15 +329,17 @@ public struct AudioFileReader: Sendable {
         var sampleRate: Int32 = 0
         var channels: Int32 = 0
         var frames: Int32 = 0
-        let decoded: UnsafeMutablePointer<Float>? = data.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return nil }
-            return glint_decode_audio(
-                baseAddress.assumingMemoryBound(to: UInt8.self),
-                Int32(data.count),
-                &sampleRate,
-                &channels,
-                &frames
-            )
+        let decoded: UnsafeMutablePointer<Float>? = GlintDecodeGate.withLock {
+            data.withUnsafeBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else { return nil }
+                return glint_decode_audio(
+                    baseAddress.assumingMemoryBound(to: UInt8.self),
+                    Int32(data.count),
+                    &sampleRate,
+                    &channels,
+                    &frames
+                )
+            }
         }
         guard let decoded, sampleRate > 0, channels > 0, frames > 0 else {
             if let decoded { glint_free(decoded) }

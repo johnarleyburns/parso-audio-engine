@@ -54,16 +54,18 @@ enum MP4AACCodec {
         var sampleRate: Int32 = 0
         var channels: Int32 = 0
         var decodedFrames: Int32 = 0
-        let decoded: UnsafeMutablePointer<Float>? = adts.withUnsafeBytes {
-            (rawBuffer: UnsafeRawBufferPointer) -> UnsafeMutablePointer<Float>? in
-            guard let baseAddress = rawBuffer.baseAddress else { return nil }
-            return glint_decode_audio(
-                baseAddress.assumingMemoryBound(to: UInt8.self),
-                Int32(adts.count),
-                &sampleRate,
-                &channels,
-                &decodedFrames
-            )
+        let decoded: UnsafeMutablePointer<Float>? = GlintDecodeGate.withLock {
+            adts.withUnsafeBytes {
+                (rawBuffer: UnsafeRawBufferPointer) -> UnsafeMutablePointer<Float>? in
+                guard let baseAddress = rawBuffer.baseAddress else { return nil }
+                return glint_decode_audio(
+                    baseAddress.assumingMemoryBound(to: UInt8.self),
+                    Int32(adts.count),
+                    &sampleRate,
+                    &channels,
+                    &decodedFrames
+                )
+            }
         }
         guard let decoded, track.mediaFrameCount <= Int(Int32.max),
               track.mediaStartFrame <= Int(Int32.max), track.frameCount <= Int(Int32.max),
