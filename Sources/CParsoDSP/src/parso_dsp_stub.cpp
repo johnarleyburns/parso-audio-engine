@@ -8,9 +8,17 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 #include <new>
 #include <vector>
+
+#if defined(__SSE__)
+#include <xmmintrin.h>
+#if defined(__SSE3__)
+#include <pmmintrin.h>
+#endif
+#endif
 
 namespace {
 
@@ -749,5 +757,19 @@ int pd_ring_pop(pd_ring* ring, void* element) {
 
 void pd_ring_destroy(pd_ring* ring) { delete ring; }
 
-void pd_enable_ftz(void) {}
+void pd_enable_ftz(void) {
+#if defined(__SSE__)
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+#if defined(__SSE3__)
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+#endif
+#elif defined(__aarch64__) || defined(__arm64__)
+    // ARM64 exposes flush-to-zero through FPCR bit 24. This is thread-local
+    // state, matching the scope of the x86 MXCSR controls above.
+    uint64_t fpcr = 0;
+    __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+    fpcr |= (uint64_t(1) << 24);
+    __asm__ volatile("msr fpcr, %0" : : "r"(fpcr));
+#endif
+}
 } // extern "C"

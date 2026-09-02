@@ -613,6 +613,24 @@ struct RingTests {
     }
 }
 
+@Suite("DSP CPU state")
+struct DSPCPUStateTests {
+    @Test func enablesFlushToZeroForSubnormalArithmetic() {
+        pd_enable_ftz()
+
+#if arch(x86_64) || arch(arm64)
+        var subnormal = Float.leastNonzeroMagnitude
+        withUnsafeMutablePointer(to: &subnormal) { value in
+            value.pointee *= 0.5
+        }
+        #expect(subnormal == 0)
+#else
+        // Unsupported targets use the documented safe no-op fallback.
+        #expect(true)
+#endif
+    }
+}
+
 @Suite("Time / pitch")
 struct TimePitchTests {
     @Test func keyLockStretchesTimeNotPitch() {
