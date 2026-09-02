@@ -510,8 +510,9 @@ struct MasterLimiterTests {
         let output = e.render(frames: 4096).left
         let peak = output.map(abs).max() ?? 0
         #expect(peak > 0.45)
-        #expect(peak <= pow(10, -6 / 20) + 0.001)
-        #expect(e.mixer.master.peakMeter <= pow(10, -6 / 20) + 0.001)
+        let ceiling = pow(Float(10), Float(-6) / Float(20))
+        #expect(peak <= ceiling + 0.001)
+        #expect(e.mixer.master.peakMeter <= ceiling + 0.001)
     }
 
     @Test func repeatedEffectBlocksRemainFinite() {
