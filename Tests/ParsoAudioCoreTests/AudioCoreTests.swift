@@ -219,6 +219,21 @@ struct CodecRoundtripTests {
         #expect(metadata == AudioFileMetadata(title: "External Café", artist: "Fixture Artist", album: "Compatibility Album"))
     }
 
+    @Test func portableM4aRejectsExternallyAuthoredAACProfile() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/m4a_external_aac.m4a.b64")
+        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let fixture = Data(base64Encoded: encoded) else {
+            throw AudioFileError.invalidFile("external AAC M4A fixture is not valid base64")
+        }
+        let url = tempURL("m4a")
+        try fixture.write(to: url)
+
+        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
+    }
+
     private func makeMetadataFixture() -> Data {
         func atom(_ type: [UInt8], _ payload: Data) -> Data {
             var result = Data()
