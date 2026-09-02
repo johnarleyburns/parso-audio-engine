@@ -129,7 +129,10 @@ let package = Package(
             path: "Sources/Calac",
             publicHeadersPath: "include",
             cSettings: [
-                .headerSearchPath("vendor/codec")
+                .headerSearchPath("vendor/codec"),
+                // AppleALAC's legacy EndianPortable.c predates arm64 and only
+                // detects x86 little-endian targets itself.
+                .define("TARGET_RT_LITTLE_ENDIAN", to: "1")
             ],
             cxxSettings: [
                 .headerSearchPath("vendor/codec")
