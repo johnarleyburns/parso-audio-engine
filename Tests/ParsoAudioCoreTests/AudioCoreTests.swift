@@ -236,6 +236,26 @@ struct CodecRoundtripTests {
         #expect(Measure.rms(try reader.readAll()) > 0.001)
     }
 
+    @Test func portableM4aDecodesExternallyAuthoredAACStereo48kProfile() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/m4a_external_aac_stereo_48k.m4a.b64")
+        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let fixture = Data(base64Encoded: encoded) else {
+            throw AudioFileError.invalidFile("external stereo AAC M4A fixture is not valid base64")
+        }
+        let url = tempURL("m4a")
+        try fixture.write(to: url)
+
+        let reader = try AudioFileReader(url: url, container: .m4a)
+        #expect(reader.format == AudioFormat(sampleRate: 48_000, channelCount: 2))
+        #expect(reader.frameCount == 24_000)
+        let decoded = try reader.readAll()
+        #expect(Measure.rms(decoded) > 0.001)
+        #expect(abs(Measure.dominantFrequency(decoded, searchRange: 300...600) - 440) <= 2)
+    }
+
     @Test func portableM4aRejectsUnsupportedAACProfile() throws {
         let fixtureURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

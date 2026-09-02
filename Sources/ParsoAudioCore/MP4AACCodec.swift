@@ -4,9 +4,9 @@ import CGlint
 /// A deliberately narrow ISO-BMFF profile for portable AAC-LC files.
 ///
 /// The demuxer accepts one audio track, one AAC-LC (`mp4a`) sample
-/// description, one chunk containing all access units, and explicit packet
-/// tables. Raw MPEG-4 AAC access units are wrapped in synthetic ADTS headers
-/// before they are handed to the existing Glint decoder.
+/// description, ordinary (non-fragmented) ISO-BMFF sample tables, and one or
+/// more media chunks. Raw MPEG-4 AAC access units are wrapped in synthetic
+/// ADTS headers before they are handed to the existing Glint decoder.
 enum MP4AACCodec {
     private struct Atom {
         let type: String
@@ -65,7 +65,9 @@ enum MP4AACCodec {
                 &decodedFrames
             )
         }
-        guard let decoded, sampleRate == Int32(track.description.sampleRate),
+        guard let decoded, track.mediaFrameCount <= Int(Int32.max),
+              track.mediaStartFrame <= Int(Int32.max), track.frameCount <= Int(Int32.max),
+              sampleRate == Int32(track.description.sampleRate),
               channels == Int32(track.description.channels),
               decodedFrames >= Int32(track.mediaStartFrame),
               decodedFrames - Int32(track.mediaStartFrame) >= Int32(track.frameCount) else {
@@ -117,25 +119,33 @@ enum MP4AACCodec {
         let packetDurations = try parseTimeToSample(data, atom: stts)
         let packetSizes = try parseSampleSizes(data, atom: stsz)
         let chunkOffsets = try parseChunkOffsets(data, atom: chunkTable)
-        try validateSampleToChunk(data, atom: stsc, packetCount: packetSizes.count)
-        guard chunkOffsets.count == 1,
-              packetDurations.count == packetSizes.count else {
+        let samplesPerChunk = try parseSampleToChunk(
+            data, atom: stsc, chunkCount: chunkOffsets.count, packetCount: packetSizes.count
+        )
+        guard packetDurations.count == packetSizes.count else {
             throw AudioFileError.invalidFile("AAC sample table counts disagree")
         }
 
-        let firstOffset = chunkOffsets[0]
         var packetRanges: [Range<Int>] = []
         packetRanges.reserveCapacity(packetSizes.count)
-        var offset = firstOffset
-        for size in packetSizes {
-            guard size >= 1, size <= 8_184,
-                  offset >= mdat.payload.lowerBound,
-                  size <= Int.max - offset,
-                  offset + size <= mdat.payload.upperBound else {
-                throw AudioFileError.invalidFile("AAC chunk points outside mdat")
+        var packetIndex = 0
+        for (chunkOffset, sampleCount) in zip(chunkOffsets, samplesPerChunk) {
+            var offset = chunkOffset
+            for _ in 0..<sampleCount {
+                let size = packetSizes[packetIndex]
+                guard size >= 1, size <= 8_184,
+                      offset >= mdat.payload.lowerBound,
+                      size <= Int.max - offset,
+                      offset + size <= mdat.payload.upperBound else {
+                    throw AudioFileError.invalidFile("AAC chunk points outside mdat")
+                }
+                packetRanges.append(offset..<(offset + size))
+                offset += size
+                packetIndex += 1
             }
-            packetRanges.append(offset..<(offset + size))
-            offset += size
+        }
+        guard packetIndex == packetSizes.count else {
+            throw AudioFileError.invalidFile("AAC sample-to-chunk table does not cover samples")
         }
 
         let mediaFrameCount = packetDurations.reduce(into: 0) { result, duration in
@@ -370,15 +380,59 @@ enum MP4AACCodec {
         }
     }
 
-    private static func validateSampleToChunk(_ data: Data, atom: Atom, packetCount: Int) throws {
-        guard atom.payload.count >= 20 else { throw AudioFileError.invalidFile("invalid stsc atom") }
-        let count = Int(readBE32(data, at: atom.payload.lowerBound + 4))
-        guard count == 1,
-              readBE32(data, at: atom.payload.lowerBound + 8) == 1,
-              readBE32(data, at: atom.payload.lowerBound + 12) == UInt32(packetCount),
-              readBE32(data, at: atom.payload.lowerBound + 16) == 1 else {
-            throw AudioFileError.invalidFile("unsupported stsc layout")
+    private static func parseSampleToChunk(_ data: Data, atom: Atom, chunkCount: Int,
+                                           packetCount: Int) throws -> [Int] {
+        guard atom.payload.count >= 8, chunkCount > 0 else {
+            throw AudioFileError.invalidFile("invalid stsc atom")
         }
+        let count = Int(readBE32(data, at: atom.payload.lowerBound + 4))
+        guard count > 0, count <= (atom.payload.count - 8) / 12 else {
+            throw AudioFileError.invalidFile("invalid stsc entry count")
+        }
+
+        struct Entry {
+            let firstChunk: Int
+            let samplesPerChunk: Int
+        }
+        var entries: [Entry] = []
+        entries.reserveCapacity(count)
+        var previousFirstChunk = 0
+        for index in 0..<count {
+            let entry = atom.payload.lowerBound + 8 + index * 12
+            let firstChunk = Int(readBE32(data, at: entry))
+            let samplesPerChunk = Int(readBE32(data, at: entry + 4))
+            let sampleDescriptionIndex = readBE32(data, at: entry + 8)
+            guard firstChunk > previousFirstChunk, firstChunk >= 1, firstChunk <= chunkCount,
+                  samplesPerChunk > 0, samplesPerChunk <= packetCount,
+                  sampleDescriptionIndex == 1 else {
+                throw AudioFileError.invalidFile("unsupported stsc layout")
+            }
+            entries.append(Entry(firstChunk: firstChunk, samplesPerChunk: samplesPerChunk))
+            previousFirstChunk = firstChunk
+        }
+        guard entries[0].firstChunk == 1 else {
+            throw AudioFileError.invalidFile("stsc does not start at the first chunk")
+        }
+
+        var samplesPerChunk: [Int] = []
+        samplesPerChunk.reserveCapacity(chunkCount)
+        var entryIndex = 0
+        var packetTotal = 0
+        for chunk in 1...chunkCount {
+            while entryIndex + 1 < entries.count && entries[entryIndex + 1].firstChunk <= chunk {
+                entryIndex += 1
+            }
+            let samples = entries[entryIndex].samplesPerChunk
+            guard packetTotal <= packetCount - samples else {
+                throw AudioFileError.invalidFile("stsc contains too many samples")
+            }
+            samplesPerChunk.append(samples)
+            packetTotal += samples
+        }
+        guard packetTotal == packetCount else {
+            throw AudioFileError.invalidFile("stsc does not cover every sample")
+        }
+        return samplesPerChunk
     }
 
     private static func parseEditWindow(_ data: Data, atom: Atom?, mediaFrameCount: Int,
