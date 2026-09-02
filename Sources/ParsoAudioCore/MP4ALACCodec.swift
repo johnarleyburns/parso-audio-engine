@@ -25,11 +25,13 @@ enum MP4ALACCodec {
         let description: Description
         let packetRanges: [Range<Int>]
         let packetFrames: [UInt32]
+        let mediaFrameCount: Int
+        let mediaStartFrame: Int
         let frameCount: Int
     }
 
     private static let containerTypes: Set<String> = [
-        "moov", "trak", "mdia", "minf", "stbl", "dinf", "udta", "meta", "ilst"
+        "moov", "trak", "edts", "mdia", "minf", "stbl", "dinf", "udta", "meta", "ilst"
     ]
 
     static func decode(_ data: Data) throws -> PCMBuffer {
@@ -47,9 +49,9 @@ enum MP4ALACCodec {
         }
         defer { parso_alac_decoder_destroy(decoder) }
 
-        let output = PCMBuffer(
+        let mediaOutput = PCMBuffer(
             format: AudioFormat(sampleRate: track.description.sampleRate, channelCount: track.description.channels),
-            capacity: track.frameCount
+            capacity: track.mediaFrameCount
         )
         let bytesPerSample = (track.description.bitDepth + 7) / 8
         let bytesPerFrame = track.description.channels * bytesPerSample
@@ -81,7 +83,7 @@ enum MP4ALACCodec {
                 throw AudioFileError.invalidFile("ALAC packet decode failed")
             }
 
-            let frames = min(Int(decodedFrames), track.frameCount - outputFrame)
+            let frames = min(Int(decodedFrames), track.mediaFrameCount - outputFrame)
             for frame in 0..<frames {
                 for channel in 0..<track.description.channels {
                     let sampleOffset = frame * bytesPerFrame + channel * bytesPerSample
@@ -97,15 +99,26 @@ enum MP4ALACCodec {
                     default:
                         integer = Int32(bitPattern: readLE32(decoded, at: sampleOffset))
                     }
-                    let scale = pow(2.0, Double(track.description.bitDepth))
+                    let scale = pow(2.0, Double(track.description.bitDepth - 1))
                     let storedScale = track.description.bitDepth == 20 ? scale * 16.0 : scale
-                    output.channel(channel)[outputFrame + frame] = Float(Double(integer) / storedScale)
+                    mediaOutput.channel(channel)[outputFrame + frame] = Float(Double(integer) / storedScale)
                 }
             }
             outputFrame += frames
         }
-        guard outputFrame == track.frameCount else {
+        guard outputFrame == track.mediaFrameCount else {
             throw AudioFileError.invalidFile("ALAC sample tables do not match decoded frame count")
+        }
+        let output = PCMBuffer(
+            format: mediaOutput.format,
+            capacity: track.frameCount
+        )
+        for channel in 0..<output.channelCount {
+            let source = mediaOutput.channel(channel)
+            let destination = output.channel(channel)
+            for frame in 0..<track.frameCount {
+                destination[frame] = source[track.mediaStartFrame + frame]
+            }
         }
         return output
     }
@@ -121,7 +134,7 @@ enum MP4ALACCodec {
         let createResult = parso_alac_encoder_create(
             UInt32(buffer.format.sampleRate.rounded()),
             UInt32(buffer.channelCount),
-            32,
+            24,
             4096,
             0,
             &encoder
@@ -141,18 +154,31 @@ enum MP4ALACCodec {
         }
         let magicCookie = Data(cookie.prefix(Int(cookieSize)))
 
+        let leadingTrim = 2_112
+        let trailingPadding = 960
+        guard buffer.frameCount <= Int.max - leadingTrim - trailingPadding else {
+            throw AudioFileError.formatMismatch
+        }
+        let mediaFrameCount = leadingTrim + buffer.frameCount + trailingPadding
         var packets: [Data] = []
         var packetFrames: [UInt32] = []
         var offset = 0
-        while offset < buffer.frameCount {
-            let frames = min(4096, buffer.frameCount - offset)
+        while offset < mediaFrameCount {
+            let frames = min(4096, mediaFrameCount - offset)
             var pcm = Data()
-            pcm.reserveCapacity(frames * buffer.channelCount * 4)
+            pcm.reserveCapacity(frames * buffer.channelCount * 3)
             for frame in 0..<frames {
                 for channel in 0..<buffer.channelCount {
-                    let value = max(-1.0, min(0.9999999995343387, Double(buffer.channel(channel)[offset + frame])))
-                    let scaled = Int64((value * 2_147_483_648.0).rounded())
-                    appendLE32(&pcm, UInt32(bitPattern: Int32(max(-2_147_483_648, min(2_147_483_647, scaled)))))
+                    let sourceFrame = offset + frame - leadingTrim
+                    let sourceValue = sourceFrame >= 0 && sourceFrame < buffer.frameCount
+                        ? Double(buffer.channel(channel)[sourceFrame])
+                        : 0.0
+                    let value = max(-1.0, min(0.9999999995343387, sourceValue))
+                    let scaled = Int64((value * 8_388_608.0).rounded())
+                    let raw = UInt32(bitPattern: Int32(max(-8_388_608, min(8_388_607, scaled))))
+                    pcm.append(UInt8(truncatingIfNeeded: raw))
+                    pcm.append(UInt8(truncatingIfNeeded: raw >> 8))
+                    pcm.append(UInt8(truncatingIfNeeded: raw >> 16))
                 }
             }
             var packet: UnsafeMutablePointer<UInt8>?
@@ -184,8 +210,10 @@ enum MP4ALACCodec {
         let provisionalMoov = makeMoov(
             sampleRate: UInt32(buffer.format.sampleRate.rounded()),
             channels: buffer.channelCount,
-            bitDepth: 32,
-            frameCount: buffer.frameCount,
+            bitDepth: 24,
+            mediaFrameCount: mediaFrameCount,
+            audibleFrameCount: buffer.frameCount,
+            mediaStartFrame: leadingTrim,
             magicCookie: magicCookie,
             packetFrames: packetFrames,
             packetSizes: packets.map { $0.count },
@@ -201,8 +229,10 @@ enum MP4ALACCodec {
         let moov = makeMoov(
             sampleRate: UInt32(buffer.format.sampleRate.rounded()),
             channels: buffer.channelCount,
-            bitDepth: 32,
-            frameCount: buffer.frameCount,
+            bitDepth: 24,
+            mediaFrameCount: mediaFrameCount,
+            audibleFrameCount: buffer.frameCount,
+            mediaStartFrame: leadingTrim,
             magicCookie: magicCookie,
             packetFrames: packetFrames,
             packetSizes: packets.map { $0.count },
@@ -226,6 +256,7 @@ enum MP4ALACCodec {
         }
         let nested = try parseAtoms(data, range: moov.payload)
         guard let mdhd = nested.first(where: { $0.type == "mdhd" }),
+              let mvhd = nested.first(where: { $0.type == "mvhd" }),
               let stsd = nested.first(where: { $0.type == "stsd" }),
               let stts = nested.first(where: { $0.type == "stts" }),
               let stsc = nested.first(where: { $0.type == "stsc" }),
@@ -235,6 +266,7 @@ enum MP4ALACCodec {
         }
         let description = try parseDescription(data, atom: stsd)
         let sampleRate = try parseTimescale(data, atom: mdhd)
+        let movieTimescale = try parseTimescale(data, atom: mvhd)
         let packetFrames = try parseTimeToSample(data, atom: stts)
         let packetSizes = try parseSampleSizes(data, atom: stsz)
         let chunkOffsets = try parseChunkOffsets(data, atom: chunkTable)
@@ -251,11 +283,18 @@ enum MP4ALACCodec {
             }
             return offset..<(offset + size)
         }
-        let totalFrames = packetFrames.reduce(into: 0) { result, count in
+        let mediaFrameCount = packetFrames.reduce(into: 0) { result, count in
             guard result <= Int.max - Int(count) else { result = Int.max; return }
             result += Int(count)
         }
-        guard totalFrames < Int.max else { throw AudioFileError.invalidFile("ALAC duration is too large") }
+        guard mediaFrameCount < Int.max else { throw AudioFileError.invalidFile("ALAC duration is too large") }
+        let editWindow = try parseEditWindow(
+            data,
+            atom: nested.first(where: { $0.type == "elst" }),
+            mediaFrameCount: mediaFrameCount,
+            mediaTimescale: sampleRate,
+            movieTimescale: movieTimescale
+        )
         return Track(
             description: Description(
                 cookie: description.cookie,
@@ -265,8 +304,56 @@ enum MP4ALACCodec {
             ),
             packetRanges: packetRanges,
             packetFrames: packetFrames,
-            frameCount: totalFrames
+            mediaFrameCount: mediaFrameCount,
+            mediaStartFrame: editWindow.start,
+            frameCount: editWindow.count
         )
+    }
+
+    private static func parseEditWindow(_ data: Data, atom: Atom?, mediaFrameCount: Int,
+                                        mediaTimescale: Double, movieTimescale: Double) throws -> (start: Int, count: Int) {
+        guard let atom else { return (0, mediaFrameCount) }
+        guard atom.payload.count >= 8, data[atom.payload.lowerBound] == 0 else {
+            throw AudioFileError.invalidFile("unsupported versioned edit list")
+        }
+        let entryCount = Int(readBE32(data, at: atom.payload.lowerBound + 4))
+        guard entryCount > 0, entryCount <= (atom.payload.count - 8) / 12 else {
+            throw AudioFileError.invalidFile("invalid edit list entry count")
+        }
+
+        var mediaEntry: (start: Int, count: Int)?
+        for index in 0..<entryCount {
+            let entry = atom.payload.lowerBound + 8 + index * 12
+            let segmentDuration = Double(readBE32(data, at: entry))
+            let mediaTime = Int32(bitPattern: readBE32(data, at: entry + 4))
+            let mediaRateInteger = Int16(bitPattern: readBE16(data, at: entry + 8))
+            let mediaRateFraction = readBE16(data, at: entry + 10)
+            guard mediaRateInteger == 1, mediaRateFraction == 0 else {
+                throw AudioFileError.invalidFile("unsupported edit media rate")
+            }
+            if mediaTime == -1 {
+                continue
+            }
+            guard mediaTime >= 0, mediaEntry == nil else {
+                throw AudioFileError.invalidFile("unsupported multiple media edits")
+            }
+            let start = Int(mediaTime)
+            guard start < mediaFrameCount else { throw AudioFileError.invalidFile("edit starts past ALAC media") }
+            let requestedCount: Int
+            if segmentDuration == 0 {
+                requestedCount = mediaFrameCount - start
+            } else {
+                let frames = (segmentDuration / movieTimescale * mediaTimescale).rounded()
+                guard frames.isFinite, frames > 0, frames <= Double(Int.max) else {
+                    throw AudioFileError.invalidFile("invalid edit duration")
+                }
+                requestedCount = min(mediaFrameCount - start, Int(frames))
+            }
+            guard requestedCount > 0 else { throw AudioFileError.invalidFile("empty ALAC media edit") }
+            mediaEntry = (start, requestedCount)
+        }
+        guard let mediaEntry else { throw AudioFileError.invalidFile("edit list has no media entry") }
+        return mediaEntry
     }
 
     private static func parseDescription(_ data: Data, atom: Atom) throws -> Description {
@@ -404,25 +491,26 @@ enum MP4ALACCodec {
         return result
     }
 
-    private static func makeMoov(sampleRate: UInt32, channels: Int, bitDepth: Int, frameCount: Int,
+    private static func makeMoov(sampleRate: UInt32, channels: Int, bitDepth: Int,
+                                 mediaFrameCount: Int, audibleFrameCount: Int, mediaStartFrame: Int,
                                  magicCookie: Data, packetFrames: [UInt32], packetSizes: [Int], packetOffsets: [Int]) -> Data {
         var mvhd = Data(repeating: 0, count: 100)
-        putBE32(&mvhd, at: 12, value: 1_000)
-        putBE32(&mvhd, at: 16, value: UInt32(min(frameCount * 1_000 / max(1, Int(sampleRate)), Int(UInt32.max))))
+        putBE32(&mvhd, at: 12, value: sampleRate)
+        putBE32(&mvhd, at: 16, value: UInt32(min(audibleFrameCount, Int(UInt32.max))))
         putBE32(&mvhd, at: 20, value: 0x0001_0000)
         putBE16(&mvhd, at: 24, value: 0x0100)
 
         var tkhd = Data(repeating: 0, count: 84)
         putBE32(&tkhd, at: 0, value: 7)
         putBE32(&tkhd, at: 12, value: 1)
-        putBE32(&tkhd, at: 20, value: UInt32(min(frameCount, Int(UInt32.max))))
+        putBE32(&tkhd, at: 20, value: UInt32(min(audibleFrameCount, Int(UInt32.max))))
         putBE32(&tkhd, at: 36, value: 0x0001_0000)
         putBE32(&tkhd, at: 52, value: 0x0001_0000)
         putBE32(&tkhd, at: 56, value: 0x0001_0000)
 
         var mdhd = Data(repeating: 0, count: 24)
         putBE32(&mdhd, at: 12, value: sampleRate)
-        putBE32(&mdhd, at: 16, value: UInt32(min(frameCount, Int(UInt32.max))))
+        putBE32(&mdhd, at: 16, value: UInt32(min(mediaFrameCount, Int(UInt32.max))))
         putBE16(&mdhd, at: 20, value: 0x55C4)
 
         var hdlr = Data(repeating: 0, count: 24)
@@ -469,7 +557,13 @@ enum MP4ALACCodec {
                             makeAtom("stts", data: stts) + makeAtom("stsc", data: stsc) + makeAtom("stsz", data: stsz) + makeAtom("stco", data: stco))
         let minf = makeAtom("minf", data: makeAtom("smhd", data: smhd) + dinf + stbl)
         let mdia = makeAtom("mdia", data: makeAtom("mdhd", data: mdhd) + makeAtom("hdlr", data: hdlr) + minf)
-        let trak = makeAtom("trak", data: makeAtom("tkhd", data: tkhd) + mdia)
+        var elst = Data(repeating: 0, count: 20)
+        putBE32(&elst, at: 4, value: 1)
+        putBE32(&elst, at: 8, value: UInt32(min(audibleFrameCount, Int(UInt32.max))))
+        putBE32(&elst, at: 12, value: UInt32(mediaStartFrame))
+        putBE16(&elst, at: 16, value: 1)
+        let edts = makeAtom("edts", data: makeAtom("elst", data: elst))
+        let trak = makeAtom("trak", data: makeAtom("tkhd", data: tkhd) + edts + mdia)
         return makeAtom("moov", data: makeAtom("mvhd", data: mvhd) + trak)
     }
 

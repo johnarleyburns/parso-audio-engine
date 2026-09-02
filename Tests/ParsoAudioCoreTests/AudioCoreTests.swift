@@ -179,6 +179,7 @@ struct CodecRoundtripTests {
         let window = PCMBuffer(format: src.format, capacity: 2_048)
         let read = try reader.read(into: window, frameOffset: 10_000)
         #expect(read == 2_048)
+        #expect(abs(Double(window.channel(0)[0] - src.channel(0)[10_000])) < 1e-6)
         #expect(Measure.dominantFrequency(window, searchRange: 300...600) == 440)
     }
 
