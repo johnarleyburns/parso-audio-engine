@@ -469,6 +469,30 @@ struct SweepFilterTests {
     }
 }
 
+@Suite("Delay")
+struct DelayTests {
+    @Test func impulseArrivesAtRequestedDelay() {
+        let input = PCMBuffer(format: .init(sampleRate: 1_000, channelCount: 1), capacity: 64)
+        input.channel(0)[0] = 1
+        let delay = Delay(sampleRate: 1_000, maxSeconds: 0.1)
+        delay.set(timeSeconds: 0.01, feedback: 0, mix: 1)
+        delay.processInPlace(input)
+        #expect(abs(input.channel(0)[10] - 1) < 0.01)
+        #expect(Measure.peak(input) > 0.99)
+    }
+
+    @Test func feedbackProducesBoundedDecay() {
+        let input = PCMBuffer(format: .init(sampleRate: 1_000, channelCount: 1), capacity: 64)
+        input.channel(0)[0] = 1
+        let delay = Delay(sampleRate: 1_000, maxSeconds: 0.1)
+        delay.set(timeSeconds: 0.01, feedback: 0.5, mix: 1)
+        delay.processInPlace(input)
+        #expect(input.channel(0)[10] > 0.4)
+        #expect(input.channel(0)[20] > 0.15)
+        #expect(input.channel(0)[20] < input.channel(0)[10])
+    }
+}
+
 @Suite("Time / pitch")
 struct TimePitchTests {
     @Test func keyLockStretchesTimeNotPitch() {

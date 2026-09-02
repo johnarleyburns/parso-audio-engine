@@ -1060,6 +1060,33 @@ public final class SweepFilter: @unchecked Sendable {
     }
 }
 
+/// Fractional feedback delay/echo. Processing is allocation-free after initialization.
+public final class Delay: @unchecked Sendable {
+    private let handle: OpaquePointer
+
+    public init(sampleRate: Double, maxSeconds: Double = 2.0) {
+        guard let handle = pd_delay_create(sampleRate, maxSeconds) else {
+            preconditionFailure("invalid delay configuration")
+        }
+        self.handle = handle
+    }
+
+    deinit { pd_delay_destroy(handle) }
+
+    public func set(timeSeconds: Double, feedback: Float, mix: Float) {
+        pd_delay_set(handle, timeSeconds, feedback, mix)
+    }
+
+    public func processInPlace(_ buffer: PCMBuffer) {
+        buffer.withUnsafeChannels { channels, frames in
+            guard frames > 0, frames <= Int(Int32.max) else { return }
+            for channel in 0..<buffer.channelCount {
+                pd_delay_process(handle, channels[channel], channels[channel], Int32(frames))
+            }
+        }
+    }
+}
+
 /// Freeverb-topology reverb (offline convenience wrapper).
 public final class Reverb: @unchecked Sendable {
     public init(sampleRate: Double) { unimplemented() }
