@@ -1087,9 +1087,32 @@ public final class Delay: @unchecked Sendable {
     }
 }
 
-/// Freeverb-topology reverb (offline convenience wrapper).
+/// Freeverb-topology reverb. Delay-line storage is allocated during init;
+/// processing is allocation-free and suitable for the real-time graph.
 public final class Reverb: @unchecked Sendable {
-    public init(sampleRate: Double) { unimplemented() }
-    public func set(room: Float, damp: Float, width: Float, mix: Float) { unimplemented() }
-    public func processInPlace(_ buffer: PCMBuffer) { unimplemented() }
+    private let handle: OpaquePointer
+
+    public init(sampleRate: Double) {
+        guard let handle = pd_reverb_create(sampleRate) else {
+            preconditionFailure("invalid reverb sample rate")
+        }
+        self.handle = handle
+    }
+
+    deinit { pd_reverb_destroy(handle) }
+
+    public func set(room: Float, damp: Float, width: Float, mix: Float) {
+        pd_reverb_set(handle, room, damp, width, mix)
+    }
+
+    public func processInPlace(_ buffer: PCMBuffer) {
+        buffer.withUnsafeChannels { channels, frames in
+            guard frames > 0, frames <= Int(Int32.max) else { return }
+            if buffer.channelCount == 1 {
+                pd_reverb_process(handle, channels[0], channels[0], channels[0], channels[0], Int32(frames))
+            } else {
+                pd_reverb_process(handle, channels[0], channels[1], channels[0], channels[1], Int32(frames))
+            }
+        }
+    }
 }

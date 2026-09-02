@@ -493,6 +493,37 @@ struct DelayTests {
     }
 }
 
+@Suite("Reverb")
+struct ReverbTests {
+    @Test func impulseProducesStereoTail() {
+        let input = PCMBuffer(format: .init(sampleRate: 44_100, channelCount: 2), capacity: 8_000)
+        input.channel(0)[0] = 1
+        input.channel(1)[0] = 1
+        let reverb = Reverb(sampleRate: 44_100)
+        reverb.set(room: 0.8, damp: 0.2, width: 1, mix: 1)
+        reverb.processInPlace(input)
+
+        #expect(input.channel(0).allSatisfy { $0.isFinite })
+        #expect(input.channel(1).allSatisfy { $0.isFinite })
+        #expect(Measure.rms(input, channel: 0) > 0.00001)
+        #expect(Measure.rms(input, channel: 1) > 0.00001)
+    }
+
+    @Test func zeroMixPreservesDryStereo() {
+        let input = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 2), capacity: 256)
+        for frame in 0..<input.frameCount {
+            input.channel(0)[frame] = 0.25
+            input.channel(1)[frame] = -0.5
+        }
+        let reverb = Reverb(sampleRate: 48_000)
+        reverb.set(room: 1, damp: 0, width: 1, mix: 0)
+        reverb.processInPlace(input)
+
+        #expect(abs(input.channel(0)[128] - 0.25) < 1e-6)
+        #expect(abs(input.channel(1)[128] + 0.5) < 1e-6)
+    }
+}
+
 @Suite("Time / pitch")
 struct TimePitchTests {
     @Test func keyLockStretchesTimeNotPitch() {

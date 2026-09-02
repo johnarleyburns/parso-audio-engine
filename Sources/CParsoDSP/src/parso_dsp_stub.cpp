@@ -164,6 +164,88 @@ struct pd_delay {
     bool hasProcessed = false;
 };
 
+struct FreeverbComb {
+    std::vector<float> buffer;
+    size_t index = 0;
+    float filterStore = 0.0f;
+    float feedback = 0.84f;
+    float damp = 0.2f;
+
+    void initialize(int length) {
+        buffer.assign(static_cast<size_t>(length), 0.0f);
+        index = 0;
+        filterStore = 0.0f;
+    }
+
+    float process(float input) {
+        const float output = buffer[index];
+        filterStore = output * (1.0f - damp) + filterStore * damp;
+        buffer[index] = input + filterStore * feedback;
+        index = index + 1 < buffer.size() ? index + 1 : 0;
+        return output;
+    }
+};
+
+struct FreeverbAllpass {
+    std::vector<float> buffer;
+    size_t index = 0;
+    static constexpr float feedback = 0.5f;
+
+    void initialize(int length) {
+        buffer.assign(static_cast<size_t>(length), 0.0f);
+        index = 0;
+    }
+
+    float process(float input) {
+        const float buffered = buffer[index];
+        const float output = -input + buffered;
+        buffer[index] = input + buffered * feedback;
+        index = index + 1 < buffer.size() ? index + 1 : 0;
+        return output;
+    }
+};
+
+struct pd_reverb {
+    double sampleRate;
+    double smoothing;
+    std::array<FreeverbComb, 8> combLeft;
+    std::array<FreeverbComb, 8> combRight;
+    std::array<FreeverbAllpass, 4> allpassLeft;
+    std::array<FreeverbAllpass, 4> allpassRight;
+    float room = 0.5f;
+    float targetRoom = 0.5f;
+    float damp = 0.5f;
+    float targetDamp = 0.5f;
+    float width = 1.0f;
+    float targetWidth = 1.0f;
+    float mix = 0.3f;
+    float targetMix = 0.3f;
+    bool hasProcessed = false;
+
+    explicit pd_reverb(double sr)
+        : sampleRate(sr), smoothing(1.0 - std::exp(-1.0 / (sr * 0.010))) {}
+
+    bool initialize() {
+        static constexpr int combTuning[8] = {1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617};
+        static constexpr int allpassTuning[4] = {556, 441, 341, 225};
+        const double scale = sampleRate / 44'100.0;
+        if (!std::isfinite(scale) || scale <= 0.0 || scale > 1'000.0) return false;
+        const int spread = std::max(1, static_cast<int>(std::lround(23.0 * scale)));
+
+        for (int i = 0; i < 8; ++i) {
+            const int baseLength = std::max(1, static_cast<int>(std::lround(combTuning[i] * scale)));
+            combLeft[i].initialize(baseLength);
+            combRight[i].initialize(baseLength + spread);
+        }
+        for (int i = 0; i < 4; ++i) {
+            const int baseLength = std::max(1, static_cast<int>(std::lround(allpassTuning[i] * scale)));
+            allpassLeft[i].initialize(baseLength);
+            allpassRight[i].initialize(baseLength + spread);
+        }
+        return true;
+    }
+};
+
 struct pd_timepitch {
     signalsmith::stretch::SignalsmithStretch<float> stretch;
     double sampleRate;
@@ -467,10 +549,77 @@ void pd_delay_process(pd_delay* delay, const float* in, float* out, int frames) 
 
 void pd_delay_destroy(pd_delay* delay) { delete delay; }
 
-pd_reverb* pd_reverb_create(double) { return nullptr; }
-void pd_reverb_set(pd_reverb*, float, float, float, float) {}
-void pd_reverb_process(pd_reverb*, const float* il, const float* ir, float* ol, float* or_, int n) { for(int i=0;i<n;++i){ol[i]=il?il[i]:0.f;or_[i]=ir?ir[i]:0.f;} }
-void pd_reverb_destroy(pd_reverb*) {}
+pd_reverb* pd_reverb_create(double sample_rate) {
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;
+    try {
+        pd_reverb* reverb = new (std::nothrow) pd_reverb(sample_rate);
+        if (reverb == nullptr || !reverb->initialize()) {
+            delete reverb;
+            return nullptr;
+        }
+        return reverb;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void pd_reverb_set(pd_reverb* reverb, float room, float damp, float width, float mix) {
+    if (reverb == nullptr) return;
+    reverb->targetRoom = std::isfinite(room) ? std::fmax(0.0f, std::fmin(1.0f, room)) : 0.5f;
+    reverb->targetDamp = std::isfinite(damp) ? std::fmax(0.0f, std::fmin(1.0f, damp)) : 0.5f;
+    reverb->targetWidth = std::isfinite(width) ? std::fmax(0.0f, std::fmin(1.0f, width)) : 1.0f;
+    reverb->targetMix = std::isfinite(mix) ? std::fmax(0.0f, std::fmin(1.0f, mix)) : 0.3f;
+    if (!reverb->hasProcessed) {
+        reverb->room = reverb->targetRoom;
+        reverb->damp = reverb->targetDamp;
+        reverb->width = reverb->targetWidth;
+        reverb->mix = reverb->targetMix;
+    }
+}
+
+void pd_reverb_process(pd_reverb* reverb, const float* in_left, const float* in_right,
+                       float* out_left, float* out_right, int frames) {
+    if (reverb == nullptr || out_left == nullptr || out_right == nullptr || frames <= 0) return;
+    reverb->hasProcessed = true;
+    for (int frame = 0; frame < frames; ++frame) {
+        reverb->room += static_cast<float>((reverb->targetRoom - reverb->room) * reverb->smoothing);
+        reverb->damp += static_cast<float>((reverb->targetDamp - reverb->damp) * reverb->smoothing);
+        reverb->width += static_cast<float>((reverb->targetWidth - reverb->width) * reverb->smoothing);
+        reverb->mix += static_cast<float>((reverb->targetMix - reverb->mix) * reverb->smoothing);
+
+        const float feedback = 0.7f + reverb->room * 0.28f;
+        const float damp = reverb->damp * 0.4f;
+        for (int i = 0; i < 8; ++i) {
+            reverb->combLeft[i].feedback = feedback;
+            reverb->combLeft[i].damp = damp;
+            reverb->combRight[i].feedback = feedback;
+            reverb->combRight[i].damp = damp;
+        }
+
+        const float left = in_left == nullptr ? 0.0f : in_left[frame];
+        const float right = in_right == nullptr ? 0.0f : in_right[frame];
+        const float input = (left + right) * 0.5f * 0.015f;
+        float wetLeft = 0.0f;
+        float wetRight = 0.0f;
+        for (int i = 0; i < 8; ++i) {
+            wetLeft += reverb->combLeft[i].process(input);
+            wetRight += reverb->combRight[i].process(input);
+        }
+        for (int i = 0; i < 4; ++i) {
+            wetLeft = reverb->allpassLeft[i].process(wetLeft);
+            wetRight = reverb->allpassRight[i].process(wetRight);
+        }
+
+        const float wetLeftStereo = 0.5f * ((1.0f + reverb->width) * wetLeft +
+                                            (1.0f - reverb->width) * wetRight);
+        const float wetRightStereo = 0.5f * ((1.0f + reverb->width) * wetRight +
+                                             (1.0f - reverb->width) * wetLeft);
+        out_left[frame] = left * (1.0f - reverb->mix) + wetLeftStereo * reverb->mix;
+        out_right[frame] = right * (1.0f - reverb->mix) + wetRightStereo * reverb->mix;
+    }
+}
+
+void pd_reverb_destroy(pd_reverb* reverb) { delete reverb; }
 
 pd_limiter* pd_limiter_create(double, float) { return nullptr; }
 void pd_limiter_process(pd_limiter*, float*, float*, int) {}
