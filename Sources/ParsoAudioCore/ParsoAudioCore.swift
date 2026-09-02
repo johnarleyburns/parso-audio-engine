@@ -132,7 +132,7 @@ public enum AudioContainer: Sendable, Equatable {
     case flac          // libFLAC (Cflac)
     case oggVorbis     // stb_vorbis (Cvorbis)
     case opus          // libopusfile (Copus)
-    case wav, aiff, caf, mp3, aac, m4a  // Apple; portable AAC is ADTS, m4a is AAC/ALAC
+    case wav, aiff, caf, mp3, aac, m4a  // Apple; Linux has portable MP3/AAC and narrow M4A profiles
     case auto
 }
 
@@ -177,7 +177,8 @@ public struct AudioFileMetadata: Sendable, Equatable {
 /// Reads PCM from disk. Routing by container:
 /// `.flac` → libFLAC (`Cflac`); `.oggVorbis` → stb_vorbis (`Cvorbis`);
 /// `.opus` → libopusfile (`Copus`); Apple uses AVAudioFile for native formats,
-/// while Linux uses Glint for MP3 and ADTS AAC.
+/// while Linux uses Glint for MP3/ADTS AAC and the portable narrow M4A AAC/ALAC
+/// profiles.
 public struct AudioFileReader: Sendable {
     public let format: AudioFormat
     public let frameCount: Int
@@ -238,7 +239,8 @@ public struct AudioFileReader: Sendable {
                 let data: Data
                 do { data = try Data(contentsOf: url) }
                 catch { throw AudioFileError.invalidFile(error.localizedDescription) }
-                return try MP4ALACCodec.decode(data)
+                do { return try MP4AACCodec.decode(data) }
+                catch { return try MP4ALACCodec.decode(data) }
             }
             throw AudioFileError.unsupportedContainer(container)
 #endif

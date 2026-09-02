@@ -133,12 +133,11 @@ struct CodecRoundtripTests {
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
 #else
-    @Test func m4aIsRejectedUntilPortableContainerSupportExists() throws {
+    @Test func portableAacM4aEncodingRemainsUnsupportedOnLinux() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
         let url = tempURL("m4a")
         let writer = try AudioFileWriter(url: url, format: src.format, codec: .aac(bitrate: 256_000))
         #expect(throws: AudioFileError.self) { try writer.write(src) }
-        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
     }
 #endif
 
@@ -219,7 +218,7 @@ struct CodecRoundtripTests {
         #expect(metadata == AudioFileMetadata(title: "External Café", artist: "Fixture Artist", album: "Compatibility Album"))
     }
 
-    @Test func portableM4aRejectsExternallyAuthoredAACProfile() throws {
+    @Test func portableM4aDecodesExternallyAuthoredAACProfile() throws {
         let fixtureURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -228,6 +227,28 @@ struct CodecRoundtripTests {
         guard let fixture = Data(base64Encoded: encoded) else {
             throw AudioFileError.invalidFile("external AAC M4A fixture is not valid base64")
         }
+        let url = tempURL("m4a")
+        try fixture.write(to: url)
+
+        let reader = try AudioFileReader(url: url, container: .m4a)
+        #expect(reader.format == AudioFormat(sampleRate: 44_100, channelCount: 1))
+        #expect(reader.frameCount == 11_025)
+        #expect(Measure.rms(try reader.readAll()) > 0.001)
+    }
+
+    @Test func portableM4aRejectsUnsupportedAACProfile() throws {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/m4a_external_aac.m4a.b64")
+        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var fixture = Data(base64Encoded: encoded) else {
+            throw AudioFileError.invalidFile("external AAC fixture is not valid base64")
+        }
+        guard let configOffset = fixture.firstRange(of: Data([0x12, 0x08, 0x56, 0xE5]))?.lowerBound else {
+            throw AudioFileError.invalidFile("AAC fixture has no expected decoder configuration")
+        }
+        fixture[configOffset] = 0x0A // object type 1: unsupported by the AAC-LC path
         let url = tempURL("m4a")
         try fixture.write(to: url)
 
