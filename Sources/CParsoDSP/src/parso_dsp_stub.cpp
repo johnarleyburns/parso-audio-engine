@@ -5,6 +5,7 @@
 #include "signalsmith-stretch.h"
 
 #include <cmath>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -175,7 +176,19 @@ struct pd_timepitch {
 
     pd_timepitch(double sr, int channelCount, int blockSize)
         : stretch(0x504152534fULL), sampleRate(sr), channels(channelCount), maxBlock(blockSize) {
-        stretch.presetDefault(channels, static_cast<float>(sampleRate), false);
+        // Signalsmith's process() keeps a temporary vector whose capacity is
+        // established by configure(). Make its analysis block at least as
+        // large as the host block, so normal render calls never grow it.
+        const double defaultBlockValue = std::fmax(1.0, sampleRate * 0.12);
+        const int defaultBlock = static_cast<int>(std::fmin(
+            defaultBlockValue, static_cast<double>(std::numeric_limits<int>::max() / 2)
+        ));
+        const int configuredBlock = std::max(defaultBlock, maxBlock);
+        const int configuredInterval = static_cast<int>(std::fmin(
+            std::fmax(1.0, sampleRate * 0.03),
+            static_cast<double>(std::numeric_limits<int>::max() / 4)
+        ));
+        stretch.configure(channels, configuredBlock, configuredInterval, false);
     }
 };
 
@@ -301,7 +314,14 @@ void pd_filter_destroy(pd_filter* filter) { delete filter; }
 
 pd_timepitch* pd_tp_create(double sr, int channels, int max_block) {
     if (!std::isfinite(sr) || sr <= 0.0 || channels <= 0 || max_block <= 0) return nullptr;
-    return new (std::nothrow) pd_timepitch(sr, channels, max_block);
+    // Vector-backed third-party setup can throw bad_alloc even when the
+    // object itself uses nothrow new. Keep C callers from observing an
+    // exception or terminating during control-side creation.
+    try {
+        return new (std::nothrow) pd_timepitch(sr, channels, max_block);
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 void pd_tp_set_mode(pd_timepitch* tp, pd_tp_mode mode) {

@@ -520,6 +520,18 @@ struct TimePitchTests {
         #expect(Double(out.frameCount) / Double(src.frameCount) < 0.6)
         #expect(abs(Measure.dominantFrequency(out, searchRange: 700...1000) - 880) <= 8)
     }
+
+    @Test func repeatedKeyLockProcessingStaysFinite() {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 0.25)
+        let tp = TimePitch(sampleRate: 44_100, channels: 1, maxBlock: 1024)
+        tp.mode = .keyLock; tp.tempoRatio = 0.8
+
+        for _ in 0..<8 {
+            let out = tp.process(src)
+            #expect(out.frameCount > 0)
+            #expect(out.channel(0).allSatisfy { $0.isFinite })
+        }
+    }
 }
 
 @Suite("Loudness")
