@@ -38,3 +38,16 @@ the exact license (CC0 / CC-BY / CC-BY-SA, etc.) and required attribution before
 
 > To lock verified BPM/key ground truth for regression tests, edit the matching
 > `expected` entry in `Tests/Fixtures/fixtures.json`.
+
+---
+
+# First-party code relicensed into this package
+
+Source files migrated here from the author's own applications during the audio-engine
+unification (`docs/UNIFICATION_PLAN.md`). Every file below was authored solely by
+John Arley Burns, who as sole copyright holder relicenses it under this package's MIT
+license. No third-party or copyleft-licensed code is included.
+
+| File here | Origin | Notes |
+|---|---|---|
+| `Sources/ParsoAudioStreaming/ByteRangeMap.swift` | `parso-tonearm/Sources/Audio/ByteRangeMap.swift` and `parso-voxglass/Voxglass/Core/Services/Playback/ByteRangeMap.swift` | The two originals were byte-identical; migrated verbatim. |
