@@ -20,14 +20,15 @@ jobs:
           swift --version
       - name: Download real audio fixtures
         run: |
+          expected_fixture_count="$(python3 -c 'import json; print(len(json.load(open("Tests/Fixtures/fixtures.json"))["tracks"]))')"
           for attempt in 1 2 3; do
             ./scripts/download-fixtures.sh
             fixture_count="$(find Tests/Fixtures/audio -type f ! -name '.gitkeep' | wc -l | tr -d ' ')"
-            if [[ "$fixture_count" -eq 18 ]]; then exit 0; fi
-            echo "Only $fixture_count/18 fixtures are present; retrying in 90 seconds (attempt $attempt/3)."
+            if [[ "$fixture_count" -eq "$expected_fixture_count" ]]; then exit 0; fi
+            echo "Only $fixture_count/$expected_fixture_count fixtures are present; retrying in 90 seconds (attempt $attempt/3)."
             sleep 90
           done
-          echo "::error::The complete 18-fixture corpus was not downloaded"
+          echo "::error::The complete $expected_fixture_count-fixture corpus was not downloaded"
           exit 1
       - name: Build
         run: swift build -v
@@ -55,14 +56,15 @@ jobs:
           clang --version
       - name: Download real audio fixtures
         run: |
+          expected_fixture_count="$(python3 -c 'import json; print(len(json.load(open("Tests/Fixtures/fixtures.json"))["tracks"]))')"
           for attempt in 1 2 3; do
             ./scripts/download-fixtures.sh
             fixture_count="$(find Tests/Fixtures/audio -type f ! -name '.gitkeep' | wc -l | tr -d ' ')"
-            if [[ "$fixture_count" -eq 18 ]]; then exit 0; fi
-            echo "Only $fixture_count/18 fixtures are present; retrying in 90 seconds (attempt $attempt/3)."
+            if [[ "$fixture_count" -eq "$expected_fixture_count" ]]; then exit 0; fi
+            echo "Only $fixture_count/$expected_fixture_count fixtures are present; retrying in 90 seconds (attempt $attempt/3)."
             sleep 90
           done
-          echo "::error::The complete 18-fixture corpus was not downloaded"
+          echo "::error::The complete $expected_fixture_count-fixture corpus was not downloaded"
           exit 1
       - name: Build
         run: swift build -v
