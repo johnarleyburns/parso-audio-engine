@@ -9,6 +9,7 @@ import Foundation
 import ParsoAudioCore
 import ParsoTestSupport
 import Calac
+import CParsoDSP
 
 // MARK: - Real now
 
@@ -557,6 +558,58 @@ struct LimiterTests {
         limiter.processInPlace(quiet)
 
         #expect(quiet.channel(0)[999] > 0.24)
+    }
+}
+
+@Suite("SPSC ring")
+struct RingTests {
+    @Test func preservesFIFOOrderAcrossWrap() {
+        guard let ring = pd_ring_create(MemoryLayout<UInt32>.stride, 4) else {
+            Issue.record("could not create ring")
+            return
+        }
+        defer { pd_ring_destroy(ring) }
+
+        for value in UInt32(1)...UInt32(4) {
+            var value = value
+            #expect(withUnsafePointer(to: &value) { pd_ring_push(ring, $0) } == 1)
+        }
+        for expected in UInt32(1)...UInt32(2) {
+            var actual: UInt32 = 0
+            #expect(withUnsafeMutablePointer(to: &actual) { pd_ring_pop(ring, $0) } == 1)
+            #expect(actual == expected)
+        }
+        for value in UInt32(5)...UInt32(6) {
+            var value = value
+            #expect(withUnsafePointer(to: &value) { pd_ring_push(ring, $0) } == 1)
+        }
+        for expected in UInt32(3)...UInt32(6) {
+            var actual: UInt32 = 0
+            #expect(withUnsafeMutablePointer(to: &actual) { pd_ring_pop(ring, $0) } == 1)
+            #expect(actual == expected)
+        }
+    }
+
+    @Test func reportsFullAndEmptyWithoutBlocking() {
+        guard let ring = pd_ring_create(MemoryLayout<UInt32>.stride, 2) else {
+            Issue.record("could not create ring")
+            return
+        }
+        defer { pd_ring_destroy(ring) }
+
+        var first: UInt32 = 1
+        var second: UInt32 = 2
+        var third: UInt32 = 3
+        #expect(withUnsafePointer(to: &first) { pd_ring_push(ring, $0) } == 1)
+        #expect(withUnsafePointer(to: &second) { pd_ring_push(ring, $0) } == 1)
+        #expect(withUnsafePointer(to: &third) { pd_ring_push(ring, $0) } == 0)
+
+        var actual: UInt32 = 0
+        #expect(withUnsafeMutablePointer(to: &actual) { pd_ring_pop(ring, $0) } == 1)
+        #expect(actual == 1)
+        #expect(withUnsafeMutablePointer(to: &actual) { pd_ring_pop(ring, $0) } == 1)
+        #expect(actual == 2)
+        #expect(withUnsafeMutablePointer(to: &actual) { pd_ring_pop(ring, $0) } == 0)
     }
 }
 

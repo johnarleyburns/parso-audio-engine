@@ -5,7 +5,9 @@
 #include "signalsmith-stretch.h"
 
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <new>
 #include <vector>
@@ -273,6 +275,19 @@ struct pd_limiter {
         rightDelay.assign(length, 0.0f);
         return true;
     }
+};
+
+struct pd_ring {
+    size_t elementSize;
+    size_t capacity;
+    size_t mask;
+    std::vector<unsigned char> storage;
+    std::atomic<size_t> writeIndex{0};
+    std::atomic<size_t> readIndex{0};
+
+    pd_ring(size_t element_size, size_t capacity_pow2)
+        : elementSize(element_size), capacity(capacity_pow2), mask(capacity_pow2 - 1),
+          storage(element_size * capacity_pow2) {}
 };
 
 struct pd_timepitch {
@@ -697,10 +712,42 @@ void pd_limiter_process(pd_limiter* limiter, float* left, float* right, int fram
 
 void pd_limiter_destroy(pd_limiter* limiter) { delete limiter; }
 
-pd_ring* pd_ring_create(size_t, size_t) { return nullptr; }
-int  pd_ring_push(pd_ring*, const void*) { return 0; }
-int  pd_ring_pop(pd_ring*, void*) { return 0; }
-void pd_ring_destroy(pd_ring*) {}
+pd_ring* pd_ring_create(size_t element_size, size_t capacity_pow2) {
+    if (element_size == 0 || capacity_pow2 == 0 ||
+        (capacity_pow2 & (capacity_pow2 - 1)) != 0 ||
+        element_size > std::numeric_limits<size_t>::max() / capacity_pow2) {
+        return nullptr;
+    }
+    try {
+        return new (std::nothrow) pd_ring(element_size, capacity_pow2);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int pd_ring_push(pd_ring* ring, const void* element) {
+    if (ring == nullptr || element == nullptr) return 0;
+    const size_t write = ring->writeIndex.load(std::memory_order_relaxed);
+    const size_t read = ring->readIndex.load(std::memory_order_acquire);
+    if (write - read >= ring->capacity) return 0;
+    const size_t offset = (write & ring->mask) * ring->elementSize;
+    std::memcpy(ring->storage.data() + offset, element, ring->elementSize);
+    ring->writeIndex.store(write + 1, std::memory_order_release);
+    return 1;
+}
+
+int pd_ring_pop(pd_ring* ring, void* element) {
+    if (ring == nullptr || element == nullptr) return 0;
+    const size_t read = ring->readIndex.load(std::memory_order_relaxed);
+    const size_t write = ring->writeIndex.load(std::memory_order_acquire);
+    if (read == write) return 0;
+    const size_t offset = (read & ring->mask) * ring->elementSize;
+    std::memcpy(element, ring->storage.data() + offset, ring->elementSize);
+    ring->readIndex.store(read + 1, std::memory_order_release);
+    return 1;
+}
+
+void pd_ring_destroy(pd_ring* ring) { delete ring; }
 
 void pd_enable_ftz(void) {}
 } // extern "C"
