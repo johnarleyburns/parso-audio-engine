@@ -599,8 +599,12 @@ enum MP4ALACCodec {
 
     private static func metadataValue(_ data: Data, item: Atom) -> String? {
         guard let valueAtom = (try? parseAtoms(data, range: item.payload))?.first(where: { $0.type == "data" }),
-              valueAtom.payload.count >= 12 else { return nil }
-        let valueStart = valueAtom.payload.lowerBound + 12
+              valueAtom.payload.count >= 8 else { return nil }
+        // Apple-authored files commonly omit the optional locale field; accept
+        // both the compact 8-byte and extended 12-byte data-atom headers.
+        let hasLocaleField = valueAtom.payload.count >= 12 &&
+            data[(valueAtom.payload.lowerBound + 8)..<(valueAtom.payload.lowerBound + 12)].allSatisfy { $0 == 0 }
+        let valueStart = valueAtom.payload.lowerBound + (hasLocaleField ? 12 : 8)
         let bytes = data[valueStart..<valueAtom.payload.upperBound]
         guard let value = String(data: bytes, encoding: .utf8) else { return nil }
         return value.trimmingCharacters(in: .controlCharacters)
