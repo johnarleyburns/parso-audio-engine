@@ -1,6 +1,7 @@
-// CParsoDSP kernels. The remaining kernels below are still scaffold bodies; the
-// isolator is implemented here first so its state and processing path are shared
-// by the headless and device builds.
+// CParsoDSP kernels: 3-band isolator EQ, resonant sweep filter, time/pitch
+// (Signalsmith Stretch), fractional-delay echo, Freeverb reverb, look-ahead
+// limiter, and a lock-free SPSC ring. All processing is allocation-free and
+// shared verbatim by the headless (pe_step) and device (pe_render) builds.
 #include "parso_dsp.h"
 #include "signalsmith-stretch.h"
 

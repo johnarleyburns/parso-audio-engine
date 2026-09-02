@@ -3,8 +3,9 @@
 //  DDJ-FLX4-equivalent DJ orchestration over CParsoEngine + Core + Analysis.
 //  Control objects are @MainActor; the real-time DSP runs in CParsoEngine.
 //
-//  STATUS: SCAFFOLD. Implement per docs/SPEC.md §11 and make
-//  Tests/ParsoDJEngineTests pass (headless/offline render).
+//  STATUS: implemented per docs/SPEC.md §11. `DJEngine` drives an
+//  AVAudioSourceNode via `pe_render`; `HeadlessDJEngine` drives the same DSP
+//  synchronously via `pe_step` for the deterministic test suite.
 //
 
 import Foundation
@@ -14,11 +15,6 @@ import CParsoEngine
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
-
-@inline(never)
-func unimplemented(_ fn: StaticString = #function, file: StaticString = #file, line: UInt = #line) -> Never {
-    fatalError("unimplemented: \(fn) — implement per docs/SPEC.md §11", file: file, line: line)
-}
 
 public enum AudioEngineError: Error, Sendable {
     case invalidOutputFormat

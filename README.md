@@ -16,23 +16,24 @@ It ships as three layered products so you can take only what you need:
 
 ---
 
-## ⚠️ Status: test-driven scaffold
+## Status: implemented
 
-This repository is a **specification + scaffold**, not a finished build. It contains the full public
-API, the complete engineering spec (`docs/SPEC.md`), and an **extensive test suite that acts as the
-executable specification**. Most implementations are stubs that call `unimplemented()`; `PCMBuffer`
-and all test-support/signal-generation code are real.
+All three layers are implemented and the full `swift test` suite is green, including the
+real-audio fixture suites (FLAC / Ogg Vorbis / Opus / MP3 decode + BPM/key/structure/loudness
+analysis) once `./scripts/download-fixtures.sh` has run. `docs/SPEC.md` remains the design
+source of truth and the test suite remains the executable specification.
 
-- `swift test` on a fresh clone is **green with skips**: the suites that exercise real plumbing
-  (buffers, generators, the fixtures manifest, key-profile constants, DJ API surface) run and pass;
-  suites that need the stubbed DSP/analysis/engine are written in full but marked `.disabled(...)`
-  with a `docs/SPEC.md` reference. Remove the `.disabled` trait as you implement each layer.
-- The C/C++ targets (`Cflac`, `Cvorbis`, `Copus`, `Cebur128`, `Csrc`, `CParsoDSP`, `CParsoEngine`)
-  are **placeholder modules** that compile but do nothing; vendor the real permissive libraries per
-  each `Sources/C*/VENDOR.md` and `docs/SPEC.md §2`.
-
-Implement in the phase order in `docs/SPEC.md §19`; each phase turns a group of `.disabled` suites
-green.
+- **DSP / RT engine:** `CParsoDSP` (isolator EQ, sweep filter, time/pitch via Signalsmith
+  Stretch, delay, Freeverb reverb, look-ahead limiter, lock-free SPSC ring) and `CParsoEngine`
+  (allocation-free two-deck render graph) are real. `pe_render` (device) and `pe_step` (tests)
+  share one DSP implementation.
+- **Codecs:** on Apple platforms the native containers (WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A)
+  go through AVFoundation / AudioToolbox. FLAC, Ogg Vorbis and Opus use vendored permissive C
+  (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`.
+- **Known caveats:** the v1 key estimator is deterministic and plausible but not yet
+  human-verified against every fixture (see `Tests/Fixtures/fixtures.json` notes). Portable
+  (non-Apple) ALAC encode/decode is unavailable pending an independently authored, permissively
+  licensed implementation — `Calac` is a placeholder; Apple platforms are unaffected.
 
 ---
 

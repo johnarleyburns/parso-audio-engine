@@ -3,8 +3,9 @@
 //  Reusable, DJ-agnostic audio primitives: buffers, file IO, sample-rate
 //  conversion, loudness, and thin wrappers over the RT DSP kernels.
 //
-//  STATUS: SCAFFOLD. Public API is declared; bodies call `unimplemented()`.
-//  Implement per docs/SPEC.md §9 and make Tests/ParsoAudioCoreTests pass.
+//  STATUS: implemented. Apple platforms use AVFoundation/AudioToolbox for the
+//  native containers (WAV/AIFF/CAF/MP3/AAC/ALAC-in-M4A); FLAC/Vorbis/Opus and
+//  libsamplerate/libebur128 are vendored permissive C. See docs/SPEC.md §9.
 //
 
 import Foundation
@@ -20,12 +21,6 @@ import Calac
 import AVFoundation
 import AudioToolbox
 #endif
-
-/// Traps with a clear message; every stubbed body calls this.
-@inline(never)
-func unimplemented(_ fn: StaticString = #function, file: StaticString = #file, line: UInt = #line) -> Never {
-    fatalError("unimplemented: \(fn) — implement per docs/SPEC.md", file: file, line: line)
-}
 
 /// Glint's whole-file AAC decoder currently has process-global initialization
 /// state. Keep offline package decodes serialized until that upstream boundary

@@ -1,18 +1,13 @@
 //
 //  ParsoAudioAnalysis.swift
-//  Offline analysis: tempo/beatgrid, key, structure, waveform. Uses Accelerate
-//  (vDSP) for FFT/vector math. No external analysis library (none is permissive).
-//
-//  The estimators implement the deterministic v1 algorithms in docs/SPEC.md §5.
+//  Offline analysis: tempo/beatgrid, key, structure, waveform. Self-contained
+//  radix-2 FFT + vector math (no external analysis library is permissively
+//  licensed). The estimators implement the deterministic v1 algorithms in
+//  docs/SPEC.md §10.
 //
 
 import Foundation
 import ParsoAudioCore
-
-@inline(never)
-func unimplemented(_ fn: StaticString = #function, file: StaticString = #file, line: UInt = #line) -> Never {
-    fatalError("unimplemented: \(fn) — implement per docs/SPEC.md §10", file: file, line: line)
-}
 
 // MARK: - Results
 
