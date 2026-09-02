@@ -188,6 +188,46 @@ struct CodecRoundtripTests {
         try Data([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]).write(to: url)
         #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
     }
+
+    @Test func portableM4aMetadataReadsStandardTextItems() throws {
+        let url = tempURL("m4a")
+        try makeMetadataFixture().write(to: url)
+
+        let metadata = try AudioFileReader.readMetadata(from: url, container: .m4a)
+        #expect(metadata == AudioFileMetadata(title: "Café Session", artist: "Primary Artist", album: "Portable Tests"))
+    }
+
+    @Test func portableM4aMetadataRejectsMalformedAtoms() throws {
+        let url = tempURL("m4a")
+        try Data([0, 0, 0, 8, 0x6D, 0x6F, 0x6F, 0x76, 0, 0, 0, 4]).write(to: url)
+        #expect(throws: AudioFileError.self) { _ = try AudioFileReader.readMetadata(from: url, container: .m4a) }
+    }
+
+    private func makeMetadataFixture() -> Data {
+        func atom(_ type: [UInt8], _ payload: Data) -> Data {
+            var result = Data()
+            var size = UInt32(8 + payload.count).bigEndian
+            withUnsafeBytes(of: &size) { result.append(contentsOf: $0) }
+            result.append(contentsOf: type)
+            result.append(payload)
+            return result
+        }
+        func item(_ type: [UInt8], _ value: String) -> Data {
+            var payload = Data(repeating: 0, count: 12)
+            var typeIndicator = UInt32(1).bigEndian
+            withUnsafeBytes(of: &typeIndicator) { payload.replaceSubrange(4..<8, with: $0) }
+            payload.append(contentsOf: value.utf8)
+            return atom(type, atom(Array("data".utf8), payload))
+        }
+        let ilst = atom(Array("ilst".utf8),
+                        item([0xA9, 0x6E, 0x61, 0x6D], "Café Session") +
+                        item(Array("aART".utf8), "Primary Artist") +
+                        item([0xA9, 0x61, 0x6C, 0x62], "Portable Tests") +
+                        item(Array("covr".utf8), "ignored artwork marker"))
+        let meta = atom(Array("meta".utf8), Data(repeating: 0, count: 4) + ilst)
+        return atom(Array("ftyp".utf8), Data([0x4D, 0x34, 0x41, 0x20])) +
+            atom(Array("moov".utf8), atom(Array("udta".utf8), meta))
+    }
 #endif
 }
 

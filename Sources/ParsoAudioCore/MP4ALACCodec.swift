@@ -9,6 +9,7 @@ import Calac
 enum MP4ALACCodec {
     private struct Atom {
         let type: String
+        let code: UInt32
         let start: Int
         let payload: Range<Int>
         let end: Int
@@ -121,6 +122,26 @@ enum MP4ALACCodec {
             }
         }
         return output
+    }
+
+    static func readMetadata(_ data: Data) throws -> AudioFileMetadata {
+        guard data.count >= 8 else { throw AudioFileError.invalidFile("truncated ISO-BMFF file") }
+        let atoms = try parseAtoms(data, range: 0..<data.count)
+        guard let ilst = atoms.first(where: { $0.type == "ilst" }) else {
+            return AudioFileMetadata()
+        }
+        let items = try parseAtoms(data, range: ilst.payload)
+        var metadata = AudioFileMetadata()
+        for item in items {
+            guard let value = metadataValue(data, item: item) else { continue }
+            switch item.code {
+            case 0xA9_6E_61_6D: metadata.title = value // ©nam
+            case 0xA9_41_52_54, 0x61_41_52_54: metadata.artist = value // ©ART, aART
+            case 0xA9_61_6C_62: metadata.album = value // ©alb
+            default: continue
+            }
+        }
+        return metadata
     }
 
     static func write(_ buffer: PCMBuffer, to url: URL) throws {
@@ -478,7 +499,8 @@ enum MP4ALACCodec {
             }
             guard end > offset, end <= range.upperBound else { throw AudioFileError.invalidFile("atom exceeds parent") }
             let payloadStart = offset + headerSize
-            let atom = Atom(type: atomType, start: offset, payload: payloadStart..<end, end: end)
+            let atom = Atom(type: atomType, code: readBE32(data, at: offset + 4), start: offset,
+                            payload: payloadStart..<end, end: end)
             result.append(atom)
             if containerTypes.contains(atomType) {
                 let childStart = atomType == "meta" ? min(atom.payload.upperBound, atom.payload.lowerBound + 4) : atom.payload.lowerBound
@@ -573,6 +595,15 @@ enum MP4ALACCodec {
         atom.append(contentsOf: type.utf8)
         atom.append(data)
         return atom
+    }
+
+    private static func metadataValue(_ data: Data, item: Atom) -> String? {
+        guard let valueAtom = (try? parseAtoms(data, range: item.payload))?.first(where: { $0.type == "data" }),
+              valueAtom.payload.count >= 12 else { return nil }
+        let valueStart = valueAtom.payload.lowerBound + 12
+        let bytes = data[valueStart..<valueAtom.payload.upperBound]
+        guard let value = String(data: bytes, encoding: .utf8) else { return nil }
+        return value.trimmingCharacters(in: .controlCharacters)
     }
 
     private static func type(_ data: Data, at offset: Int) -> String {

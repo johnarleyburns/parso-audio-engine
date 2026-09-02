@@ -161,6 +161,19 @@ public enum AudioFileError: Error, Sendable, Equatable {
     case writeFailed(String)
 }
 
+/// Common text metadata exposed by portable M4A files.
+public struct AudioFileMetadata: Sendable, Equatable {
+    public var title: String?
+    public var artist: String?
+    public var album: String?
+
+    public init(title: String? = nil, artist: String? = nil, album: String? = nil) {
+        self.title = title
+        self.artist = artist
+        self.album = album
+    }
+}
+
 /// Reads PCM from disk. Routing by container:
 /// `.flac` → libFLAC (`Cflac`); `.oggVorbis` → stb_vorbis (`Cvorbis`);
 /// `.opus` → libopusfile (`Copus`); Apple uses AVAudioFile for native formats,
@@ -232,6 +245,20 @@ public struct AudioFileReader: Sendable {
         case .auto:
             throw AudioFileError.unsupportedContainer(container)
         }
+    }
+
+    /// Reads common text metadata without decoding the audio payload.
+    ///
+    /// This portable reader currently supports ISO-BMFF/M4A `©nam`, `©ART`,
+    /// `©alb`, and `aART` items. Unsupported containers and malformed files
+    /// are reported instead of being silently treated as audio metadata.
+    public static func readMetadata(from url: URL, container: AudioContainer = .auto) throws -> AudioFileMetadata {
+        let resolved = container.resolved(for: url)
+        guard resolved == .m4a else { throw AudioFileError.unsupportedContainer(resolved) }
+        let data: Data
+        do { data = try Data(contentsOf: url) }
+        catch { throw AudioFileError.invalidFile(error.localizedDescription) }
+        return try MP4ALACCodec.readMetadata(data)
     }
 
     private static func decodeFLAC(url: URL) throws -> PCMBuffer {
