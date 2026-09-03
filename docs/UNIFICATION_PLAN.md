@@ -129,6 +129,9 @@ Each phase ends green on `swift test` in all three repos before the next starts.
   against a working copy of PAE.
 - **Phase 1 — `ByteRangeMap`.** Move verbatim, both apps import it, delete both copies.
   This is the proof the pipeline works, and it is reversible in a commit.
+- **Phase 1b — retire Linux** (§4b) and move the acceptance CLI out of the root package
+  (§4c). Independent of the app migrations, and shrinks the surface every later phase has
+  to keep compiling.
 - **Phase 2 — streaming cache.** Land `SparseCacheStore` + `CachingResourceLoader` from
   the Voxglass base, port Tonearm's response/pin/prefetch policies onto it, migrate both
   apps. Highest duplication payoff.
@@ -143,14 +146,98 @@ Each phase ends green on `swift test` in all three repos before the next starts.
   BPM/energy for free if it ever wants it.
 - **Phase 6 — DJ engine (Tonearm only, decide first).** See §6.
 
+## 4b. Phase 1b — retire Linux and the portable-codec scaffolding
+
+Decision (2026-09-02): the package targets **Apple platforms only** — iOS, macCatalyst,
+macOS and watchOS. Linux was a starter-step and is now removed outright. watchOS stays:
+both apps ship Watch targets whose private audio code the shared layers are meant to
+absorb.
+
+### What is actually dead, and what only looks dead
+
+The `#if canImport(AVFoundation)` fences are the Linux seam, but the vendored C is **not**
+uniformly Linux-only. Verified call-site by call-site:
+
+| Component | Verdict | Evidence |
+|---|---|---|
+| `Cflac`, `Cvorbis`, `Copus`, `Cebur128`, `Csrc` | **Keep — live on Apple** | FLAC/Vorbis/Opus decode, EBU R128 and SRC have no AVFoundation equivalent; reached unconditionally. |
+| `CGlint` | **Keep — live on Apple** | `.mp3` encode calls `writeGlint` unconditionally (`ParsoAudioCore.swift:497`). AudioToolbox cannot *encode* MP3, so Glint is the only MP3 encoder on every platform. |
+| `CGlint` decode (`decodeGlint`) | **Delete** | Only ever called from `#else` branches (lines 241, 247). |
+| Portable ADTS-AAC encode branch | **Delete** | `#else`-only (line 483). |
+| `MP4AACCodec` | **Delete** | Sole reference is line 257, inside `#else`. |
+| `MP4ALACCodec` *parser* | **Keep — live on Apple** | `readMetadata` is called unconditionally at line 277; ~500 lines of pure-Swift MP4 box parsing with no Linux ties. |
+| `MP4ALACCodec.decode` / `.write` | **Delete** | Unreferenced; they only call the `Calac` placeholder, which returns `PARSO_ALAC_CODEC_ERROR` by construction. |
+| `Calac` target | **Delete** | Its only consumers are the two dead methods above and the `ALAC bridge` test that asserts it does nothing. ALAC-in-M4A decode/encode goes through AVFoundation on Apple. |
+
+The trap to avoid: "remove the portable codecs" would take `CGlint` with it and silently
+break MP3 export on every platform. Only the *decode* half of Glint is Linux-only.
+
+### Work items
+
+1. **Package.swift** — drop the two `.when(platforms: [.linux])` cSettings (`Cflac`
+   `HAVE_CPUID_H`, `_POSIX_C_SOURCE`); remove the `Calac` target and its `ParsoAudioCore`
+   dependency. Since every supported platform is now Apple, the `.when(platforms:)`
+   qualifiers on the `AVFoundation` / `AudioToolbox` / `Accelerate` linker settings become
+   noise — drop them too.
+2. **ParsoAudioCore** — collapse all seven `#if canImport(AVFoundation)` fences to their
+   Apple branch; delete `decodeGlint`, the portable AAC encode branch, and
+   `Sources/ParsoAudioCore/MP4AACCodec.swift`; delete `MP4ALACCodec.decode`/`.write` and
+   its `import Calac`, keeping the parser.
+3. **ParsoDJEngine** — collapse its four `#if canImport(AVFoundation)` fences. `start()`
+   and `stop()` become unconditional; `HeadlessDJEngine` is unaffected (it is the
+   deterministic test path, not a Linux fallback).
+4. **Tests** — delete the `ALAC bridge` suite (it asserts the placeholder is unavailable,
+   which stops being a meaningful claim once the placeholder is gone).
+5. **CI** — delete the `build-test-linux` job. Add a watchOS job (see §4c) so the platform
+   we actually ship keeps a gate, rather than trading a real gate for none.
+6. **Docs** — `docs/SPEC.md` §19.1 (the Linux compatibility workstream) is retired
+   wholesale; §4 rows 67-69 and the decode/encode scope in §§19-22 lose their Linux
+   caveats. `README.md` loses the Linux acceptance-tool claim (line 103), the portable
+   MP3/ALAC roadmap (428-429) and the §19 pointer (460). `Sources/Calac/VENDOR.md` and
+   `LICENSE` go with the target.
+
+### One real thing given up
+
+`docs/SPEC.md` §19.1 made Linux the **independent correctness host**: the non-Apple
+cross-check that analysis, DSP, headless render and the portable codecs agreed with the
+AudioToolbox paths. Removing it means a bug in an Apple framework path has no second
+implementation disagreeing with it. That is an acceptable trade for two Apple-only apps —
+and Phase 5 partly compensates, since porting Tonearm's analysis DSP in behind the
+existing public types gives those algorithms a second independent implementation to
+differ from during the swap — but it should be a deliberate loss, not an accidental one.
+
+## 4c. Resolving the watchOS whole-package scheme
+
+`xcodebuild -scheme parso-audio-engine-Package -sdk watchsimulator` fails, and no amount
+of manifest conditioning fixes it: `ParsoAcceptanceArtifacts` is a command-line
+executable, watchOS has no CLI executables to link, and `Package.swift` conditionals are
+evaluated on the **host**, so `#if os(macOS)` there excludes nothing when the destination
+is a watch.
+
+**Resolution: move the tool into its own package.** `Tools/AcceptanceArtifacts/Package.swift`
+declares the executable and depends on the root package by path. The root package then
+contains only libraries, and the whole-package scheme builds for every destination.
+
+- `swift run ParsoAcceptanceArtifacts …` becomes
+  `swift run --package-path Tools/AcceptanceArtifacts ParsoAcceptanceArtifacts …`;
+  update `README.md` and `docs/human-visible-acceptance.md`, which both document the
+  old invocation.
+- CI can then gate watchOS with one whole-package scheme build instead of naming the
+  five library schemes.
+- The root package keeps `Sources/ParsoAcceptanceArtifacts/` or moves it under
+  `Tools/AcceptanceArtifacts/Sources/`; moving it is tidier and keeps the root `Sources/`
+  tree exactly equal to the shipping products.
+
+
 ## 5. Cross-cutting issues to settle before Phase 1
 
 - **watchOS.** PAE has no watchOS platform and the DSP/codec C targets have never been
   built for it. Gate everything `AVFoundation`/`MTAudioProcessingTap` with
   `#if !os(watchOS)`; verify each C target compiles for `arm64_32`. This is the most
   likely source of surprise breakage — do it in Phase 0, not later.
-- **Platform floor.** PAE's iOS 15 floor is generous; raising it to 17 simplifies the
-  Swift 6 concurrency surface. Confirm no third consumer needs 15.
+- **Platform floor.** Raised to iOS 17 / macCatalyst 17 / macOS 14 / watchOS 10 and
+  **confirmed safe by the author** (2026-09-02): no third consumer needs the old iOS 15
+  floor.
 - **Concurrency.** PAE is strict Swift 6 (`swiftLanguageModes: [.v6]`); both apps are too.
   No adapter shims should be needed — but `@unchecked Sendable` classes crossing the
   boundary (`PCMBuffer`, `TimePitch`) need documented ownership rules.
