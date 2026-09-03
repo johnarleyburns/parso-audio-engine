@@ -161,7 +161,10 @@ Each phase ends green on `swift test` in all three repos before the next starts.
   buffer + decoder move in as `AnalysisAudio` / `AnalysisDecoder`; loudness routes through
   `ParsoAudioCore.LoudnessAnalyzer` (libebur128, `+ loudnessRangeLU`). Tonearm's
   `AnalyzePipeline.run` → `FullAnalysis.run`; `AnalysisCoordinator` / `ThermalGovernor` /
-  GRDB persist stay app-side. **Phase 5a (PAE) done 2026-09-03** — see `current_status.md`.
+  GRDB persist stay app-side. **Phase 5a (PAE) + 5b (Tonearm rewire) done 2026-09-03** —
+  see `current_status.md`. Tonearm's `Sources/DJ/Analysis/` DSP files are deleted;
+  `AnalysisReexports.swift` re-exports `ParsoAudioAnalysis` under `PCMBuffer` /
+  `AudioDecoder`; `Loudness.swift` is a mapping shim over `ParsoAudioCore.LoudnessAnalyzer`.
   Voxglass gains cheap BPM/energy for free if it ever wants it.
 - **Phase 6 — DJ engine (Tonearm only, decide first).** See §6.
 
