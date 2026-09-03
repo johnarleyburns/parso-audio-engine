@@ -135,8 +135,12 @@ Each phase ends green on `swift test` in all three repos before the next starts.
 - **Phase 2 — streaming cache.** Land `SparseCacheStore` + `CachingResourceLoader` from
   the Voxglass base, port Tonearm's response/pin/prefetch policies onto it, migrate both
   apps. Highest duplication payoff.
-- **Phase 3 — EQ + normalization.** `GraphicEQ`, tap installer, ReplayGain/R128 planner.
-  Both apps' EQ views bind to the shared engine; presets and settings storage stay app-side.
+- **Phase 3 — EQ + normalization.** ✅ done (2026-09-02). `GraphicEQ` + `GraphicEQSettings` +
+  `EQTapInstaller`/`EQTapRegistry` + `ReplayGainReader`/`NormalizationPlanner` in
+  `ParsoAudioPlayback`. Both apps' `EQEngine` is now a typealias/wrapper over `GraphicEQ`
+  (Q is a parameter so neither app's sound changes); presets stay app-side. Tonearm's
+  Phase 2 policy-dedup debt cleared. `EQTapInstaller` ships but neither app routes its tap
+  through it yet — deliberate partial, see `current_status.md`.
 - **Phase 4 — decoders.** Voxglass switches `FLACDecoder`/`AVFoundationDecoder`/
   `AudioResampler` to `ParsoAudioCore`; delete the FLAC xcframework. Then MP3 encode via
   `CGlint`; delete the Lame xcframework. Keep `SeekableAudioDecoding` as the app-side
