@@ -182,10 +182,10 @@ public final class EQTapInstaller: @unchecked Sendable {
                 e.processor.processRealtime(abl, frameCount: Int(numberFrames))
             })
 
-        // The macOS SDK before Xcode 16.3 (Swift 6.1) types the out-parameter as
-        // `Unmanaged<MTAudioProcessingTap>?`; iOS and newer macOS SDKs use the
-        // bridged `MTAudioProcessingTap?`.
-        #if os(macOS) && compiler(<6.1)
+        // SDKs before Xcode 16.3 (Swift 6.1) type the out-parameter as
+        // `Unmanaged<MTAudioProcessingTap>?` on both iOS and macOS; newer SDKs
+        // use the bridged `MTAudioProcessingTap?`.
+        #if compiler(<6.1)
         var tapOut: Unmanaged<MTAudioProcessingTap>?
         let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, placement.flag, &tapOut)
         guard err == noErr, let tap = tapOut?.takeRetainedValue() else { return nil }
