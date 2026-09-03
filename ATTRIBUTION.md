@@ -51,3 +51,5 @@ license. No third-party or copyleft-licensed code is included.
 | File here | Origin | Notes |
 |---|---|---|
 | `Sources/ParsoAudioStreaming/ByteRangeMap.swift` | `parso-tonearm/Sources/Audio/ByteRangeMap.swift` and `parso-voxglass/Voxglass/Core/Services/Playback/ByteRangeMap.swift` | The two originals were byte-identical; migrated verbatim. |
+| `Sources/ParsoAudioStreaming/RemoteStreamingResponsePolicy.swift` | `parso-tonearm/Sources/Audio/RemoteStreamingResponsePolicy.swift` | Migrated verbatim (types marked `Sendable`). Voxglass had no equivalent. |
+| `Sources/ParsoAudioStreaming/SparseCacheStore.swift` | `parso-tonearm/Sources/Audio/CacheStore.swift` + `parso-voxglass/Voxglass/Core/Services/Playback/StreamCacheStore.swift` | Generalized union, not a verbatim lift: Voxglass's two-tree durable/evictable model is the base; Tonearm's `cafBytes` becomes a generic named derived-artifact slot and `pinned` becomes the durable tier; entry `kind` is an opaque tag; storage roots and limit are injected. |
