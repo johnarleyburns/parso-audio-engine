@@ -5,6 +5,6 @@ import Testing
 struct PlaybackLayerTests {
     @Test("layer links")
     func layerLinks() {
-        #expect(ParsoAudioPlayback.layerVersion == 1)
+        #expect(ParsoAudioPlaybackLayer.layerVersion == 1)
     }
 }

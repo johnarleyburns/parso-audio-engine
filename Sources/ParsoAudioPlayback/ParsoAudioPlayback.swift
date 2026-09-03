@@ -9,6 +9,6 @@ import Foundation
 
 /// Marker for the playback layer's version, so consumers can assert they linked
 /// the layer they expected during the migration.
-public enum ParsoAudioPlayback {
+public enum ParsoAudioPlaybackLayer {
     public static let layerVersion = 1
 }

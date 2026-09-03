@@ -70,6 +70,12 @@ public enum ReplayGainReader {
         return tags
     }
 
+    /// Parse a single gain value ("-6.48 dB", "-6,48") to dB.
+    public static func gainDB(from raw: String?) -> Double? { number(in: raw) }
+
+    /// Parse a single peak value; nil unless finite and > 0.
+    public static func peak(from raw: String?) -> Double? { positiveNumber(in: raw) }
+
     private enum Field: CaseIterable {
         case trackGain, albumGain, trackPeak, albumPeak
         var tag: String {
