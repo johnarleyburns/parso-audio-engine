@@ -18,6 +18,28 @@ jobs:
           if [[ -n "$xcode_app" ]]; then sudo xcode-select -s "$xcode_app"; fi
           xcodebuild -version
           swift --version
+      # The fixture corpus is fetched cold from Wikimedia Commons otherwise;
+      # download-fixtures.sh skips files already on disk, so a cache hit turns
+      # the download step into a no-op. Keyed on the manifest so an edit to the
+      # track list re-fetches.
+      - name: Cache audio fixtures
+        uses: actions/cache@v4
+        with:
+          path: Tests/Fixtures/audio
+          key: fixtures-${{ hashFiles('Tests/Fixtures/fixtures.json') }}
+          restore-keys: fixtures-
+      # SwiftPM build products, dominated by the vendored C libraries (libFLAC,
+      # libopus, libebur128, …) which change rarely. The exact key includes a
+      # source hash; the restore-keys fall back to the newest partial cache so
+      # an ordinary commit still reuses most object files.
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}-
+            spm-${{ runner.os }}-
       - name: Download real audio fixtures
         run: |
           expected_fixture_count="$(python3 -c 'import json; print(len(json.load(open("Tests/Fixtures/fixtures.json"))["tracks"]))')"
@@ -81,5 +103,11 @@ jobs:
           xcodebuild -scheme parso-audio-engine-Package \
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation build
+      - name: Cache acceptance-tool build
+        uses: actions/cache@v4
+        with:
+          path: Tools/AcceptanceArtifacts/.build
+          key: spm-accept-${{ runner.os }}-${{ hashFiles('Tools/AcceptanceArtifacts/**') }}
+          restore-keys: spm-accept-${{ runner.os }}-
       - name: Build the acceptance tool
         run: swift build --package-path Tools/AcceptanceArtifacts
