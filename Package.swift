@@ -164,7 +164,8 @@ let package = Package(
             name: "ParsoAudioAnalysis",
             dependencies: ["ParsoAudioCore"],
             linkerSettings: [
-                .linkedFramework("Accelerate")
+                .linkedFramework("Accelerate"),
+                .linkedFramework("AVFoundation"),
             ]
         ),
         .target(

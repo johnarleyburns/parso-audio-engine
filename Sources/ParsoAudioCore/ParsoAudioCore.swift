@@ -1016,11 +1016,17 @@ public struct LoudnessResult: Sendable, Equatable {
     public var truePeakDBTP: Double
     /// Gain (dB) to reach the analyzer's target loudness.
     public var gainToTargetDB: Double
+    /// EBU R128 loudness range (LU) — the p95−p10 spread of short-term
+    /// loudness. `0` when the buffer is shorter than one 3 s short-term window
+    /// (`EBUR128_MODE_LRA`'s minimum). Used by `ParsoAudioAnalysis` (Phase 5).
+    public var loudnessRangeLU: Double
 
-    public init(integratedLUFS: Double, truePeakDBTP: Double, gainToTargetDB: Double) {
+    public init(integratedLUFS: Double, truePeakDBTP: Double, gainToTargetDB: Double,
+                loudnessRangeLU: Double = 0) {
         self.integratedLUFS = integratedLUFS
         self.truePeakDBTP = truePeakDBTP
         self.gainToTargetDB = gainToTargetDB
+        self.loudnessRangeLU = loudnessRangeLU
     }
 }
 
@@ -1029,7 +1035,7 @@ public struct LoudnessAnalyzer: Sendable {
     public init(targetLUFS: Double = -14.0) { self.targetLUFS = targetLUFS }
     public func measure(_ buffer: PCMBuffer) -> LoudnessResult {
         let channels = buffer.channelCount
-        let mode = EBUR128_MODE_I.rawValue | EBUR128_MODE_TRUE_PEAK.rawValue
+        let mode = EBUR128_MODE_I.rawValue | EBUR128_MODE_TRUE_PEAK.rawValue | EBUR128_MODE_LRA.rawValue
         var optionalState = ebur128_init(
             UInt32(channels),
             UInt(buffer.format.sampleRate.rounded()),
@@ -1066,10 +1072,19 @@ public struct LoudnessAnalyzer: Sendable {
         }
         let truePeakDBTP = truePeak > 0 ? 20 * log10(truePeak) : -Double.infinity
 
+        // LRA needs at least one 3 s short-term window; on a shorter buffer
+        // ebur128 returns a non-success code and we report 0.
+        var loudnessRangeLU = 0.0
+        if ebur128_loudness_range(state, &loudnessRangeLU) != EBUR128_SUCCESS.rawValue
+            || !loudnessRangeLU.isFinite {
+            loudnessRangeLU = 0
+        }
+
         return LoudnessResult(
             integratedLUFS: integratedLUFS,
             truePeakDBTP: truePeakDBTP,
-            gainToTargetDB: targetLUFS - integratedLUFS
+            gainToTargetDB: targetLUFS - integratedLUFS,
+            loudnessRangeLU: max(0, loudnessRangeLU)
         )
     }
 }

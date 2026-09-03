@@ -152,9 +152,17 @@ Each phase ends green on `swift test` in all three repos before the next starts.
   `SeekableAudioDecoding` stays the app-side adapter protocol. Both Phase-3 carry-ins
   landed: `EQTapInstaller` adopted in Tonearm + Voxglass; app CI checks PAE out as a
   sibling. MP3-vs-LAME perceptual A-B carried to the author (`current_status.md`).
-- **Phase 5 — analysis.** Port Tonearm's DSP into `ParsoAudioAnalysis` behind the existing
-  public types; Tonearm's `AnalysisCoordinator` calls PAE. Voxglass gains cheap
-  BPM/energy for free if it ever wants it.
+- **Phase 5 — analysis.** Port Tonearm's Accelerate DSP into `ParsoAudioAnalysis` and
+  expose the full granular pipeline (`STFTKernel` / `OnsetDetector` / `TempoAnalyzer` /
+  `BeatTracker` / `KeyDetector` / `SpectralFeatures` / `EnergyAnalyzer` / `PhraseSegmenter`
+  / `WaveformPyramidBuilder`) plus a `FullAnalysis` orchestrator; keep `TempoEstimator` /
+  `KeyEstimator` / `StructureAnalyzer` / `WaveformGenerator` / `TrackAnalyzer` as a thin
+  compat facade (unchanged field names) so `ParsoDJEngine` is untouched. The analysis
+  buffer + decoder move in as `AnalysisAudio` / `AnalysisDecoder`; loudness routes through
+  `ParsoAudioCore.LoudnessAnalyzer` (libebur128, `+ loudnessRangeLU`). Tonearm's
+  `AnalyzePipeline.run` → `FullAnalysis.run`; `AnalysisCoordinator` / `ThermalGovernor` /
+  GRDB persist stay app-side. **Phase 5a (PAE) done 2026-09-03** — see `current_status.md`.
+  Voxglass gains cheap BPM/energy for free if it ever wants it.
 - **Phase 6 — DJ engine (Tonearm only, decide first).** See §6.
 
 ## 4b. Phase 1b — retire Linux and the portable-codec scaffolding

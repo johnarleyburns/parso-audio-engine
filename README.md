@@ -31,8 +31,10 @@ source of truth and the test suite remains the executable specification.
   AVFoundation / AudioToolbox. FLAC, Ogg Vorbis and Opus use vendored permissive C
   (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
   uses `CGlint`, because AudioToolbox has no MP3 encoder.
-- **Known caveats:** the v1 key estimator is deterministic and plausible but not yet
-  human-verified against every fixture (see `Tests/Fixtures/fixtures.json` notes).
+- **Analysis:** tempo / beatgrid / key / structure / waveform run through an
+  Accelerate-backed pipeline ported from `parso-tonearm` (audio-engine unification, Phase 5).
+  The strict `expected` key/BPM values in `Tests/Fixtures/fixtures.json` are still being
+  re-verified against the ported estimators; most remain `null` pending that pass.
 
 ---
 

@@ -96,25 +96,40 @@ Both behind `TimePitch` (`pd_timepitch`); a deck switches per gesture.
 
 ## 5. Analysis algorithm specs (implement exactly)
 
+Since the audio-engine unification (`docs/UNIFICATION_PLAN.md` §4 Phase 5) the tempo and key
+estimators are Accelerate-backed, ported near-verbatim from `parso-tonearm`'s mature analysis
+pipeline (`STFTKernel` / `OnsetDetector` / `TempoAnalyzer` / `BeatTracker` / `KeyDetector`), which
+is also exposed directly as public `ParsoAudioAnalysis` API alongside a `FullAnalysis` orchestrator.
+`TempoEstimator` / `KeyEstimator` / `StructureAnalyzer` / `WaveformGenerator` / `TrackAnalyzer` stay
+as a thin compat facade over it with unchanged field names. Incoming buffers are resampled to the
+canonical **48 kHz** analysis rate (libsamplerate, sinc-best).
+
 ### 5.1 Tempo / beatgrid (`TempoEstimator`)
-Mono → 22050 Hz. STFT Hann size 2048 hop 512. Onset envelope = spectral flux
-`Σ max(0,|X_t[k]|−|X_{t−1}[k]|)`, minus 0.15 s moving average, half-wave rectified, normalized.
-Tempo = autocorrelation of the envelope over lags for **40–220 BPM**, weighted by a log-Gaussian prior
-centered **120 BPM** (σ≈0.5 in log2); test half/double/⅔/³⁄₂ multiples, keep best under the prior.
-Beat phase: cross-correlate a pulse train at the period against the envelope for the offset.
-Downbeats: choose the bar phase (of 4) with the most low-band (<200 Hz) accent (best-effort).
-`isConstantTempo = true` for v1. `confidence` = autocorr peak sharpness × phase alignment.
+48 kHz mono. vDSP real-FFT STFT, Hann **4096 / hop 2048** (~23.4 fps). Onset envelope = multi-band
+half-wave-rectified spectral flux (bands 20–120 / 120–2000 / 2000–16000 Hz, percussion-weighted),
+moving-mean drift removal, normalized. Tempo = autocorrelation comb over **60–220 BPM** (harmonics
+1…4, fractional-lag interpolation) blended with an inter-onset-interval histogram, then explicit
+octave resolution (each candidate vs its ×2/÷2 under a gentle Gaussian prior centered **125 BPM**).
+Beat grid: Ellis-style dynamic-programming tracker maximizing `Σ onset(b) − λ·(log Δt/P)²`, re-phased
+to a rigid constant-tempo grid, beats snapped to nearby onsets and sub-frame-refined; BPM re-fit by
+least-squares over `(beat index, sample)`. Downbeats: the bar phase (of 4) with the strongest mean
+accent. `isConstantTempo = true`. `confidence` = normalized comb/prior score, floored by the mean
+per-beat grid confidence.
 
 ### 5.2 Key (`KeyEstimator`)
-Mono → 22050 Hz. STFT Hann 4096 hop 2048. 12-bin chroma: `pc = round(12·log2(f/440)+69) mod 12`,
-100–5000 Hz, accumulate, normalize. Correlate (Pearson) against **Krumhansl–Kessler** profiles
-(constants in `KeyProfiles`, already in source) rotated over 12 tonics; argmax → `(tonic, mode)`.
-Map to Camelot + Open Key via a fixed table. `confidence` = (best − secondBest) scaled.
+48 kHz mono, same STFT. Per-frame HPCP chroma: each bin folds onto the nearest pitch class with a
+Gaussian tuning weight (~25 cents) and harmonic reinforcement at ×2/×3/×4; frames averaged and
+L1-normalized. Correlate (Pearson) against **Krumhansl–Schmuckler** major/minor profiles
+(`KeyDetector.krumhanslMajor/Minor`) rotated over 12 tonics; argmax → `(tonic, mode)`. Camelot from
+the wheel table; Open Key derived from the Camelot number (offset 7, `d`/`m`). `confidence` =
+`(best − runnerUp) / 0.2`, clamped.
 
-### 5.3 Structure (`StructureAnalyzer`, best-effort v1)
-Beat-synchronous feature per beat (band energies + chroma) → cosine self-similarity matrix →
-checkerboard-kernel novelty (radius ≈16 beats) → peak-pick boundaries → snap to 8/16/32-bar phrases →
-heuristic labels by relative energy/centroid (`.unknown` allowed).
+### 5.3 Structure (`StructureAnalyzer`, deterministic v1)
+Energy-domain, no FFT: per-beat feature (RMS + coarse band split + zero-crossing rate) → cosine
+novelty between adjacent beats → peak-pick with an energy-change gate and a 4-beat minimum spacing →
+heuristic labels by relative energy (`.intro` / `.drop` / `.breakdown` / `.unknown`). The
+Accelerate-backed self-similarity + Foote-checkerboard segmenter is available as
+`PhraseSegmenter` / `FullAnalysis` for callers that have a real beat grid.
 
 ### 5.4 Waveform (`WaveformGenerator`)
 Bucketize: per overview bucket store min/max; per detail bucket RMS; per bucket low/mid/high band
