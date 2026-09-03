@@ -12,9 +12,7 @@ import Foundation
 import ParsoAudioCore
 import ParsoAudioAnalysis
 import CParsoEngine
-#if canImport(AVFoundation)
 import AVFoundation
-#endif
 
 public enum AudioEngineError: Error, Sendable {
     case invalidOutputFormat
@@ -36,9 +34,7 @@ public final class DJEngine {
     private let sampleRate: Double
     private let maxFramesPerRender: Int
     public private(set) var isRunning: Bool = false
-#if canImport(AVFoundation)
     private var audioEngine: AVAudioEngine?
-#endif
 
     public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
         let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
@@ -55,7 +51,6 @@ public final class DJEngine {
 
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
     public func start() throws {
-#if canImport(AVFoundation)
         guard !isRunning else { return }
         let audioEngine = AVAudioEngine()
         let outputFormat = audioEngine.outputNode.inputFormat(forBus: 0)
@@ -83,15 +78,12 @@ public final class DJEngine {
         audioEngine.connect(sourceNode, to: audioEngine.mainMixerNode, format: sourceFormat)
         try audioEngine.start()
         self.audioEngine = audioEngine
-#endif
         isRunning = true
     }
 
     public func stop() {
-#if canImport(AVFoundation)
         audioEngine?.stop()
         audioEngine = nil
-#endif
         isRunning = false
     }
 

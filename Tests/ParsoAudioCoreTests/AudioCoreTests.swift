@@ -8,7 +8,6 @@ import Testing
 import Foundation
 import ParsoAudioCore
 import ParsoTestSupport
-import Calac
 import CParsoDSP
 
 // MARK: - Real now
@@ -123,7 +122,6 @@ struct CodecRoundtripTests {
         #expect(back.frameCount == src.frameCount)
     }
 
-#if canImport(AVFoundation)
     @Test func aacRoundtripIsBounded() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
         let url = tempURL("m4a")
@@ -133,14 +131,6 @@ struct CodecRoundtripTests {
         // Lossy: allow codec/priming delay; assert the tone survives, not sample-exactness.
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
-#else
-    @Test func portableAacM4aEncodingRemainsUnsupportedOnLinux() throws {
-        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
-        let url = tempURL("m4a")
-        let writer = try AudioFileWriter(url: url, format: src.format, codec: .aac(bitrate: 256_000))
-        #expect(throws: AudioFileError.self) { try writer.write(src) }
-    }
-#endif
 
     @Test func mp3RoundtripPreservesTheDominantTone() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
@@ -153,32 +143,7 @@ struct CodecRoundtripTests {
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
 
-#if !canImport(AVFoundation)
-    @Test func portableAacAdtsRoundtripPreservesTheDominantTone() throws {
-        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
-        let url = tempURL("aac")
-        let writer = try AudioFileWriter(url: url, format: src.format, codec: .aac(bitrate: 192))
-        try writer.write(src)
-        try writer.finish()
-        let back = try AudioFileReader(url: url, container: .aac).readAll()
-        #expect(back.frameCount > 0)
-        #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
-    }
-
-    @Test func portableAlacM4aEncodingRemainsUnavailableOnLinux() throws {
-        let src = SignalGenerators.sine(frequency: 440, seconds: 1.25, channels: 2)
-        let url = tempURL("m4a")
-        let writer = try AudioFileWriter(url: url, format: src.format, codec: .alac)
-        #expect(throws: AudioFileError.self) { try writer.write(src) }
-    }
-
-    @Test func portableAlacM4aRejectsMalformedContainer() throws {
-        let url = tempURL("m4a")
-        try Data([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]).write(to: url)
-        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
-    }
-
-    @Test func portableM4aMetadataReadsStandardTextItems() throws {
+    @Test func m4aMetadataReadsStandardTextItems() throws {
         let url = tempURL("m4a")
         try makeMetadataFixture().write(to: url)
 
@@ -186,13 +151,13 @@ struct CodecRoundtripTests {
         #expect(metadata == AudioFileMetadata(title: "Café Session", artist: "Primary Artist", album: "Portable Tests"))
     }
 
-    @Test func portableM4aMetadataRejectsMalformedAtoms() throws {
+    @Test func m4aMetadataRejectsMalformedAtoms() throws {
         let url = tempURL("m4a")
         try Data([0, 0, 0, 8, 0x6D, 0x6F, 0x6F, 0x76, 0, 0, 0, 4]).write(to: url)
         #expect(throws: AudioFileError.self) { _ = try AudioFileReader.readMetadata(from: url, container: .m4a) }
     }
 
-    @Test func portableM4aMetadataReadsExternallyAuthoredFixture() throws {
+    @Test func m4aMetadataReadsExternallyAuthoredFixture() throws {
         let fixtureURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -206,83 +171,6 @@ struct CodecRoundtripTests {
 
         let metadata = try AudioFileReader.readMetadata(from: url)
         #expect(metadata == AudioFileMetadata(title: "External Café", artist: "Fixture Artist", album: "Compatibility Album"))
-    }
-
-    @Test func portableM4aDecodesExternallyAuthoredAACProfile() throws {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/m4a_external_aac.m4a.b64")
-        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let fixture = Data(base64Encoded: encoded) else {
-            throw AudioFileError.invalidFile("external AAC M4A fixture is not valid base64")
-        }
-        let url = tempURL("m4a")
-        try fixture.write(to: url)
-
-        let reader = try AudioFileReader(url: url, container: .m4a)
-        #expect(reader.format == AudioFormat(sampleRate: 44_100, channelCount: 1))
-        #expect(reader.frameCount == 11_025)
-        #expect(Measure.rms(try reader.readAll()) > 0.001)
-    }
-
-    @Test func portableM4aDecodesExternallyAuthoredAACStereo48kProfile() throws {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/m4a_external_aac_stereo_48k.m4a.b64")
-        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let fixture = Data(base64Encoded: encoded) else {
-            throw AudioFileError.invalidFile("external stereo AAC M4A fixture is not valid base64")
-        }
-        let url = tempURL("m4a")
-        try fixture.write(to: url)
-
-        let reader = try AudioFileReader(url: url, container: .m4a)
-        #expect(reader.format == AudioFormat(sampleRate: 48_000, channelCount: 2))
-        #expect(reader.frameCount == 24_000)
-        let decoded = try reader.readAll()
-        #expect(Measure.rms(decoded) > 0.001)
-        #expect(abs(Measure.dominantFrequency(decoded, searchRange: 300...600) - 440) <= 2)
-    }
-
-    @Test func portableM4aRejectsSampleToChunkTableThatDoesNotCoverSamples() throws {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/m4a_external_aac_stereo_48k.m4a.b64")
-        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var fixture = Data(base64Encoded: encoded) else {
-            throw AudioFileError.invalidFile("external stereo AAC M4A fixture is not valid base64")
-        }
-        let stsc = Data([0, 0, 0, 28, 0x73, 0x74, 0x73, 0x63])
-        guard let stscOffset = fixture.firstRange(of: stsc)?.lowerBound else {
-            throw AudioFileError.invalidFile("AAC fixture has no sample-to-chunk atom")
-        }
-        fixture[stscOffset + 20] = 1 // one sample in the only chunk; 25 are declared
-        let url = tempURL("m4a")
-        try fixture.write(to: url)
-
-        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
-    }
-
-    @Test func portableM4aRejectsUnsupportedAACProfile() throws {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/m4a_external_aac.m4a.b64")
-        let encoded = try String(contentsOf: fixtureURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var fixture = Data(base64Encoded: encoded) else {
-            throw AudioFileError.invalidFile("external AAC fixture is not valid base64")
-        }
-        guard let configOffset = fixture.firstRange(of: Data([0x12, 0x08, 0x56, 0xE5]))?.lowerBound else {
-            throw AudioFileError.invalidFile("AAC fixture has no expected decoder configuration")
-        }
-        fixture[configOffset] = 0x0A // object type 1: unsupported by the AAC-LC path
-        let url = tempURL("m4a")
-        try fixture.write(to: url)
-
-        #expect(throws: AudioFileError.self) { _ = try AudioFileReader(url: url, container: .m4a) }
     }
 
     private func makeMetadataFixture() -> Data {
@@ -309,23 +197,6 @@ struct CodecRoundtripTests {
         let meta = atom(Array("meta".utf8), Data(repeating: 0, count: 4) + ilst)
         return atom(Array("ftyp".utf8), Data([0x4D, 0x34, 0x41, 0x20])) +
             atom(Array("moov".utf8), atom(Array("udta".utf8), meta))
-    }
-#endif
-}
-
-@Suite("ALAC bridge")
-struct ALACBridgeTests {
-    @Test func portableAlacImplementationIsUnavailable() {
-        var encoder: OpaquePointer?
-        #expect(parso_alac_encoder_create(44_100, 2, 24, 4096, 0, &encoder) == PARSO_ALAC_CODEC_ERROR)
-        #expect(encoder == nil)
-
-        var decoder: OpaquePointer?
-        let result = [UInt8](repeating: 0, count: 24).withUnsafeBufferPointer {
-            parso_alac_decoder_create($0.baseAddress, UInt32($0.count), &decoder)
-        }
-        #expect(result == PARSO_ALAC_CODEC_ERROR)
-        #expect(decoder == nil)
     }
 }
 

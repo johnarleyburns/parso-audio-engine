@@ -20,7 +20,7 @@ Install `ffmpeg` as a developer tool, download the Wikimedia Commons fixtures, t
 
 ```bash
 ./scripts/download-fixtures.sh
-swift run ParsoAcceptanceArtifacts \
+swift run --package-path Tools/AcceptanceArtifacts ParsoAcceptanceArtifacts \
   --fixture gostreyshen_world \
   --scenario waveform \
   --max-seconds 30 \
@@ -31,7 +31,7 @@ python3 scripts/render-acceptance-video.py \
   --output artifacts/acceptance/gostreyshen/gostreyshen_world-waveform.mp4
 
 # Phrase/structure review: render the entire song.
-swift run ParsoAcceptanceArtifacts \
+swift run --package-path Tools/AcceptanceArtifacts ParsoAcceptanceArtifacts \
   --fixture gostreyshen_world \
   --scenario phrase \
   --max-seconds 0 \
@@ -79,5 +79,6 @@ those labels over a plain source track.
 
 `ParsoAcceptanceArtifacts` and the Python renderer are developer/test tooling. `ffmpeg` is used only
 to encode the review MP4 and is not a SwiftPM dependency, vendored library, or runtime requirement
-of the Apple/Linux products. Linux can therefore generate and inspect the same review artifacts;
-macOS CI remains responsible for native AVFoundation/AudioToolbox and device-style acceptance.
+of the shipping products. The tool lives in its own package (`Tools/AcceptanceArtifacts`) so the
+root package holds only libraries and its scheme builds for every Apple destination; macOS CI
+remains responsible for native AVFoundation/AudioToolbox and device-style acceptance.

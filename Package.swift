@@ -4,6 +4,9 @@ import PackageDescription
 // parso-audio-engine — MIT-licensed, permissive-only software DJ engine
 // delivering full DDJ-FLX4 functional equivalence. See docs/SPEC.md.
 //
+// Apple platforms only (iOS / macCatalyst / macOS / watchOS). Linux support was
+// retired in Phase 1b; see docs/UNIFICATION_PLAN.md §4b.
+//
 // Swift 6 language mode is enabled package-wide (strict concurrency).
 // The C/C++ targets currently ship as *placeholder* modules that compile but
 // return errors; vendor the real permissive libraries per docs/SPEC.md §4:
@@ -14,8 +17,7 @@ import PackageDescription
 //   Copus    -> libogg + libopus + libopusfile (BSD-3)  https://github.com/xiph  (Opus decode)
 //   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
 //                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
-//   CGlint (planned) -> Glint portable MP3/AAC-LC compatibility and MP3 encode
-//   Calac    -> first-party portable ALAC API placeholder; implementation pending legal review
+//   CGlint   -> Glint MP3 encode (AudioToolbox has no MP3 encoder) and AAC-LC support
 
 let package = Package(
     name: "parso-audio-engine",
@@ -31,11 +33,6 @@ let package = Package(
         .library(name: "ParsoAudioPlayback",  targets: ["ParsoAudioPlayback"]),
         .library(name: "ParsoAudioStreaming", targets: ["ParsoAudioStreaming"]),
         .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
-        // Host-side developer tool. It is a command-line executable and so cannot
-        // link for watchOS; app targets depend on the library products above and
-        // never build it. Verify watchOS with the per-product schemes, not the
-        // whole-package scheme (docs/UNIFICATION_PLAN.md §5).
-        .executable(name: "ParsoAcceptanceArtifacts", targets: ["ParsoAcceptanceArtifacts"]),
     ],
     targets: [
         // ── Vendored C libraries (permissive upstream licenses; see VENDOR.md) ──
@@ -51,11 +48,9 @@ let package = Package(
                 .define("HAVE_STDINT_H"),
                 .define("FLAC__HAS_OGG", to: "0"),
                 .define("HAVE_LROUND"),
-                .define("HAVE_CPUID_H", .when(platforms: [.linux])),
                 .define("HAVE_FSEEKO"),
                 .define("HAVE_INTTYPES_H"),
                 .define("HAVE_SYS_PARAM_H"),
-                .define("_POSIX_C_SOURCE", to: "200809L", .when(platforms: [.linux])),
                 .define("PACKAGE_VERSION", to: "\"1.4.3\""),
                 .unsafeFlags(["-include", "strings.h", "-include", "string.h"])
             ]
@@ -111,10 +106,10 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("vendor/signalsmith"),
                 .headerSearchPath("src"),
-                .define("SIGNALSMITH_USE_ACCELERATE", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .define("SIGNALSMITH_USE_ACCELERATE"),
             ],
             linkerSettings: [
-                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS]))
+                .linkedFramework("Accelerate")
             ]
         ),
         .target(
@@ -130,11 +125,6 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("src")
             ]
-        ),
-        .target(
-            name: "Calac",
-            path: "Sources/Calac",
-            publicHeadersPath: "include"
         ),
         .target(
             name: "CflacBridge",
@@ -163,38 +153,33 @@ let package = Package(
         // ── Swift layers (Swift 6 language mode) ──
         .target(
             name: "ParsoAudioCore",
-            dependencies: ["CParsoDSP", "CGlint", "Calac", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
+            dependencies: ["CParsoDSP", "CGlint", "CflacBridge", "CvorbisBridge", "CopusBridge", "Cebur128", "Csrc"],
             linkerSettings: [
-                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
-                .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
-                .linkedFramework("Accelerate",   .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("AudioToolbox", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+                .linkedFramework("Accelerate"),
             ]
         ),
         .target(
             name: "ParsoAudioAnalysis",
             dependencies: ["ParsoAudioCore"],
             linkerSettings: [
-                .linkedFramework("Accelerate", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS]))
+                .linkedFramework("Accelerate")
             ]
-        ),
-        .executableTarget(
-            name: "ParsoAcceptanceArtifacts",
-            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "ParsoDJEngine"],
-            path: "Sources/ParsoAcceptanceArtifacts"
         ),
         .target(
             name: "ParsoAudioPlayback",
             dependencies: ["ParsoAudioCore"],
             linkerSettings: [
-                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
-                .linkedFramework("Accelerate",   .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("Accelerate"),
             ]
         ),
         .target(
             name: "ParsoAudioStreaming",
             dependencies: ["ParsoAudioCore"],
             linkerSettings: [
-                .linkedFramework("AVFoundation", .when(platforms: [.iOS, .macCatalyst, .macOS, .watchOS])),
+                .linkedFramework("AVFoundation"),
             ]
         ),
         .target(
@@ -205,7 +190,7 @@ let package = Package(
         // ── Tests ──
         .testTarget(
             name: "ParsoAudioCoreTests",
-            dependencies: ["ParsoAudioCore", "Calac", "ParsoTestSupport"]
+            dependencies: ["ParsoAudioCore", "ParsoTestSupport"]
         ),
         .testTarget(
             name: "ParsoAudioAnalysisTests",

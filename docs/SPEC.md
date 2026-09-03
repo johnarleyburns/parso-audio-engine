@@ -13,16 +13,16 @@ with rekordbox), with **no copyleft dependencies**.
 
 ## 0. Non-negotiable inputs (locked)
 
-1. **Three SPM library products**, layered: `ParsoAudioCore` ← `ParsoAudioAnalysis` ← `ParsoDJEngine`. Standalone; no dependency on any external app.
+1. **SPM library products**, layered: `ParsoAudioCore` ← `ParsoAudioAnalysis` ← `ParsoDJEngine`, plus `ParsoAudioPlayback` and `ParsoAudioStreaming` on Core (`docs/UNIFICATION_PLAN.md` §2). Standalone; no dependency on any external app.
 2. **MIT** first-party; third-party code may use **MIT / BSD / Apache-2.0 / APSL-2.0 / public-domain** terms, plus Apple frameworks. **No GPL/LGPL/AGPL.** APSL-2.0 code must retain its notices and license, mark modifications, and satisfy its source-availability and executable-notice requirements when externally deployed; it does not relicense unrelated project code. See `AGENTS.md` for the operational compliance checklist.
 3. **Swift 6 language mode** package-wide (`swiftLanguageModes: [.v6]`, tools 6.0).
-4. **Decode scope:** FLAC (libFLAC/`Cflac`), **Ogg Vorbis** (stb_vorbis/`Cvorbis`), **Opus** (libopus+libopusfile/`Copus`), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF and portable Glint MP3/ADTS-AAC on Linux.
-5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC + ALAC (AudioToolbox on Apple), and portable
-   Glint MP3/ADTS-AAC. M4A/ALAC remains an explicit Linux gap until permissive ISO-BMFF container
-   and AppleALAC integration is complete; Linux must reject it rather than write WAV bytes under an
-   `.m4a` extension.
+4. **Decode scope:** FLAC (libFLAC/`Cflac`), **Ogg Vorbis** (stb_vorbis/`Cvorbis`), **Opus** (libopus+libopusfile/`Copus`), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF.
+5. **Encode scope:** WAV/PCM, FLAC (libFLAC), AAC and ALAC (AVFoundation), and MP3 via the
+   vendored Glint encoder — AudioToolbox has no MP3 encoder, so Glint is the MP3 path on every
+   supported platform.
+
 6. **Real-time DSP core is C/C++**; Swift is the API/orchestration skin. Apple-native (Accelerate/AVFoundation/AudioToolbox) where it is the best free option.
-7. **Targets:** iOS 15+, iPadOS 15+, macCatalyst 15+, macOS 13+.
+7. **Targets:** iOS 17+, iPadOS 17+, macCatalyst 17+, macOS 14+, watchOS 10+. Apple platforms only.
 8. **Goal:** replicate the *audio + DJ* functionality of a DDJ-FLX4 in software. Physical-only aspects (jog motor, jacks, soundcard, USB, Bluetooth-in) are **N/A** (§15).
 
 ---
@@ -64,9 +64,7 @@ concept. Only `ParsoDJEngine`/`CParsoEngine` know about decks/crossfader/cues.
 | `Csrc` | libsamplerate ≥ 0.2.2 | BSD-2 | Offline sample-rate conversion (**never < 0.1.9 — GPL**) |
 | `CParsoDSP` | Signalsmith Stretch | MIT | Time-stretch + pitch-shift (key-lock) |
 | — | Apple AVFoundation / AudioToolbox / Accelerate | Apple SDK | Engine graph, MP3/AAC/ALAC/WAV/AIFF decode, AAC/ALAC encode, FFT/vector |
-| `CGlint` | Glint | MIT | Portable MP3/ADTS-AAC decode and MP3/AAC encode; pinned/vendored, macOS parity/fuzz gates remain |
-| `Cminimp4` (candidate) | minimp4 | CC0 | Portable ISO BMFF/M4A container parsing; codec-independent |
-| `Calac` | First-party API placeholder | — | Portable ALAC unavailable; independently authored BSD-only implementation pending |
+| `CGlint` | Glint | MIT | MP3 encode — AudioToolbox has no MP3 encoder; pinned/vendored, macOS parity/fuzz gates remain |
 | — | Freeverb constants (§13.4) | Public Domain | Reverb tuning |
 
 **Rejected (do not use):** Rubber Band, SoundTouch, sbsms, soxr, aubio, libKeyFinder, Essentia,
@@ -169,7 +167,7 @@ Physical-only **[HW]** items are **N/A**. Each row has a test suite in `Tests/` 
 | Mic summed to master/record | `MicInput` | (mic sum) |
 | Sync / master / quantize / slip | `Deck.sync/setAsMaster/quantize/slip` | `Sync`, `Slip mode` |
 | Analysis (BPM/key/waveform/structure/loudness) | `ParsoAudioAnalysis`, `LoudnessAnalyzer` | `Tempo`, `Key`, `RealFixture *` |
-| Recording (WAV/FLAC/AAC/ALAC + planned MP3) | `MixRecorder` | `Codec roundtrip` + Linux compatibility gates |
+| Recording (WAV/FLAC/MP3/AAC/ALAC) | `MixRecorder` | `Codec roundtrip` |
 | Decode FLAC/OggVorbis/Opus/MP3/AAC/ALAC/WAV/AIFF | `AudioFileReader` | `RealFixture decode` |
 | Library / streaming | **Out of scope** (app concern) | — |
 
@@ -191,19 +189,14 @@ Streaming-service integration, library/browser UI, DVS timecode, external-MIDI/c
 enabled); every §15 gate has a passing test; NOTICE/SPDX clean; public C headers C-clean;
 `pe_render` asserts zero allocations.
 
-### 19.1 Linux Swift compatibility workstream
+### 19.1 Linux Swift compatibility workstream — retired
 
-This workstream runs before the final acceptance sign-off and is intentionally additive to the
-Apple-native gates:
+Retired in Phase 1b (2026-09-02): the package targets Apple platforms only — iOS, macCatalyst,
+macOS and watchOS. See `docs/UNIFICATION_PLAN.md` §4b for the keep/delete analysis and for the
+one thing this gives up, namely the independent non-Apple correctness host that used to
+cross-check the AudioToolbox paths.
 
-1. Audit and pin Glint; verify its MIT license, source provenance, generated assets, and decoder/
-   encoder behavior against CoreAudio.
-2. Add a C-clean `CGlint` bridge and use it for portable MP3 decode and opt-in MP3 encode on Linux
-   and Apple platforms. Keep AudioToolbox as the Apple AAC/ALAC implementation.
-3. Add `Cminimp4` only for the supported ISO BMFF/M4A profiles, with malformed-file, duration,
-   seek, priming, and metadata tests.
-4. Do not use implementation code from Apple's public-source ALAC repository. Retained Apache-2.0
-   headers are not compiled or linked. Create an independently authored BSD-only ALAC implementation
-   for Linux and cross-check lossless output with AudioToolbox.
-5. Make Linux the independent correctness host for Swift, analysis, DSP, headless render, and all
-   portable codecs. Keep macOS/iOS CI as the native Apple framework and hardware-family gate.
+Two of its items survived on their own merits and are now unconditional: `CGlint` is the MP3
+encoder on every platform (item 2), and no implementation code from Apple's public-source ALAC
+repository is used (item 4). The `Calac` placeholder, the portable ALAC and ISO-BMFF container
+work, and Linux CI are gone.

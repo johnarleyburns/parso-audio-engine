@@ -95,8 +95,8 @@ manifest, DJ API surface**. DoD: clean baseline, ledger created at Phase 0 → a
 
 ### Phase 1 — Decoders + Core IO / encode / SRC / loudness  (SPEC §2, §9)
 Vendor `Cflac`, `Cvorbis`, `Copus`, `Cebur128`, `Csrc`. Implement `AudioFileReader`/`AudioFileWriter`
-(FLAC→libFLAC, Ogg→stb_vorbis, Opus→libopusfile, MP3/AAC/ALAC/WAV/AIFF→Apple; encode WAV/FLAC/AAC/ALAC,
-**no MP3**), `SampleRateConverter` (libsamplerate ≥ 0.2.2), `LoudnessAnalyzer` (libebur128).
+(FLAC→libFLAC, Ogg→stb_vorbis, Opus→libopusfile, MP3/AAC/ALAC/WAV/AIFF→Apple; encode WAV/FLAC/AAC/ALAC
+plus MP3 via `CGlint`, which is the only MP3 encoder available), `SampleRateConverter` (libsamplerate ≥ 0.2.2), `LoudnessAnalyzer` (libebur128).
 Run `./scripts/download-fixtures.sh`.
 **Enable:** `Codec roundtrip`, `Sample-rate conversion`, `Loudness`, `RealFixture decode`.
 

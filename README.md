@@ -27,13 +27,12 @@ source of truth and the test suite remains the executable specification.
   Stretch, delay, Freeverb reverb, look-ahead limiter, lock-free SPSC ring) and `CParsoEngine`
   (allocation-free two-deck render graph) are real. `pe_render` (device) and `pe_step` (tests)
   share one DSP implementation.
-- **Codecs:** on Apple platforms the native containers (WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A)
-  go through AVFoundation / AudioToolbox. FLAC, Ogg Vorbis and Opus use vendored permissive C
-  (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`.
+- **Codecs:** the native containers (WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A) go through
+  AVFoundation / AudioToolbox. FLAC, Ogg Vorbis and Opus use vendored permissive C
+  (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
+  uses `CGlint`, because AudioToolbox has no MP3 encoder.
 - **Known caveats:** the v1 key estimator is deterministic and plausible but not yet
-  human-verified against every fixture (see `Tests/Fixtures/fixtures.json` notes). Portable
-  (non-Apple) ALAC encode/decode is unavailable pending an independently authored, permissively
-  licensed implementation — `Calac` is a placeholder; Apple platforms are unaffected.
+  human-verified against every fixture (see `Tests/Fixtures/fixtures.json` notes).
 
 ---
 
@@ -100,13 +99,13 @@ regression test, fill its verified `expected.bpm` / `expected.key` in `Tests/Fix
 
 ## Human-visible acceptance videos
 
-The Linux-compatible acceptance tool can produce a WAV plus JSON analysis sidecar, then render a
+The acceptance tool can produce a WAV plus JSON analysis sidecar, then render a
 reviewable MP4 with waveform, beat/downbeat markers, section labels, and a synchronized playhead.
 See [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md). It uses system `ffmpeg`
 only as developer tooling; ffmpeg is not a product dependency.
 
 ```bash
-swift run ParsoAcceptanceArtifacts \
+swift run --package-path Tools/AcceptanceArtifacts ParsoAcceptanceArtifacts \
   --fixture gostreyshen_world \
   --scenario waveform \
   --output-dir artifacts/acceptance/gostreyshen_world
@@ -425,11 +424,9 @@ try w.write(pcm); try w.finish()
 ```
 
 Supported decode: FLAC, Ogg Vorbis, Opus, MP3, AAC, WAV, AIFF, CAF, and Apple-native ALAC.
-Supported encode: WAV/PCM, FLAC, AAC, and Apple-native ALAC. Portable MP3 encode is planned through
-the Linux Swift compatibility workstream using an audited permissive codec. Portable ALAC is
-currently unavailable: no implementation code from Apple's public-source ALAC repository is used;
-only its permitted headers remain uncompiled while an independently authored BSD-only replacement
-is pending. Apple AAC/ALAC remains the native path.
+Supported encode: WAV/PCM, FLAC, MP3, AAC and ALAC. AAC and ALAC use AVFoundation; MP3 uses the
+vendored Glint encoder, since AudioToolbox cannot encode MP3. No implementation code from Apple's
+public-source ALAC repository is used.
 
 ## Loudness / auto-gain
 
@@ -457,8 +454,9 @@ regressions once you record verified values. See `Tests/` and `docs/SPEC.md §5,
 
 ## Roadmap
 
-Phased implementation plan in `docs/SPEC.md §19`, including the Linux Swift compatibility
-workstream in §19.1. If you're handing this to a coding agent, start it
+Phased implementation plan in `docs/SPEC.md §19`. The current workstream is the three-repo
+audio unification in `docs/UNIFICATION_PLAN.md`, tracked in `current_status.md`.
+If you're handing this to a coding agent, start it
 at **`AGENTS.md`** — it defines the implement → enable-tests → commit → update-`current_status.md` loop
 and the exact phase order. The public API is **0.x / unstable** until validated by a first real
 integration, then tagged 1.0.0.
@@ -468,6 +466,5 @@ integration, then tagged 1.0.0.
 MIT (`LICENSE`). Third-party permissive components: `NOTICE.md`. Test-fixture audio (Creative Commons,
 fetched not redistributed): `ATTRIBUTION.md`.
 
-The portable-codec policy is BSD-only permissive (BSD-2-Clause/BSD-3-Clause, or public domain) for
-replacement implementation code. This project does not use any implementation code from Apple's
-public-source ALAC repository; only permitted upstream header declarations remain uncompiled.
+The vendored-codec policy is BSD-only permissive (BSD-2-Clause/BSD-3-Clause, or public domain).
+This project does not use any implementation code from Apple's public-source ALAC repository.

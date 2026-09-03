@@ -1,11 +1,11 @@
 import Foundation
-import Calac
 
-/// A deliberately narrow ISO-BMFF profile for portable ALAC files.
+/// A deliberately narrow ISO-BMFF reader, used for M4A metadata.
 ///
 /// The parser accepts one audio track, one ALAC sample description, one sample
-/// per chunk, and explicit packet/sample tables. That is enough for files this
-/// package writes while making malformed or unsupported profiles fail closed.
+/// per chunk, and explicit packet/sample tables, so malformed or unsupported
+/// profiles fail closed rather than being read as audio metadata. ALAC audio
+/// itself is decoded and encoded by AVFoundation (docs/UNIFICATION_PLAN.md §4b).
 enum MP4ALACCodec {
     private struct Atom {
         let type: String
@@ -35,95 +35,6 @@ enum MP4ALACCodec {
         "moov", "trak", "edts", "mdia", "minf", "stbl", "dinf", "udta", "meta", "ilst"
     ]
 
-    static func decode(_ data: Data) throws -> PCMBuffer {
-        let track = try parse(data)
-        var decoder: OpaquePointer?
-        let createResult = track.description.cookie.withUnsafeBytes { rawBuffer in
-            parso_alac_decoder_create(
-                rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                UInt32(track.description.cookie.count),
-                &decoder
-            )
-        }
-        guard createResult == PARSO_ALAC_OK, let decoder else {
-            throw AudioFileError.invalidFile("ALAC decoder rejected the magic cookie")
-        }
-        defer { parso_alac_decoder_destroy(decoder) }
-
-        let mediaOutput = PCMBuffer(
-            format: AudioFormat(sampleRate: track.description.sampleRate, channelCount: track.description.channels),
-            capacity: track.mediaFrameCount
-        )
-        let bytesPerSample = (track.description.bitDepth + 7) / 8
-        let bytesPerFrame = track.description.channels * bytesPerSample
-        let maximumPacketBytes = Int(parso_alac_decoder_frames_per_packet(decoder)) * bytesPerFrame
-        guard maximumPacketBytes > 0 else {
-            throw AudioFileError.invalidFile("invalid ALAC packet geometry")
-        }
-
-        var outputFrame = 0
-        for (index, packetRange) in track.packetRanges.enumerated() {
-            let packet = Data(data[packetRange])
-            var decoded = [UInt8](repeating: 0, count: maximumPacketBytes)
-            var decodedFrames: UInt32 = 0
-            let result = packet.withUnsafeBytes { packetBytes in
-                decoded.withUnsafeMutableBufferPointer { decodedBytes in
-                    parso_alac_decoder_decode(
-                        decoder,
-                        packetBytes.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                        UInt32(packet.count),
-                        decodedBytes.baseAddress,
-                        UInt32(decodedBytes.count),
-                        &decodedFrames
-                    )
-                }
-            }
-            guard result == PARSO_ALAC_OK,
-                  decodedFrames > 0,
-                  Int(decodedFrames) <= track.packetFrames[index] + 1 else {
-                throw AudioFileError.invalidFile("ALAC packet decode failed")
-            }
-
-            let frames = min(Int(decodedFrames), track.mediaFrameCount - outputFrame)
-            for frame in 0..<frames {
-                for channel in 0..<track.description.channels {
-                    let sampleOffset = frame * bytesPerFrame + channel * bytesPerSample
-                    let integer: Int32
-                    switch bytesPerSample {
-                    case 2:
-                        integer = Int32(Int16(bitPattern: readLE16(decoded, at: sampleOffset)))
-                    case 3:
-                        let raw = Int32(decoded[sampleOffset]) |
-                            (Int32(decoded[sampleOffset + 1]) << 8) |
-                            (Int32(decoded[sampleOffset + 2]) << 16)
-                        integer = (raw & 0x0080_0000) != 0 ? raw | ~0x00FF_FFFF : raw
-                    default:
-                        integer = Int32(bitPattern: readLE32(decoded, at: sampleOffset))
-                    }
-                    let scale = pow(2.0, Double(track.description.bitDepth - 1))
-                    let storedScale = track.description.bitDepth == 20 ? scale * 16.0 : scale
-                    mediaOutput.channel(channel)[outputFrame + frame] = Float(Double(integer) / storedScale)
-                }
-            }
-            outputFrame += frames
-        }
-        guard outputFrame == track.mediaFrameCount else {
-            throw AudioFileError.invalidFile("ALAC sample tables do not match decoded frame count")
-        }
-        let output = PCMBuffer(
-            format: mediaOutput.format,
-            capacity: track.frameCount
-        )
-        for channel in 0..<output.channelCount {
-            let source = mediaOutput.channel(channel)
-            let destination = output.channel(channel)
-            for frame in 0..<track.frameCount {
-                destination[frame] = source[track.mediaStartFrame + frame]
-            }
-        }
-        return output
-    }
-
     static func readMetadata(_ data: Data) throws -> AudioFileMetadata {
         guard data.count >= 8 else { throw AudioFileError.invalidFile("truncated ISO-BMFF file") }
         let atoms = try parseAtoms(data, range: 0..<data.count)
@@ -142,129 +53,6 @@ enum MP4ALACCodec {
             }
         }
         return metadata
-    }
-
-    static func write(_ buffer: PCMBuffer, to url: URL) throws {
-        guard buffer.channelCount <= 8,
-              buffer.format.sampleRate <= Double(UInt32.max),
-              buffer.frameCount <= Int(UInt32.max) else {
-            throw AudioFileError.formatMismatch
-        }
-
-        var encoder: OpaquePointer?
-        let createResult = parso_alac_encoder_create(
-            UInt32(buffer.format.sampleRate.rounded()),
-            UInt32(buffer.channelCount),
-            24,
-            4096,
-            0,
-            &encoder
-        )
-        guard createResult == PARSO_ALAC_OK, let encoder else {
-            throw AudioFileError.writeFailed("portable ALAC encoder could not be created")
-        }
-        defer { parso_alac_encoder_destroy(encoder) }
-
-        var cookie = [UInt8](repeating: 0, count: 48)
-        var cookieSize = UInt32(cookie.count)
-        let cookieResult = cookie.withUnsafeMutableBufferPointer {
-            parso_alac_encoder_copy_magic_cookie(encoder, $0.baseAddress, UInt32($0.count), &cookieSize)
-        }
-        guard cookieResult == PARSO_ALAC_OK else {
-            throw AudioFileError.writeFailed("portable ALAC encoder did not provide a magic cookie")
-        }
-        let magicCookie = Data(cookie.prefix(Int(cookieSize)))
-
-        let leadingTrim = 2_112
-        let trailingPadding = 960
-        guard buffer.frameCount <= Int.max - leadingTrim - trailingPadding else {
-            throw AudioFileError.formatMismatch
-        }
-        let mediaFrameCount = leadingTrim + buffer.frameCount + trailingPadding
-        var packets: [Data] = []
-        var packetFrames: [UInt32] = []
-        var offset = 0
-        while offset < mediaFrameCount {
-            let frames = min(4096, mediaFrameCount - offset)
-            var pcm = Data()
-            pcm.reserveCapacity(frames * buffer.channelCount * 3)
-            for frame in 0..<frames {
-                for channel in 0..<buffer.channelCount {
-                    let sourceFrame = offset + frame - leadingTrim
-                    let sourceValue = sourceFrame >= 0 && sourceFrame < buffer.frameCount
-                        ? Double(buffer.channel(channel)[sourceFrame])
-                        : 0.0
-                    let value = max(-1.0, min(0.9999999995343387, sourceValue))
-                    let scaled = Int64((value * 8_388_608.0).rounded())
-                    let raw = UInt32(bitPattern: Int32(max(-8_388_608, min(8_388_607, scaled))))
-                    pcm.append(UInt8(truncatingIfNeeded: raw))
-                    pcm.append(UInt8(truncatingIfNeeded: raw >> 8))
-                    pcm.append(UInt8(truncatingIfNeeded: raw >> 16))
-                }
-            }
-            var packet: UnsafeMutablePointer<UInt8>?
-            var packetBytes: UInt32 = 0
-            let result = pcm.withUnsafeBytes { rawBuffer in
-                parso_alac_encoder_encode(
-                    encoder,
-                    rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                    UInt32(frames),
-                    &packet,
-                    &packetBytes
-                )
-            }
-            guard result == PARSO_ALAC_OK, let packet, packetBytes > 0 else {
-                if let packet { parso_alac_free(packet) }
-                throw AudioFileError.writeFailed("portable ALAC packet encode failed")
-            }
-            packets.append(Data(bytes: packet, count: Int(packetBytes)))
-            parso_alac_free(packet)
-            packetFrames.append(UInt32(frames))
-            offset += frames
-        }
-
-        var mediaData = Data()
-        for packet in packets { mediaData.append(packet) }
-        let ftyp = makeAtom("ftyp", data: Data([0x4D, 0x34, 0x41, 0x20, 0, 0, 0, 0,
-                                                   0x4D, 0x34, 0x41, 0x20, 0x69, 0x73, 0x6F, 0x6D,
-                                                   0x6D, 0x70, 0x34, 0x32]))
-        let provisionalMoov = makeMoov(
-            sampleRate: UInt32(buffer.format.sampleRate.rounded()),
-            channels: buffer.channelCount,
-            bitDepth: 24,
-            mediaFrameCount: mediaFrameCount,
-            audibleFrameCount: buffer.frameCount,
-            mediaStartFrame: leadingTrim,
-            magicCookie: magicCookie,
-            packetFrames: packetFrames,
-            packetSizes: packets.map { $0.count },
-            packetOffsets: Array(repeating: 0, count: packets.count)
-        )
-        let mediaStart = ftyp.count + provisionalMoov.count + 8
-        var packetOffsets: [Int] = []
-        var packetOffset = mediaStart
-        for packet in packets {
-            packetOffsets.append(packetOffset)
-            packetOffset += packet.count
-        }
-        let moov = makeMoov(
-            sampleRate: UInt32(buffer.format.sampleRate.rounded()),
-            channels: buffer.channelCount,
-            bitDepth: 24,
-            mediaFrameCount: mediaFrameCount,
-            audibleFrameCount: buffer.frameCount,
-            mediaStartFrame: leadingTrim,
-            magicCookie: magicCookie,
-            packetFrames: packetFrames,
-            packetSizes: packets.map { $0.count },
-            packetOffsets: packetOffsets
-        )
-        var file = Data()
-        file.append(ftyp)
-        file.append(moov)
-        file.append(makeAtom("mdat", data: mediaData))
-        do { try file.write(to: url, options: .atomic) }
-        catch { throw AudioFileError.writeFailed(error.localizedDescription) }
     }
 
     private static func parse(_ data: Data) throws -> Track {

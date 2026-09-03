@@ -16,10 +16,7 @@ import Csrc
 import CflacBridge
 import CvorbisBridge
 import CopusBridge
-import Calac
-#if canImport(AVFoundation)
 import AVFoundation
-#endif
 // AudioToolbox is absent from the watchOS SDK; the AVFAudio-based encode/decode
 // paths below only need the format constants, which AVFoundation re-exports
 // from CoreAudioTypes (docs/UNIFICATION_PLAN.md §5).
@@ -146,7 +143,7 @@ public enum AudioContainer: Sendable, Equatable {
     case flac          // libFLAC (Cflac)
     case oggVorbis     // stb_vorbis (Cvorbis)
     case opus          // libopusfile (Copus)
-    case wav, aiff, caf, mp3, aac, m4a  // Apple; Linux has portable MP3/AAC and narrow M4A profiles
+    case wav, aiff, caf, mp3, aac, m4a  // AVFoundation-native containers
     case auto
 }
 
@@ -190,10 +187,8 @@ public struct AudioFileMetadata: Sendable, Equatable {
 
 /// Reads PCM from disk. Routing by container:
 /// `.flac` → libFLAC (`Cflac`); `.oggVorbis` → stb_vorbis (`Cvorbis`);
-/// `.opus` → libopusfile (`Copus`); Apple uses AVAudioFile for native formats,
-/// while Linux uses Glint for MP3/ADTS AAC and the portable narrow M4A AAC
-/// profile. Portable ALAC is unavailable pending an independently authored
-/// implementation.
+/// `.opus` → libopusfile (`Copus`); the native containers (WAV, AIFF, CAF, MP3,
+/// AAC, ALAC-in-M4A) go through `AVAudioFile`.
 public struct AudioFileReader: Sendable {
     public let format: AudioFormat
     public let frameCount: Int
@@ -234,30 +229,8 @@ public struct AudioFileReader: Sendable {
             return try decodeOpus(url: url)
         case .wav:
             return try decodeWAV(url: url)
-        case .mp3:
-#if canImport(AVFoundation)
+        case .mp3, .aac, .aiff, .caf, .m4a:
             return try decodeApple(url: url)
-#else
-            return try decodeGlint(url: url)
-#endif
-        case .aac:
-#if canImport(AVFoundation)
-            return try decodeApple(url: url)
-#else
-            return try decodeGlint(url: url)
-#endif
-        case .aiff, .caf, .m4a:
-#if canImport(AVFoundation)
-            return try decodeApple(url: url)
-#else
-            if container == .m4a {
-                let data: Data
-                do { data = try Data(contentsOf: url) }
-                catch { throw AudioFileError.invalidFile(error.localizedDescription) }
-                return try MP4AACCodec.decode(data)
-            }
-            throw AudioFileError.unsupportedContainer(container)
-#endif
         case .auto:
             throw AudioFileError.unsupportedContainer(container)
         }
@@ -265,7 +238,7 @@ public struct AudioFileReader: Sendable {
 
     /// Reads common text metadata without decoding the audio payload.
     ///
-    /// This portable reader currently supports ISO-BMFF/M4A `©nam`, `©ART`,
+    /// This reader currently supports ISO-BMFF/M4A `©nam`, `©ART`,
     /// `©alb`, and `aART` items. Unsupported containers and malformed files
     /// are reported instead of being silently treated as audio metadata.
     public static func readMetadata(from url: URL, container: AudioContainer = .auto) throws -> AudioFileMetadata {
@@ -316,47 +289,6 @@ public struct AudioFileReader: Sendable {
         do { data = try Data(contentsOf: url) }
         catch { throw AudioFileError.invalidFile(error.localizedDescription) }
         return try WAVCodec.decode(data)
-    }
-
-    private static func decodeGlint(url: URL) throws -> PCMBuffer {
-        let data: Data
-        do { data = try Data(contentsOf: url) }
-        catch { throw AudioFileError.invalidFile(error.localizedDescription) }
-        guard !data.isEmpty, data.count <= Int(Int32.max) else {
-            throw AudioFileError.invalidFile("Glint input is empty or too large")
-        }
-
-        var sampleRate: Int32 = 0
-        var channels: Int32 = 0
-        var frames: Int32 = 0
-        let decoded: UnsafeMutablePointer<Float>? = GlintDecodeGate.withLock {
-            data.withUnsafeBytes { rawBuffer in
-                guard let baseAddress = rawBuffer.baseAddress else { return nil }
-                return glint_decode_audio(
-                    baseAddress.assumingMemoryBound(to: UInt8.self),
-                    Int32(data.count),
-                    &sampleRate,
-                    &channels,
-                    &frames
-                )
-            }
-        }
-        guard let decoded, sampleRate > 0, channels > 0, frames > 0 else {
-            if let decoded { glint_free(decoded) }
-            throw AudioFileError.invalidFile("Glint decode failed")
-        }
-        defer { glint_free(decoded) }
-
-        let output = PCMBuffer(
-            format: AudioFormat(sampleRate: Double(sampleRate), channelCount: Int(channels)),
-            capacity: Int(frames)
-        )
-        for frame in 0..<Int(frames) {
-            for channel in 0..<Int(channels) {
-                output.channel(channel)[frame] = decoded[frame * Int(channels) + channel]
-            }
-        }
-        return output
     }
 
     private static func decodeVorbis(url: URL) throws -> PCMBuffer {
@@ -415,7 +347,6 @@ public struct AudioFileReader: Sendable {
         return output
     }
 
-#if canImport(AVFoundation)
     private static func decodeApple(url: URL) throws -> PCMBuffer {
         let file: AVAudioFile
         do { file = try AVAudioFile(forReading: url) }
@@ -440,17 +371,16 @@ public struct AudioFileReader: Sendable {
         }
         return output
     }
-#endif
 }
 
-/// Export codecs. MP3 uses the portable Glint encoder; AAC/ALAC use AudioToolbox on Apple.
-/// Portable ALAC remains unavailable until an independently authored implementation is added.
+/// Export codecs. AAC and ALAC go through AVFoundation; MP3 goes through the vendored
+/// Glint encoder, which is the only MP3 encoder available — AudioToolbox cannot encode MP3.
 public enum ExportCodec: Sendable, Equatable {
     case wavPCM(bitDepth: Int)   // via AVAudioFile / ExtAudioFile
     case flac(compression: Int)  // via libFLAC (Cflac)
     case aac(bitrate: Int)       // via AudioToolbox
     case alac                    // via AudioToolbox (lossless)
-    case mp3(bitrate: Int)       // via portable Glint encoder
+    case mp3(bitrate: Int)       // via Glint (AudioToolbox has no MP3 encoder)
 }
 
 public struct AudioFileWriter {
@@ -476,23 +406,9 @@ public struct AudioFileWriter {
             do { try WAVCodec.write(buffer, bitDepth: bitDepth, to: url) }
             catch { throw AudioFileError.writeFailed(error.localizedDescription) }
         case .aac(let bitrate):
-#if canImport(AVFoundation)
             try writeApple(buffer, formatID: kAudioFormatMPEG4AAC, bitrate: bitrate)
-#else
-            if url.pathExtension.lowercased() == "aac" {
-                try writeGlint(buffer, format: Int32(GLINT_ENC_AAC.rawValue), bitrate: bitrate)
-            } else {
-                throw AudioFileError.writeFailed(
-                    "portable AAC currently emits ADTS only; M4A requires the planned minimp4 container layer"
-                )
-            }
-#endif
         case .alac:
-#if canImport(AVFoundation)
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
-#else
-            throw AudioFileError.writeFailed("portable ALAC is unavailable; use Apple AudioToolbox on Apple platforms")
-#endif
         case .mp3(let bitrate):
             try writeGlint(buffer, format: Int32(GLINT_ENC_MP3.rawValue), bitrate: bitrate)
         }
@@ -569,7 +485,6 @@ public struct AudioFileWriter {
         }
     }
 
-#if canImport(AVFoundation)
     private func writeApple(_ buffer: PCMBuffer, formatID: AudioFormatID, bitrate: Int) throws {
         var settings: [String: Any] = [
             AVFormatIDKey: formatID,
@@ -598,7 +513,6 @@ public struct AudioFileWriter {
         do { try file.write(from: audioBuffer) }
         catch { throw AudioFileError.writeFailed(error.localizedDescription) }
     }
-#endif
 }
 
 private enum WAVCodec {

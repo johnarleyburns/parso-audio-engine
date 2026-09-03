@@ -42,41 +42,23 @@ jobs:
           fi
           echo "No copyleft licenses detected."
 
-  build-test-linux:
-    runs-on: ubuntu-24.04
+  build-watchos:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Install Swift 6
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.0'
-      - name: Show toolchain
+      - name: Select latest installed Xcode
         run: |
-          swift --version
-          clang --version
-      - name: Download real audio fixtures
-        run: |
-          expected_fixture_count="$(python3 -c 'import json; print(len(json.load(open("Tests/Fixtures/fixtures.json"))["tracks"]))')"
-          for attempt in 1 2 3; do
-            ./scripts/download-fixtures.sh
-            fixture_count="$(find Tests/Fixtures/audio -type f ! -name '.gitkeep' | wc -l | tr -d ' ')"
-            if [[ "$fixture_count" -eq "$expected_fixture_count" ]]; then exit 0; fi
-            echo "Only $fixture_count/$expected_fixture_count fixtures are present; retrying in 90 seconds (attempt $attempt/3)."
-            sleep 90
+          xcode_app=""
+          for candidate in /Applications/Xcode*.app; do
+            if [[ -d "$candidate" ]]; then xcode_app="$candidate"; fi
           done
-          echo "::error::The complete $expected_fixture_count-fixture corpus was not downloaded"
-          exit 1
-      - name: Build
-        run: swift build -v
-      - name: Unit tests (synthetic and real fixtures)
-        run: swift test -v
-      - name: SPDX copyleft guard
+          if [[ -n "$xcode_app" ]]; then sudo xcode-select -s "$xcode_app"; fi
+          xcodebuild -version
+      - name: Build for watchOS Simulator
         run: |
-          if grep -R -n -E "GNU (Lesser )?General Public License|GPL-2|GPL-3|LGPL|AGPL" \
-               --include="LICENSE*" --include="*.md" Sources NOTICE.md 2>/dev/null; then
-            echo "::error::Copyleft license text found in dependency tree"; exit 1
-          fi
-          echo "No copyleft licenses detected."
+          xcodebuild -scheme parso-audio-engine-Package \
+            -destination 'generic/platform=watchOS Simulator' \
+            -skipPackagePluginValidation build
 
   build-ios:
     runs-on: macos-14
@@ -92,6 +74,8 @@ jobs:
           xcodebuild -version
       - name: Build for iOS Simulator
         run: |
-          xcodebuild -scheme ParsoDJEngine \
+          xcodebuild -scheme parso-audio-engine-Package \
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation build
+      - name: Build the acceptance tool
+        run: swift build --package-path Tools/AcceptanceArtifacts

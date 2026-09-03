@@ -2,7 +2,7 @@
 
 Why the dependency set is what it is. Constraint: **MIT / BSD / Apache / APSL-2.0 / public-domain** (no
 GPL/LGPL/AGPL), shippable in the App Store, Apple-native where that is the best free option, and
-as much of the behavior as possible independently testable on Linux.
+as much of the behavior as possible independently testable.
 
 ## The licensing reality
 - **GPL/AGPL = a wall on the App Store.** Rubber Band's own license forbids App Store distribution
@@ -26,7 +26,7 @@ as much of the behavior as possible independently testable on Linux.
 | Encode WAV | AVAudioFile / ExtAudioFile | Apple | PCM |
 | Encode FLAC | libFLAC | BSD-3 | lossless |
 | Encode lossy | AAC (AudioToolbox) | Apple | **no MP3 encoder exists permissively** |
-| Portable MP3 decode/encode | Glint | MIT | Linux + Apple fallback; pinned and covered by round-trip tests |
+| MP3 encode | Glint | MIT | The only MP3 encoder on every platform — AudioToolbox has none; pinned and covered by round-trip tests |
 | Portable M4A container (candidate) | minimp4 | CC0 | ISO BMFF demux/mux only; not an AAC/ALAC codec |
 | Portable ALAC codec | None currently | — | Apple public-source implementation removed after legal review; independently authored BSD-only replacement pending |
 | Sample-rate conversion (offline) | libsamplerate ≥ 0.2.2 | BSD-2 | never < 0.1.9 (GPL) |
@@ -37,42 +37,13 @@ as much of the behavior as possible independently testable on Linux.
 | Effects (Beat FX / Color FX) | DIY (Freeverb, RBJ, standard) | PD / public | reverb constants in SPEC §6 |
 | Loudness / auto-gain | libebur128 | MIT | EBU R128 |
 
-## Linux Swift compatibility workstream
+## Apple-only scope
 
-This is a deliberate compatibility layer, not a replacement for the Apple implementation. The
-Apple path remains authoritative for AVFoundation, AudioToolbox, native device I/O, and final
-AAC/ALAC behavior. Linux should exercise the same public `AudioFileReader`, `AudioFileWriter`,
-analysis, and headless-engine contracts wherever a permissive implementation is available.
-
-Recommended order:
-
-1. **Glint investigation and legal/security audit.** Pin an upstream revision, verify the complete
-   source tree and generated tables, confirm the MIT license, fuzz/fixture-test the MP3 and AAC-LC
-   decoders, and measure output against CoreAudio on macOS. The pinned source is now vendored in
-   `Sources/CGlint` with its upstream MIT license; fuzzing and macOS parity remain follow-up gates.
-2. **Glint bridge and portable codec IO.** Route Linux MP3 decode through Glint and use the same
-   encoder on Linux and Apple. ADTS AAC decode/encode is also available on Linux; AudioToolbox
-   AAC/ALAC remains authoritative on Apple. MP3 output is an explicit opt-in codec and never runs
-   in the real-time path.
-3. **M4A/ISO-BMFF compatibility.** Evaluate `minimp4` for safe extraction of AAC and ALAC sample
-   descriptions, edit lists, priming/padding, and metadata. Add malformed-container and audiobook
-   duration/seek tests before using it in production.
-4. **ALAC codec integration.** Do not use implementation code from Apple's public-source ALAC
-   repository. Retained upstream Apache-2.0 headers are not compiled or linked. Create an
-   independently authored BSD-only ALAC implementation for Linux, initially target CAF and a
-   narrowly defined M4A profile, then cross-check bit-exact lossless round trips against AudioToolbox.
-5. **Portable test parity.** Add Linux tests for MP3 decode/encode and supported M4A/ALAC profiles;
-   retain macOS tests for AVAudioEngine, AVAudioFile, AudioToolbox AAC/ALAC, and all native Apple
-   containers. Unsupported profiles must fail explicitly rather than silently writing WAV bytes
-   under an `.m4a` extension.
-
-Glint: https://github.com/CrispStrobe/glint
-minimp4: https://github.com/lieff/minimp4
-AppleALAC public-source repository (headers retained only; implementation not used): https://github.com/macosforge/alac
-
-This workstream does not relax the copyleft policy. FAAD2 is GPL, FDK-AAC has a separate license
-with patent conditions, and FFmpeg/libavcodec or LGPL audio stacks are not acceptable dependencies
-for this package.
+Linux support was retired in Phase 1b (2026-09-02); see `docs/UNIFICATION_PLAN.md` §4b.
+The vendored C libraries stay because they carry their own weight on Apple: `Cflac`,
+`Cvorbis` and `Copus` decode formats AVFoundation does not, `Cebur128` and `Csrc` provide
+EBU R128 and high-quality SRC, and `CGlint` is the only MP3 *encoder* available, since
+AudioToolbox cannot encode MP3.
 
 ## The gaps — no permissive library exists; built in-house
 - **BPM / beatgrid** — aubio/BTrack/QM-DSP are GPL. → `TempoEstimator` (SPEC §5.1).
@@ -91,8 +62,11 @@ decision, cleanly isolated behind the `TimePitch` type.
 
 ## Platform contract
 
-Linux is the portable correctness host: it must build Swift 6, run all analysis/DSP/headless-engine
-tests, and run every vendored-codec test. macOS GitHub Actions remains the native reference host for
-Apple frameworks, device-style audio output, AAC/ALAC, and cross-checks between portable codecs and
-CoreAudio. iOS simulator/device builds remain compile and integration gates, not a substitute for
-Linux-independent deterministic tests.
+macOS GitHub Actions is the correctness host: it builds Swift 6 and runs every analysis, DSP,
+headless-engine and vendored-codec test, as well as the native Apple framework paths — AAC/ALAC
+and device-style audio output. iOS and watchOS simulator builds are compile and integration gates,
+not a substitute for the deterministic test run.
+
+Note what retiring Linux cost: there is no longer a second, non-Apple implementation of the decode
+and analysis paths to disagree with the AVFoundation ones. The deterministic `HeadlessDJEngine`
+render path and the synthetic-signal suites carry that burden alone now.

@@ -28,13 +28,12 @@ AVFoundation, AudioToolbox, Accelerate.
 Test-only audio fixtures (Creative Commons, **fetched at test time, not
 redistributed in this repo**) are attributed in `ATTRIBUTION.md`.
 
-## BSD-only portable-codec notice
+## BSD-only vendored-codec notice
 
-The portable replacement for any removed Apple public-source codec material
-must be independently authored and use only BSD-2-Clause/BSD-3-Clause (or
-public-domain) implementation code. No implementation code from Apple's
-public-source ALAC repository is used in this project. Its implementation files
-were removed; only the upstream Apache-2.0 header declarations remain in
-`Sources/Calac/vendor/codec`, are not compiled or linked, and do not provide a
-portable ALAC implementation. Apple platforms use the system AudioToolbox
-implementation; portable ALAC is currently unavailable elsewhere.
+Vendored codec implementations must be independently authored and use only
+BSD-2-Clause/BSD-3-Clause (or public-domain) implementation code. No
+implementation code from Apple's public-source ALAC repository is used in this
+project; the `Calac` placeholder that carried its uncompiled Apache-2.0 header
+declarations was removed entirely in Phase 1b, along with Linux support
+(`docs/UNIFICATION_PLAN.md` §4b). ALAC is decoded and encoded by the system
+AudioToolbox/AVFoundation implementation.
