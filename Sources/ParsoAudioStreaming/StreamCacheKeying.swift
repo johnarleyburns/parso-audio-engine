@@ -60,12 +60,33 @@ public enum RemoteAudioURL {
         return comps.url ?? cacheURL
     }
 
+    /// The audio format extension for `url`: its path extension, or — for an
+    /// extension-less cache-blob name like `<sha256>-mp3` — the trailing segment.
+    private static func audioExtension(for url: URL) -> String {
+        url.pathExtension.lowercased().isEmpty
+            ? (url.lastPathComponent.split(separator: "-").last.map(String.init)?.lowercased() ?? "")
+            : url.pathExtension.lowercased()
+    }
+
+    /// MIME type for `AVURLAssetOverrideMIMETypeKey`. AVFoundation needs an
+    /// explicit format hint when the URL (or the historical cache-blob name) has
+    /// no real filename extension. `nil` when the format is unknown.
+    public static func contentTypeMIME(for url: URL) -> String? {
+        switch audioExtension(for: url) {
+        case "mp3": return "audio/mpeg"
+        case "m4a", "m4b", "mp4": return "audio/mp4"
+        case "aac": return "audio/aac"
+        case "flac": return "audio/flac"
+        case "wav": return "audio/wav"
+        case "aif", "aiff": return "audio/aiff"
+        default: return nil
+        }
+    }
+
     /// UTI for AVFoundation from a URL's path extension. Falls back to sniffing a
     /// trailing `-ext` segment on an extension-less cache-blob name.
     public static func contentTypeUTI(for url: URL) -> String {
-        let ext = url.pathExtension.lowercased().isEmpty
-            ? (url.lastPathComponent.split(separator: "-").last.map(String.init) ?? "")
-            : url.pathExtension.lowercased()
+        let ext = audioExtension(for: url)
         switch ext {
         case "flac": return "org.xiph.flac"
         case "mp3": return "public.mp3"

@@ -25,6 +25,42 @@
 //
 import Foundation
 
+/// One storage root: a blob directory, a meta directory and a derived-file
+/// directory. The evictable root lives under Caches; the durable root under a
+/// location the OS never reclaims (Application Support), excluded from backup.
+struct Root: Sendable {
+    let blobDir: URL
+    let metaDir: URL
+    let derivedDir: URL
+
+    init(_ base: URL) {
+        blobDir = base.appendingPathComponent("blobs", isDirectory: true)
+        metaDir = base.appendingPathComponent("meta", isDirectory: true)
+        derivedDir = base.appendingPathComponent("derived", isDirectory: true)
+    }
+
+    func create(excludedFromBackup: Bool) {
+        let fm = FileManager.default
+        for dir in [blobDir, metaDir, derivedDir] {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        if excludedFromBackup {
+            for dir in [blobDir, metaDir, derivedDir] {
+                var url = dir
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try? url.setResourceValues(values)
+            }
+        }
+    }
+
+    func metaURL(_ key: String) -> URL { metaDir.appendingPathComponent("\(key).json") }
+    func blobURL(_ key: String) -> URL { blobDir.appendingPathComponent(key) }
+    func derivedURL(_ key: String, _ name: String) -> URL {
+        derivedDir.appendingPathComponent(key, isDirectory: true).appendingPathComponent(name)
+    }
+}
+
 public actor SparseCacheStore {
 
     // MARK: - Metadata
@@ -81,47 +117,18 @@ public actor SparseCacheStore {
 
     // MARK: - Layout
 
-    /// One storage root: a blob directory, a meta directory and a derived-file
-    /// directory. `evictable` lives under Caches; `durable` under a location the
-    /// OS never reclaims (Application Support), excluded from backup.
-    private struct Root {
-        let blobDir: URL
-        let metaDir: URL
-        let derivedDir: URL
-
-        init(_ base: URL) {
-            blobDir = base.appendingPathComponent("blobs", isDirectory: true)
-            metaDir = base.appendingPathComponent("meta", isDirectory: true)
-            derivedDir = base.appendingPathComponent("derived", isDirectory: true)
-        }
-
-        func create(excludedFromBackup: Bool) {
-            let fm = FileManager.default
-            for dir in [blobDir, metaDir, derivedDir] {
-                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            }
-            if excludedFromBackup {
-                for dir in [blobDir, metaDir, derivedDir] {
-                    var url = dir
-                    var values = URLResourceValues()
-                    values.isExcludedFromBackup = true
-                    try? url.setResourceValues(values)
-                }
-            }
-        }
-
-        func metaURL(_ key: String) -> URL { metaDir.appendingPathComponent("\(key).json") }
-        func blobURL(_ key: String) -> URL { blobDir.appendingPathComponent(key) }
-        func derivedURL(_ key: String, _ name: String) -> URL {
-            derivedDir.appendingPathComponent(key, isDirectory: true).appendingPathComponent(name)
-        }
-    }
-
     private let evictable: Root
     private let durable: Root
     private var metas: [String: Meta] = [:]
     private var limitBytes: Int64
     private var protectedKeys: Set<String> = []
+
+    /// Nonisolated view of the same on-disk layout, for callers that need a
+    /// synchronous "is this blob complete on disk" check without touching the
+    /// actor (Tonearm's watchOS download adapter, the DJ crate importer). It
+    /// reads the persisted metadata files, so it can lag the actor's in-memory
+    /// state by one `persistMeta` — fine for the read-only paths that use it.
+    public nonisolated let layout: SparseCacheLayout
 
     public static let defaultLimit: Int64 = 500 * 1024 * 1024
 
@@ -132,6 +139,7 @@ public actor SparseCacheStore {
     public init(evictableRoot: URL, durableRoot: URL? = nil, limitBytes: Int64 = defaultLimit) {
         evictable = Root(evictableRoot)
         durable = Root(durableRoot ?? evictableRoot)
+        layout = SparseCacheLayout(evictableRoot: evictableRoot, durableRoot: durableRoot)
         self.limitBytes = limitBytes
         evictable.create(excludedFromBackup: false)
         durable.create(excludedFromBackup: durableRoot != nil)
@@ -348,6 +356,15 @@ public actor SparseCacheStore {
         let to = makeDurable ? durable : evictable
         let fm = FileManager.default
 
+        // Single-tier mode (durableRoot == evictableRoot): the roots share every
+        // path, so there is nothing to move — just flip the flag.
+        guard from.blobURL(key) != to.blobURL(key) else {
+            m.durable = makeDurable
+            metas[key] = m
+            persistMeta(key)
+            return
+        }
+
         moveFile(from: from.blobURL(key), to: to.blobURL(key))
         if let names = m.derivedBytes?.keys {
             try? fm.createDirectory(at: to.derivedDir.appendingPathComponent(key, isDirectory: true),
@@ -381,6 +398,11 @@ public actor SparseCacheStore {
             }
         }
         metas.removeAll()
+    }
+
+    /// GC partial (incomplete) segments not touched in the last 7 days.
+    public func garbageCollectStalePartials() {
+        garbageCollectStalePartials(olderThan: Date().addingTimeInterval(-7 * 24 * 3600))
     }
 
     /// GC partial (incomplete) segments last touched before `cutoff`. Durable
@@ -482,5 +504,64 @@ public actor SparseCacheStore {
             }
         }
         return result
+    }
+}
+
+/// A synchronous, actor-free view of a `SparseCacheStore`'s on-disk layout.
+///
+/// Some call sites need to answer "is the complete blob for this key already on
+/// disk?" without `await` — Tonearm's watchOS `PhoneWatchDownloadAdapter` and the
+/// DJ `PlaylistCrateImporter` both decide file-vs-stream synchronously while
+/// building a play request. This type reads the persisted metadata + blob files
+/// directly; it can lag the owning actor by one `persistMeta`, which is
+/// acceptable for those read-only decisions.
+public struct SparseCacheLayout: Sendable {
+    private let evictable: Root
+    private let durable: Root
+
+    public init(evictableRoot: URL, durableRoot: URL? = nil) {
+        evictable = Root(evictableRoot)
+        durable = Root(durableRoot ?? evictableRoot)
+    }
+
+    /// The evictable-tier blob directory. For the uncommon case of an app that
+    /// writes a blob to disk itself and then registers it with the store
+    /// (Voxglass's artwork tier): write into here, then call `registerComplete`.
+    public var evictableBlobsDirectory: URL { evictable.blobDir }
+
+    /// Blob URL for `key`, preferring the durable root when a blob is present
+    /// there, else the evictable root (even if nothing exists yet).
+    public func blobURL(for key: String) -> URL {
+        let durableBlob = durable.blobURL(key)
+        return FileManager.default.fileExists(atPath: durableBlob.path)
+            ? durableBlob : evictable.blobURL(key)
+    }
+
+    /// Metadata file URL for `key`, with the same durable-then-evictable
+    /// preference as `blobURL(for:)`.
+    public func metaURL(for key: String) -> URL {
+        let durableMeta = durable.metaURL(key)
+        return FileManager.default.fileExists(atPath: durableMeta.path)
+            ? durableMeta : evictable.metaURL(key)
+    }
+
+    /// Named derived-artifact URL for `key` (e.g. Tonearm's Opus→CAF sibling).
+    public func derivedURL(for key: String, name: String) -> URL {
+        let durableDerived = durable.derivedURL(key, name)
+        return FileManager.default.fileExists(atPath: durableDerived.path)
+            ? durableDerived : evictable.derivedURL(key, name)
+    }
+
+    /// True when a persisted metadata file marks `key` complete and a non-empty
+    /// blob backing it is on disk (covering the recorded total when known).
+    public func completeBlobExists(for key: String) -> Bool {
+        guard let data = try? Data(contentsOf: metaURL(for: key)),
+              let meta = try? JSONDecoder().decode(SparseCacheStore.Meta.self, from: data),
+              meta.complete else { return false }
+        guard let size = (try? FileManager.default
+            .attributesOfItem(atPath: blobURL(for: key).path)[.size] as? NSNumber)?.int64Value,
+              size > 0 else { return false }
+        if let total = meta.totalBytes, total > 0 { return size >= total }
+        return true
     }
 }

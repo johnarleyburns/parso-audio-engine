@@ -7,12 +7,28 @@ import Testing
 final class StubRangeProtocol: URLProtocol {
     nonisolated(unsafe) static var blob = Data()
     nonisolated(unsafe) static var supportRanges = true
+    /// Set true to simulate the network being unreachable — every request fails.
+    nonisolated(unsafe) static var offline = false
+    /// Headers seen on the most recent request, and a running request count.
+    nonisolated(unsafe) static var lastRequestHeaders: [String: String] = [:]
+    nonisolated(unsafe) static var requestCount = 0
+
+    static func reset() {
+        blob = Data(); supportRanges = true; offline = false
+        lastRequestHeaders = [:]; requestCount = 0
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
 
     override func startLoading() {
+        Self.requestCount += 1
+        Self.lastRequestHeaders = request.allHTTPHeaderFields ?? [:]
+        if Self.offline {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
         let total = Self.blob.count
         let rangeHeader = request.value(forHTTPHeaderField: "Range")
         var status = 200
@@ -41,7 +57,7 @@ final class StubRangeProtocol: URLProtocol {
     }
 }
 
-@Suite("CachingResourceLoader.warm", .serialized)
+@Suite("CachingResourceLoader streaming cache", .serialized)
 struct CachingResourceLoaderWarmTests {
 
     private func makeStore() -> SparseCacheStore {
@@ -49,6 +65,15 @@ struct CachingResourceLoaderWarmTests {
             .appendingPathComponent("CRLWarm-\(UUID().uuidString)", isDirectory: true)
         return SparseCacheStore(evictableRoot: base.appendingPathComponent("e"),
                                 durableRoot: base.appendingPathComponent("d"))
+    }
+
+    private func loader(_ store: SparseCacheStore,
+                        headers: [String: String] = [:]) -> CachingResourceLoader {
+        CachingResourceLoader(
+            originalURL: URL(string: "https://audio.test/chapter.mp3")!,
+            store: store,
+            config: .init(scheme: "pae-cache", headers: headers),
+            session: stubSession())
     }
 
     private func stubSession() -> URLSession {
@@ -59,8 +84,8 @@ struct CachingResourceLoaderWarmTests {
 
     @Test("warm fills the cache from a ranged server")
     func warmRanged() async throws {
+        StubRangeProtocol.reset()
         StubRangeProtocol.blob = Data((0..<2048).map { UInt8($0 & 0xff) })
-        StubRangeProtocol.supportRanges = true
         let store = makeStore()
         let loader = CachingResourceLoader(
             originalURL: URL(string: "https://audio.test/track.mp3")!,
@@ -80,8 +105,8 @@ struct CachingResourceLoaderWarmTests {
 
     @Test("warm does not re-download bytes already cached")
     func warmRespectsExistingCache() async throws {
+        StubRangeProtocol.reset()
         StubRangeProtocol.blob = Data((0..<4096).map { UInt8($0 & 0xff) })
-        StubRangeProtocol.supportRanges = true
         let store = makeStore()
         let loader = CachingResourceLoader(
             originalURL: URL(string: "https://audio.test/track.mp3")!,
@@ -97,7 +122,72 @@ struct CachingResourceLoaderWarmTests {
         #expect(await store.rangeMap(for: loader.cacheKey).contiguousBytes(from: 0) == 2000)
     }
 
-    private func pollUntil(timeout: TimeInterval = 3,
+    // MARK: - Serve / replay-offline (the old manual smoke steps)
+
+    @Test("a streamed track replays from disk with the network gone")
+    func replayOffline() async throws {
+        StubRangeProtocol.reset()
+        StubRangeProtocol.blob = Data((0..<8192).map { UInt8($0 & 0xff) })
+        let store = makeStore()
+
+        let first = loader(store)
+        first.warm(upTo: 8192)
+        try await pollUntil {
+            await store.rangeMap(for: first.cacheKey).contiguousBytes(from: 0) >= 8192
+        }
+        first.shutdown()
+
+        StubRangeProtocol.offline = true
+        let countAfterFill = StubRangeProtocol.requestCount
+
+        let key = first.cacheKey
+        #expect(await store.cachedContiguousBytes(for: key, from: 0) == 8192)
+        let onDisk = try Data(contentsOf: await store.fileURL(for: key))
+        #expect(onDisk == StubRangeProtocol.blob)
+        #expect(StubRangeProtocol.requestCount == countAfterFill)
+    }
+
+    @Test("provider auth headers are sent on every request")
+    func headersOnEveryRequest() async throws {
+        StubRangeProtocol.reset()
+        StubRangeProtocol.blob = Data(repeating: 0xAB, count: 4096)
+        let store = makeStore()
+
+        let l = loader(store, headers: ["Authorization": "Bearer smoke-token"])
+        l.warm(upTo: 4096)
+        try await pollUntil {
+            await store.rangeMap(for: l.cacheKey).contiguousBytes(from: 0) >= 4096
+        }
+        l.shutdown()
+
+        #expect(StubRangeProtocol.requestCount > 0)
+        #expect(StubRangeProtocol.lastRequestHeaders["Authorization"] == "Bearer smoke-token")
+    }
+
+    @Test("a server that refuses ranges still fills the cache from a full body")
+    func fullBodyFallback() async throws {
+        StubRangeProtocol.reset()
+        StubRangeProtocol.blob = Data((0..<3000).map { UInt8($0 & 0xff) })
+        StubRangeProtocol.supportRanges = false
+        let store = makeStore()
+
+        let l = loader(store)
+        l.warm(upTo: 3000)
+        try await pollUntil {
+            await store.rangeMap(for: l.cacheKey).contiguousBytes(from: 0) >= 3000
+        }
+        l.shutdown()
+
+        let onDisk = try Data(contentsOf: await store.fileURL(for: l.cacheKey))
+        #expect(onDisk == StubRangeProtocol.blob)
+    }
+
+    /// `warm` runs on a detached background-priority task; under a full
+    /// `swift test -c release` run the fixture-analysis suites (scalar FFT over
+    /// every audio fixture) saturate the CPU and starve it, so the deadline is
+    /// generous. The poll exits the instant the condition holds, so a healthy run
+    /// still finishes in tens of milliseconds.
+    private func pollUntil(timeout: TimeInterval = 30,
                            _ condition: @Sendable () async -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

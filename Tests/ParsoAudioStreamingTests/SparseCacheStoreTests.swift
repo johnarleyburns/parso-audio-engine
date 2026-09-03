@@ -84,6 +84,25 @@ struct SparseCacheStoreTests {
         #expect(FileManager.default.fileExists(atPath: evictablePath))
     }
 
+    @Test("setDurable in single-tier mode flips the flag without losing the blob")
+    func setDurableSingleTier() async {
+        let roots = makeRoots()
+        // durableRoot omitted → single-tier: both tiers share one directory.
+        let store = SparseCacheStore(evictableRoot: roots.evictable)
+        await store.adoptCompleteFile(byteCount: 0, for: "k")
+        let blob = await store.fileURL(for: "k")
+        writeBlob(blob, bytes: 10)
+
+        await store.setDurable(true, for: "k")
+        #expect(await store.isDurable("k"))
+        #expect(FileManager.default.fileExists(atPath: blob.path))   // not deleted
+        #expect(await store.completeFileURL(for: "k") != nil)
+
+        await store.setDurable(false, for: "k")
+        #expect(await store.isDurable("k") == false)
+        #expect(FileManager.default.fileExists(atPath: blob.path))
+    }
+
     @Test("derived-artifact bytes count toward the budget")
     func derivedBytesCounted() async {
         let roots = makeRoots()
