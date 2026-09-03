@@ -31,9 +31,13 @@ jobs:
           echo "::error::The complete $expected_fixture_count-fixture corpus was not downloaded"
           exit 1
       - name: Build
-        run: swift build -v
+        run: swift build -c release -v
       - name: Unit tests (synthetic and real fixtures)
-        run: swift test -v
+        # Release build: the debug scalar-FFT path in TempoEstimator makes the
+        # real-fixture analysis suite take ~1h45m on CI runners (see
+        # current_status.md); in release the full suite is minutes. Debug
+        # compilation is still covered by the iOS/watchOS xcodebuild jobs.
+        run: swift test -c release -v
       - name: SPDX copyleft guard
         run: |
           if grep -R -n -E "GNU (Lesser )?General Public License|GPL-2|GPL-3|LGPL|AGPL" \
