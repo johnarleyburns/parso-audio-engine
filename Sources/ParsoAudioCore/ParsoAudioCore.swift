@@ -159,7 +159,7 @@ private extension AudioContainer {
         case "caf": return .caf
         case "mp3": return .mp3
         case "aac": return .aac
-        case "m4a", "alac": return .m4a
+        case "m4a", "m4b", "alac": return .m4a
         default: return .wav
         }
     }
@@ -170,6 +170,40 @@ public enum AudioFileError: Error, Sendable, Equatable {
     case invalidFile(String)
     case formatMismatch
     case writeFailed(String)
+}
+
+/// A contiguous span of a source file, in source-file sample frames *before*
+/// any resampling.
+public struct AudioFrameRange: Sendable, Equatable {
+    /// First source-file sample frame of the span.
+    public var startFrame: Int64
+    /// Number of source-file sample frames requested.
+    public var frameCount: Int
+
+    public init(startFrame: Int64, frameCount: Int) {
+        self.startFrame = startFrame
+        self.frameCount = frameCount
+    }
+}
+
+/// The result of a bounded range decode: the decoded PCM plus how many source
+/// frames the decoder actually touched, so callers can assert the read was
+/// bounded by the request rather than by the whole file.
+public struct RangeDecodeResult: Sendable {
+    public var buffer: PCMBuffer
+    public var decodedSourceFrames: Int
+
+    public init(buffer: PCMBuffer, decodedSourceFrames: Int) {
+        self.buffer = buffer
+        self.decodedSourceFrames = decodedSourceFrames
+    }
+}
+
+public enum RangeDecodeError: Error, Sendable, Equatable {
+    /// The source stream could not be positioned; a whole-file decode was *not*
+    /// attempted.
+    case notSeekable
+    case decodeFailed(String)
 }
 
 /// Common text metadata exposed by portable M4A files.
@@ -250,16 +284,124 @@ public struct AudioFileReader: Sendable {
         return try MP4ALACCodec.readMetadata(data)
     }
 
+    // MARK: - Bounded range decode
+
+    /// Decode a bounded, contiguous span of a file without reading the rest of
+    /// it — the path interactive seek / preview / trim workflows need for
+    /// multi-hour sources. `.flac` positions with libFLAC's sample-accurate
+    /// seek; the AVFoundation containers use `AVAudioFile.framePosition`.
+    ///
+    /// If the source cannot be positioned, `RangeDecodeError.notSeekable` is
+    /// thrown — never a silent whole-file fallback.
+    public static func decodeRange(
+        url: URL,
+        container: AudioContainer = .auto,
+        range: AudioFrameRange
+    ) throws -> RangeDecodeResult {
+        guard range.startFrame >= 0, range.frameCount >= 0 else {
+            throw RangeDecodeError.decodeFailed("negative range")
+        }
+        switch container.resolved(for: url) {
+        case .flac:
+            return try decodeFLACRange(url: url, range: range)
+        case .wav, .aiff, .caf, .mp3, .aac, .m4a:
+            return try decodeAppleRange(url: url, range: range)
+        case .oggVorbis, .opus:
+            throw RangeDecodeError.notSeekable
+        case .auto:
+            throw RangeDecodeError.decodeFailed("unresolved container")
+        }
+    }
+
+    private static func decodeFLACRange(url: URL, range: AudioFrameRange) throws -> RangeDecodeResult {
+        var samples: UnsafeMutablePointer<Int32>?
+        var frames: UInt64 = 0
+        var channels: UInt32 = 0
+        var sampleRate: UInt32 = 0
+        var bitsPerSample: UInt32 = 0
+        var seekUnsupported: Int32 = 0
+        let status = url.path.withCString { path in
+            parso_flac_decode_range(
+                path,
+                UInt64(range.startFrame),
+                UInt64(range.frameCount),
+                &samples, &frames, &channels, &sampleRate, &bitsPerSample, &seekUnsupported
+            )
+        }
+        if seekUnsupported != 0 {
+            if let samples { parso_flac_free(samples) }
+            throw RangeDecodeError.notSeekable
+        }
+        guard status == 0, let samples, channels > 0, bitsPerSample > 0,
+              frames <= UInt64(Int.max), frames <= UInt64(Int.max) / UInt64(channels) else {
+            if let samples { parso_flac_free(samples) }
+            throw RangeDecodeError.decodeFailed("libFLAC range decode failed")
+        }
+        defer { parso_flac_free(samples) }
+        let frameCount = Int(frames)
+        let channelCount = Int(channels)
+        let scale = Float(1.0 / Double(Int64(1) << (bitsPerSample - 1)))
+        let output = PCMBuffer(
+            format: AudioFormat(sampleRate: Double(sampleRate), channelCount: channelCount),
+            capacity: frameCount
+        )
+        for frame in 0..<frameCount {
+            for channel in 0..<channelCount {
+                output.channel(channel)[frame] = Float(samples[frame * channelCount + channel]) * scale
+            }
+        }
+        return RangeDecodeResult(buffer: output, decodedSourceFrames: frameCount)
+    }
+
+    private static func decodeAppleRange(url: URL, range: AudioFrameRange) throws -> RangeDecodeResult {
+        let file: AVAudioFile
+        do { file = try AVAudioFile(forReading: url) }
+        catch { throw RangeDecodeError.decodeFailed(error.localizedDescription) }
+        let sourceFormat = file.processingFormat
+        let total = file.length
+        let start = max(0, min(range.startFrame, total))
+        let count = max(0, min(Int64(range.frameCount), total - start))
+        file.framePosition = start
+        guard count > 0 else {
+            return RangeDecodeResult(
+                buffer: PCMBuffer(
+                    format: AudioFormat(sampleRate: sourceFormat.sampleRate, channelCount: Int(sourceFormat.channelCount)),
+                    capacity: 0
+                ),
+                decodedSourceFrames: 0
+            )
+        }
+        guard let audioBuffer = AVAudioPCMBuffer(
+            pcmFormat: sourceFormat,
+            frameCapacity: AVAudioFrameCount(count)
+        ) else { throw RangeDecodeError.decodeFailed("could not allocate decode buffer") }
+        do { try file.read(into: audioBuffer) }
+        catch { throw RangeDecodeError.decodeFailed(error.localizedDescription) }
+        guard let channels = audioBuffer.floatChannelData else {
+            throw RangeDecodeError.decodeFailed("decoded audio is not float PCM")
+        }
+        let decoded = Int(audioBuffer.frameLength)
+        let output = PCMBuffer(
+            format: AudioFormat(sampleRate: sourceFormat.sampleRate, channelCount: Int(sourceFormat.channelCount)),
+            capacity: decoded
+        )
+        for channel in 0..<output.channelCount {
+            for frame in 0..<decoded { output.channel(channel)[frame] = channels[channel][frame] }
+        }
+        return RangeDecodeResult(buffer: output, decodedSourceFrames: decoded)
+    }
+
     private static func decodeFLAC(url: URL) throws -> PCMBuffer {
         var samples: UnsafeMutablePointer<Int32>?
         var exactFloatBits: UnsafeMutablePointer<UInt32>?
         var frames: UInt64 = 0
         var channels: UInt32 = 0
         var sampleRate: UInt32 = 0
+        var bitsPerSample: UInt32 = 0
         let result = url.path.withCString { path in
-            parso_flac_decode_file(path, &samples, &exactFloatBits, &frames, &channels, &sampleRate)
+            parso_flac_decode_file(path, &samples, &exactFloatBits, &frames, &channels, &sampleRate, &bitsPerSample)
         }
-        guard result == 0, let samples, channels > 0,
+        guard result == 0, let samples, channels > 0, bitsPerSample > 0, bitsPerSample <= 32,
               frames <= UInt64(Int.max), frames <= UInt64(Int.max) / UInt64(channels) else {
             if let samples { parso_flac_free(samples) }
             if let exactFloatBits { parso_flac_free(exactFloatBits) }
@@ -269,6 +411,10 @@ public struct AudioFileReader: Sendable {
         defer { if let exactFloatBits { parso_flac_free(exactFloatBits) } }
         let frameCount = Int(frames)
         let channelCount = Int(channels)
+        // libFLAC delivers samples right-aligned in `bits_per_sample` bits, so the
+        // integer path must scale by 2^(bits-1). The PFLT float block, when
+        // present, carries the exact original float and overrides the scale.
+        let scale = Float(1.0 / Double(Int64(1) << (bitsPerSample - 1)))
         let output = PCMBuffer(
             format: AudioFormat(sampleRate: Double(sampleRate), channelCount: channelCount),
             capacity: frameCount
@@ -278,7 +424,7 @@ public struct AudioFileReader: Sendable {
                 let index = frame * channelCount + channel
                 output.channel(channel)[frame] = exactFloatBits.map {
                     Float(bitPattern: $0[index])
-                } ?? (Float(samples[index]) * (1.0 / 2_147_483_648))
+                } ?? (Float(samples[index]) * scale)
             }
         }
         return output
@@ -375,12 +521,41 @@ public struct AudioFileReader: Sendable {
 
 /// Export codecs. AAC and ALAC go through AVFoundation; MP3 goes through the vendored
 /// Glint encoder, which is the only MP3 encoder available — AudioToolbox cannot encode MP3.
+/// One Vorbis comment (FLAC metadata tag), e.g. `key: "TITLE"`, `value: "…"`.
+public struct FLACVorbisComment: Sendable, Equatable {
+    public var key: String
+    public var value: String
+
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+}
+
 public enum ExportCodec: Sendable, Equatable {
     case wavPCM(bitDepth: Int)   // via AVAudioFile / ExtAudioFile
-    case flac(compression: Int)  // via libFLAC (Cflac)
+    case flac(compression: Int)  // via libFLAC (Cflac) — PFLT float-preserving, 32-bit
     case aac(bitrate: Int)       // via AudioToolbox
     case alac                    // via AudioToolbox (lossless)
     case mp3(bitrate: Int)       // via Glint (AudioToolbox has no MP3 encoder)
+    /// Standard delivery FLAC: caller bit depth (16/24), Vorbis-comment tags,
+    /// no PFLT block — the file other tools expect. `bitDepth` clamps to 16/24.
+    case flacDelivery(bitDepth: Int, compression: Int, tags: [FLACVorbisComment])
+}
+
+/// Calls `body` with a C array of NUL-terminated pointers into `strings`,
+/// each valid only for the duration of the call.
+private func withArrayOfCStrings<R>(
+    _ strings: [String],
+    _ body: (UnsafeBufferPointer<UnsafePointer<CChar>?>) -> R
+) -> R {
+    func recurse(_ index: Int, _ acc: [UnsafePointer<CChar>?]) -> R {
+        if index == strings.count {
+            return acc.withUnsafeBufferPointer { body($0) }
+        }
+        return strings[index].withCString { recurse(index + 1, acc + [$0]) }
+    }
+    return recurse(0, [])
 }
 
 public struct AudioFileWriter {
@@ -410,7 +585,9 @@ public struct AudioFileWriter {
         case .alac:
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
         case .mp3(let bitrate):
-            try writeGlint(buffer, format: Int32(GLINT_ENC_MP3.rawValue), bitrate: bitrate)
+            try writeGlint(buffer, bitrate: bitrate)
+        case .flacDelivery(let bitDepth, let compression, let tags):
+            try writeFLACDelivery(buffer, bitDepth: bitDepth, compression: compression, tags: tags)
         }
     }
 
@@ -447,10 +624,79 @@ public struct AudioFileWriter {
         guard result == 0 else { throw AudioFileError.writeFailed("libFLAC encode failed") }
     }
 
-    private func writeGlint(_ buffer: PCMBuffer, format: Int32, bitrate: Int) throws {
-        guard bitrate > 0, buffer.frameCount <= Int(Int32.max),
-              buffer.channelCount <= Int(Int32.max),
-              buffer.format.sampleRate <= Double(Int32.max) else {
+    private func writeFLACDelivery(
+        _ buffer: PCMBuffer, bitDepth requestedDepth: Int, compression: Int, tags: [FLACVorbisComment]
+    ) throws {
+        let bitDepth = requestedDepth <= 16 ? 16 : 24
+        let peak = Double(Int64(1) << (bitDepth - 1))
+        // Truncate toward zero (not round) so the codes match a plain
+        // `Int(sample * 2^(bits-1))` conversion bit for bit.
+        let maxCode = peak - 1
+        let minCode = -peak
+        var interleaved = [Int32](repeating: 0, count: buffer.frameCount * buffer.channelCount)
+        for frame in 0..<buffer.frameCount {
+            for channel in 0..<buffer.channelCount {
+                let scaled = Double(buffer.channel(channel)[frame]) * peak
+                interleaved[frame * buffer.channelCount + channel] =
+                    Int32(max(minCode, min(maxCode, scaled)))
+            }
+        }
+
+        let keys = tags.map { $0.key }
+        let values = tags.map { $0.value }
+        let result = url.path.withCString { path in
+            interleaved.withUnsafeBufferPointer { samples in
+                withArrayOfCStrings(keys) { keyPtrs in
+                    withArrayOfCStrings(values) { valuePtrs in
+                        parso_flac_encode_file_tagged(
+                            path,
+                            samples.baseAddress,
+                            UInt64(buffer.frameCount),
+                            UInt32(buffer.channelCount),
+                            UInt32(bitDepth),
+                            UInt32(buffer.format.sampleRate.rounded()),
+                            UInt32(max(0, compression)),
+                            keyPtrs.baseAddress,
+                            valuePtrs.baseAddress,
+                            Int32(tags.count)
+                        )
+                    }
+                }
+            }
+        }
+        guard result == 0 else { throw AudioFileError.writeFailed("libFLAC delivery encode failed (\(result))") }
+    }
+
+    private func writeGlint(_ buffer: PCMBuffer, bitrate: Int) throws {
+        let data = try AudioFileWriter.encodeMP3(buffer, bitrateKbps: bitrate)
+        do { try data.write(to: url) }
+        catch { throw AudioFileError.writeFailed(error.localizedDescription) }
+    }
+
+    /// Codec-internal effort setting for `encodeMP3`. `.normal` matches the
+    /// historical `AudioFileWriter` behaviour; `.best` is the closest analogue
+    /// to LAME `-q2` for delivery encodes.
+    public enum GlintQuality: Sendable {
+        case speed, normal, best
+        fileprivate var raw: Int32 {
+            switch self {
+            case .speed: return Int32(GLINT_QUALITY_SPEED.rawValue)
+            case .normal: return Int32(GLINT_QUALITY_NORMAL.rawValue)
+            case .best: return Int32(GLINT_QUALITY_BEST.rawValue)
+            }
+        }
+    }
+
+    /// Encode `buffer` to a complete CBR MP3 stream in memory (Glint — the only
+    /// MP3 encoder available, AudioToolbox cannot encode MP3). `bitrateKbps` is
+    /// the constant bitrate; `vbr_quality` is fixed at -1 (CBR). The caller may
+    /// prepend an ID3v2 tag before writing the bytes to disk.
+    public static func encodeMP3(
+        _ buffer: PCMBuffer, bitrateKbps: Int, quality: GlintQuality = .normal
+    ) throws -> Data {
+        guard bitrateKbps > 0, buffer.frameCount > 0, buffer.frameCount <= Int(Int32.max),
+              buffer.channelCount >= 1, buffer.channelCount <= 2,
+              buffer.format.sampleRate > 0, buffer.format.sampleRate <= Double(Int32.max) else {
             throw AudioFileError.formatMismatch
         }
         var interleaved = [Float](repeating: 0, count: buffer.frameCount * buffer.channelCount)
@@ -466,10 +712,10 @@ public struct AudioFileWriter {
                 Int32(buffer.frameCount),
                 Int32(buffer.channelCount),
                 Int32(buffer.format.sampleRate.rounded()),
-                format,
-                Int32(bitrate),
+                Int32(GLINT_ENC_MP3.rawValue),
+                Int32(bitrateKbps),
                 -1,
-                Int32(GLINT_QUALITY_NORMAL.rawValue),
+                quality.raw,
                 &outputSize
             )
         }
@@ -478,11 +724,7 @@ public struct AudioFileWriter {
             throw AudioFileError.writeFailed("Glint encode failed")
         }
         defer { glint_free(encoded) }
-        do {
-            try Data(bytes: encoded, count: Int(outputSize)).write(to: url)
-        } catch {
-            throw AudioFileError.writeFailed(error.localizedDescription)
-        }
+        return Data(bytes: encoded, count: Int(outputSize))
     }
 
     private func writeApple(_ buffer: PCMBuffer, formatID: AudioFormatID, bitrate: Int) throws {

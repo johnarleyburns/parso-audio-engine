@@ -143,10 +143,15 @@ Each phase ends green on `swift test` in all three repos before the next starts.
   keeps its own preset *persistence*. Tonearm's Phase 2 policy-dedup debt cleared.
   `EQTapInstaller` ships but neither app routes its tap through it yet — deliberate partial,
   carried into Phase 4, see `current_status.md`.
-- **Phase 4 — decoders.** Voxglass switches `FLACDecoder`/`AVFoundationDecoder`/
-  `AudioResampler` to `ParsoAudioCore`; delete the FLAC xcframework. Then MP3 encode via
-  `CGlint`; delete the Lame xcframework. Keep `SeekableAudioDecoding` as the app-side
-  adapter protocol — PAE gains a bounded seekable range-decode API to satisfy it.
+- **Phase 4 — decoders.** ✅ done (2026-09-03). Voxglass's `FLACDecoder`/`FLACEncoder`/
+  `AVFoundationDecoder`/`AudioResampler`/`LameMP3Encoder` are thin shims over
+  `ParsoAudioCore`; both `FLAC.xcframework` and `Lame.xcframework` deleted. PAE grew
+  `AudioFileReader.decodeRange` (bounded seekable, libFLAC `seek_absolute`, throws
+  `notSeekable` rather than falling back), `ExportCodec.flacDelivery` (16/24-bit + Vorbis
+  comments, no PFLT block) and `AudioFileWriter.encodeMP3` (in-memory CBR Glint).
+  `SeekableAudioDecoding` stays the app-side adapter protocol. Both Phase-3 carry-ins
+  landed: `EQTapInstaller` adopted in Tonearm + Voxglass; app CI checks PAE out as a
+  sibling. MP3-vs-LAME perceptual A-B carried to the author (`current_status.md`).
 - **Phase 5 — analysis.** Port Tonearm's DSP into `ParsoAudioAnalysis` behind the existing
   public types; Tonearm's `AnalysisCoordinator` calls PAE. Voxglass gains cheap
   BPM/energy for free if it ever wants it.

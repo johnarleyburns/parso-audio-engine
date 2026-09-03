@@ -8,16 +8,16 @@ import PackageDescription
 // retired in Phase 1b; see docs/UNIFICATION_PLAN.md §4b.
 //
 // Swift 6 language mode is enabled package-wide (strict concurrency).
-// The C/C++ targets currently ship as *placeholder* modules that compile but
-// return errors; vendor the real permissive libraries per docs/SPEC.md §4:
-//   Cflac    -> libFLAC (BSD-3)            https://xiph.org/flac/
+// The C/C++ targets vendor real permissive-licensed libraries (sources under
+// each Sources/C*/; provenance in the matching VENDOR.md), per docs/SPEC.md §4:
+//   Cflac    -> libFLAC 1.4.3 (BSD-3)      https://xiph.org/flac/
 //   Cebur128 -> libebur128 (MIT)          https://github.com/jiixyj/libebur128
-//   Csrc     -> libsamplerate >= 0.2.2     https://github.com/libsndfile/libsamplerate  (BSD-2)
+//   Csrc     -> libsamplerate 0.2.2 (BSD-2) https://github.com/libsndfile/libsamplerate
 //   Cvorbis  -> stb_vorbis (Public Domain) https://github.com/nothings/stb   (Ogg Vorbis decode)
 //   Copus    -> libogg + libopus + libopusfile (BSD-3)  https://github.com/xiph  (Opus decode)
 //   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
 //                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
-//   CGlint   -> Glint MP3 encode (AudioToolbox has no MP3 encoder) and AAC-LC support
+//   CGlint   -> Glint clean-room MP3 encode/decode (AudioToolbox has no MP3 encoder) + AAC-LC
 
 let package = Package(
     name: "parso-audio-engine",
