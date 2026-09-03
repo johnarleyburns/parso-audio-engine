@@ -116,3 +116,37 @@ struct GraphicEQSettingsTests {
         }
     }
 }
+
+@Suite("EQPreset")
+struct EQPresetTests {
+    @Test("built-ins: names, band counts, stable ids, flat is zero")
+    func builtIns() {
+        #expect(EQPreset.builtIns.map(\.name) == ["Flat", "Concert Hall", "Spoken", "78 rpm"])
+        for p in EQPreset.builtIns {
+            #expect(p.gains.count == GraphicEQ.bandCount)
+            #expect(p.isBuiltIn)
+        }
+        #expect(EQPreset.flat.gains.allSatisfy { $0 == 0 })
+        // ids are stable across accesses
+        #expect(EQPreset.concertHall.id == EQPreset.concertHall.id)
+    }
+
+    @Test("Codable round-trip")
+    func codable() throws {
+        let p = EQPreset(name: "My Room", gains: [1, 2, 3, 0, 0, 0, -1, -2, -3, 4])
+        let data = try JSONEncoder().encode(p)
+        #expect(try JSONDecoder().decode(EQPreset.self, from: data) == p)
+    }
+
+    @Test("user preset trims name; blank -> nil")
+    func userPreset() {
+        #expect(EQPreset.user(named: "  Warm  ", gains: EQPreset.flat.gains)?.name == "Warm")
+        #expect(EQPreset.user(named: "   ", gains: EQPreset.flat.gains) == nil)
+        #expect(EQPreset.user(named: "x", gains: EQPreset.flat.gains)?.isBuiltIn == false)
+    }
+
+    @Test("floatGains bridges to Float")
+    func floatGains() {
+        #expect(EQPreset.spoken.floatGains == EQPreset.spoken.gains.map(Float.init))
+    }
+}

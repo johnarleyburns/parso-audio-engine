@@ -193,13 +193,61 @@ public struct GraphicEQSettings: Equatable, Codable, Sendable {
     public var floatBands: [Float] { bands.map(Float.init) }
 }
 
-/// Built-in curve shapes, as raw gain arrays. The apps wrap these in their own
-/// preset types (with their own identity + persistence). Tonearm and Voxglass
-/// historically shipped slightly different numbers for the same names; these are
-/// Tonearm's, which are the gentler set.
+/// Built-in curve shapes, as raw gain arrays. Tonearm and Voxglass historically
+/// shipped slightly different numbers for the same names; these are Tonearm's,
+/// the gentler set, adopted as canonical.
 public enum GraphicEQPresetCurves {
     public static let flat: [Double] = Array(repeating: 0, count: GraphicEQ.bandCount)
     public static let concertHall: [Double] = [3, 2.5, 1.5, 0, -1, -1, 0, 1.5, 2.5, 3]
     public static let spoken: [Double] = [-6, -4, -1, 2, 3, 3, 2, 1, 0, -2]
     public static let seventyEight: [Double] = [-9, -7, -3, 2, 4, 4, 2, -2, -6, -10]
+}
+
+/// A named EQ curve — a built-in or a user-saved preset. Shared across both apps
+/// (author decision 2026-09-03, reversing Phase 3's "presets stay app-side"):
+/// identity is a `UUID` (Voxglass's model — rename-safe, collision-free), gains
+/// are `[Double]` to match `GraphicEQ` / `GraphicEQSettings`, with `floatGains`
+/// for the apps' `Float` stores and UI. Each app keeps its **own** persistence
+/// (`UserDefaults` keys, sync); only the value type is shared.
+public struct EQPreset: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var gains: [Double]
+    public var isBuiltIn: Bool
+
+    public init(id: UUID = UUID(), name: String, gains: [Double], isBuiltIn: Bool = false) {
+        self.id = id
+        self.name = name
+        self.gains = gains
+        self.isBuiltIn = isBuiltIn
+    }
+
+    public var floatGains: [Float] { gains.map(Float.init) }
+
+    // Built-ins carry stable UUIDs so a persisted `activePresetID` survives
+    // relaunch and (if an app chooses) syncs.
+    public static let flat = EQPreset(
+        id: UUID(uuidString: "E0000000-0000-0000-0000-000000000001")!,
+        name: "Flat", gains: GraphicEQPresetCurves.flat, isBuiltIn: true)
+
+    public static let concertHall = EQPreset(
+        id: UUID(uuidString: "E0000000-0000-0000-0000-000000000002")!,
+        name: "Concert Hall", gains: GraphicEQPresetCurves.concertHall, isBuiltIn: true)
+
+    public static let spoken = EQPreset(
+        id: UUID(uuidString: "E0000000-0000-0000-0000-000000000003")!,
+        name: "Spoken", gains: GraphicEQPresetCurves.spoken, isBuiltIn: true)
+
+    public static let seventyEight = EQPreset(
+        id: UUID(uuidString: "E0000000-0000-0000-0000-000000000004")!,
+        name: "78 rpm", gains: GraphicEQPresetCurves.seventyEight, isBuiltIn: true)
+
+    public static let builtIns: [EQPreset] = [.flat, .concertHall, .spoken, .seventyEight]
+
+    /// A trimmed user preset from the current curve, or `nil` if the name is blank.
+    public static func user(named name: String, gains: [Double]) -> EQPreset? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return EQPreset(name: trimmed, gains: gains, isBuiltIn: false)
+    }
 }
