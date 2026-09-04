@@ -194,9 +194,11 @@ let package = Package(
         // current_status.md "Phase 7".
         .target(
             name: "ParsoAudioNeural",
-            dependencies: ["ParsoAudioCore"],
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis"],
             linkerSettings: [
                 .linkedFramework("CoreML", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+                .linkedFramework("Accelerate"),
+                .linkedFramework("AVFoundation"),
             ]
         ),
 

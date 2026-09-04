@@ -454,9 +454,9 @@ at a known BPM must detect that BPM; a killed EQ band must drop >60 dB; key-lock
 not pitch). Real-fixture tests assert **determinism + plausibility** on real tracks and become strict
 regressions once you record verified values. See `Tests/` and `docs/SPEC.md §5, §15`.
 
-## On-device neural: CLAP search, and why there's no vocal stem separation
+## On-device neural: CLAP search, and stem separation
 
-Phase 7 (`current_status.md` "Phase 7") is adding on-device CoreML-backed features
+Phase 7 (`current_status.md` "Phase 7") adds on-device CoreML-backed features
 behind a new, deliberately **watchOS-excluded** `ParsoAudioNeural` target
 (`#if !os(watchOS)`, since CoreML — unlike AudioToolbox — is actually present on
 watchOS 10, so `canImport` alone wouldn't exclude it; watchOS keeps building via
@@ -465,48 +465,68 @@ plain SPM with zero neural dependency). Like every other PAE target, it ships
 library has no On-Demand Resources mechanism, so the app supplies the actual
 `.mlpackage`.
 
-Two capabilities are in scope, and they are not equally clearable:
-
-- **Semantic/mood search (CLAP)** — moving into PAE. LAION CLAP
+- **Semantic/mood search (CLAP).** LAION CLAP
   (`music_audioset_epoch_15_esc_90.14.pt`, HTSAT-base) is **Apache-2.0**, stated
   explicitly by the upstream project and independently verified here.
-- **Vocal stem separation — deliberately NOT included.** This needs its own
-  explanation, because it's a real gap, not an oversight.
+- **Stem separation** — `SeparationVoice`/`StemChunk`/`StemSeparation`/
+  `StemModelProviding`/`StemSeparator` in `Separation.swift` define a
+  model-agnostic seam; `SeparationBackendRegistry` makes **which model runs a
+  runtime choice**, not a compile-time one (register any number of
+  `StemModelProviding` conformances, switch the active one with no code
+  change elsewhere). The shipping default is **Spleeter**; see below for why,
+  and for the honest limitation that comes with it.
 
-### What a vocals-capable stem model needs, and why nothing available today qualifies
+### The licensing survey, and why it matters here
 
 Splitting a mix into vocals/drums/bass/other requires a *supervised* model trained on
-paired **(mixed track, isolated stems)** examples — you cannot learn vocal separation
-from mixed recordings alone. Shipping such a model inside an MIT-licensed library
+paired **(mixed track, isolated stems)** examples — you cannot learn separation
+from mixed recordings alone. Shipping such a model behind an MIT-licensed library
 redistributed to third parties requires the **training data's license**, not just the
 code's, to permit commercial use — a permissive code license does not imply a
-permissive weights license, and that distinction is exactly what trips up every
-option surveyed:
+permissive weights license, and that distinction is exactly what trips up most of the
+field:
 
 | Model | Code license | Weights / training-data reality |
 |---|---|---|
-| Demucs / htdemucs (Meta) | MIT | **Not commercially usable.** The author stated directly, on record, that the weights are "not covered by the MIT license, and are provided only for scientific purposes" ([facebookresearch/demucs#327](https://github.com/facebookresearch/demucs/issues/327)). Trained on MUSDB18/MUSDB18-HQ, itself academic-use-only, several tracks CC BY-NC-SA. |
-| Spleeter (Deezer) | MIT | Weights license **unresolved on record** — a direct GitHub issue asking this exact question has no maintainer answer. Trained on Deezer's undocumented internal dataset. |
+| Demucs / htdemucs (Meta) | MIT | **Not commercially usable.** The author stated directly, on record, that the weights are "not covered by the MIT license, and are provided only for scientific purposes" ([facebookresearch/demucs#327](https://github.com/facebookresearch/demucs/issues/327)). Trained on MUSDB18/MUSDB18-HQ, itself academic-use-only, several tracks CC BY-NC-SA. Kept in `parso-tonearm` as a registered-but-**non-default** `StemModelProviding` (see that repo's docs) rather than removed outright, but not PAE's default and not recommended for a commercial ship. |
+| **Spleeter (Deezer)** | MIT | **Author's determination: usable.** Deezer ships both code and pretrained weights under MIT, trained on Deezer's own production catalogue — not MUSDB18/MoisesDB. This determination is the app author's own, made after this project's own survey (an earlier pass) had logged Spleeter's weights license as "unresolved on record"; the author's own review is what resolved it here. **This is PAE's shipping default separation backend.** |
+| Community "MIT-tagged" RoFormer/UVR checkpoints (e.g. Kim Mel-Band RoFormer) | tag says MIT | **Investigated and rejected as a drop-in.** Traced to a checkpoint trained on MUSDB18 (the same restricted dataset above), MIT-tagged casually by an individual uploader with no legal review of whether relicensing weights derived from NC-restricted training data is actually valid — by the uploader's own words in the public relicensing thread, they did not understand licensing when the tag was first applied. A shinier badge on the same unresolved MUSDB18 problem, not a real fix. |
 | Open-Unmix | MIT-ish | One published checkpoint is explicitly CC BY-NC-SA; the default is trained on the same tainted MUSDB18. |
 | MDX-Challenge / community models (MVSEP, HuggingFace mirrors) | varies | Increasingly trained on MoisesDB, also CC BY-NC-SA, non-commercial. |
 
-**Every real-recording, vocal-capable separation model in current circulation traces
-back to non-commercial training data.** This is not a licensing technicality to route
-around — MUSDB18, MUSDB18-HQ, and MoisesDB are the field's dominant training sets
-precisely because assembling *real, vocal-inclusive, isolated-stem* multitrack audio
-at scale is hard, and nobody has done it yet under commercial-safe terms.
+### Spleeter's real limitation, and the actual target
 
-### Why Slakh2100 is the current fallback, and its real limitation
+Spleeter is a **2018-era 2D U-Net magnitude-masking model** — materially behind
+current transformer-based separators (BS-RoFormer / Mel-Band RoFormer-class
+architectures) on separation quality, especially vocal bleed into `other` and
+transient smearing on percussive material. It ships as the default because it is
+the best backend currently believed to be cleanly commercially licensed, **not**
+because it is the best available separator.
+
+**The eventual target is a BS-RoFormer-class model.** Every BS-RoFormer/Mel-Band
+RoFormer checkpoint surveyed so far traces back to MUSDB18 or another
+non-commercially-restricted training set with no clean rights story (see the table
+above) — so none is registered yet. The moment a genuinely cleanly-licensed one
+exists (a direct commercial license, a from-scratch train on clean data, or a
+maintainer credibly resolving the rights question), swapping it in is exactly:
+implement `StemModelProviding`, register it in `SeparationBackendRegistry`, call
+`setActive`. Nothing else in the separation pipeline (`StemSeparator`, a cache, a
+UI) changes. Track this on the tracking issue for this repo (see below).
+
+### Slakh2100 — the from-scratch instrumental fallback, and its real limitation
 
 [Slakh2100](https://zenodo.org/records/4599666) is the one dataset found in this
-survey with unambiguous commercial terms: **CC-BY-4.0**, 2,100 tracks / 145 hours,
-individual instrument stems. The catch: it's **synthetic** — sample-library
-instrument renders from the Lakh MIDI Dataset, not real recordings — and because it's
-MIDI-derived, **it has no vocal stems** (there is no sung-vocal MIDI to render). PAE's
-Phase 7c ships an **instrumental-only** (drums/bass/other) separator trained on
-Slakh2100. This is a genuine, licensing-clean capability, and a genuine limitation:
-no vocal isolation, and the model never saw a real mixed recording during training,
-only synthetic renders.
+survey with unambiguous commercial terms for **training a new model from scratch**:
+**CC-BY-4.0**, 2,100 tracks / 145 hours, individual instrument stems. The catch: it's
+**synthetic** — sample-library instrument renders from the Lakh MIDI Dataset, not
+real recordings — and because it's MIDI-derived, **it has no vocal stems** (there is
+no sung-vocal MIDI to render). A from-scratch Slakh2100-trained instrumental-only
+(drums/bass/other) model is scaffolded (the `StemModelProviding` surface it would
+conform to already exists) but **not trained** — that's a real multi-day GPU compute
+job, not something executed in a coding session, and needs the author's explicit
+go-ahead on committing that compute budget before it starts. Until then, Spleeter is
+the shipping default; Slakh2100-training remains a possible future registered
+backend alongside it, not a replacement.
 
 ### A proposed project: a real, vocals-included, openly-licensed stems dataset
 
@@ -588,9 +608,11 @@ trap every existing option falls into).
 project; assembling a large-enough, real, vocals-included, genuinely commercial-clean
 dataset is the hard 90%, and it costs real money (rough total project estimate,
 recording-dominated: **$150,000–$400,000+ and 3–6 months**, not a side project). This
-is why PAE ships instrumental-only separation now rather than waiting — and why the
-vocals gap is tracked as an open, fundable project rather than a near-term deliverable.
-See the tracking issue on this repo for the current status of this proposal.
+from-scratch vocals-capable project remains one path to closing the gap Spleeter's
+2018-era architecture leaves open; a cleanly-licensed BS-RoFormer-class release from
+elsewhere (see above) is the other, and would likely arrive faster. Both are tracked
+on the tracking issue for this repo, which also names BS-RoFormer as the target
+architecture once either path clears.
 
 ## Roadmap
 
