@@ -215,11 +215,8 @@ public actor CoreMLSemanticModel: SemanticModel {
             "input_ids": MLFeatureValue(multiArray: ids),
             "attention_mask": MLFeatureValue(multiArray: mask),
         ])
-        let output = try await modelBox.model.prediction(from: provider)
-        guard let value = output.featureValue(for: "text_embedding")?.multiArrayValue else {
-            throw SemanticModelError.inferenceFailed("missing text_embedding output")
-        }
-        return Self.extract(value, count: spec.dimensions)
+        return try await Self.predict(modelBox, provider: provider,
+                                       outputName: "text_embedding", count: spec.dimensions)
     }
 
     public func embedAudio(logMel: [Float]) async throws -> [Float] {
@@ -239,11 +236,8 @@ public actor CoreMLSemanticModel: SemanticModel {
         let provider = try MLDictionaryFeatureProvider(dictionary: [
             "log_mel": MLFeatureValue(multiArray: input),
         ])
-        let output = try await modelBox.model.prediction(from: provider)
-        guard let value = output.featureValue(for: "audio_embedding")?.multiArrayValue else {
-            throw SemanticModelError.inferenceFailed("missing audio_embedding output")
-        }
-        return Self.extract(value, count: spec.dimensions)
+        return try await Self.predict(modelBox, provider: provider,
+                                       outputName: "audio_embedding", count: spec.dimensions)
     }
 
     private func load() throws -> ModelBox {
@@ -261,6 +255,18 @@ public actor CoreMLSemanticModel: SemanticModel {
         } catch {
             throw SemanticModelError.modelLoadFailed(error.localizedDescription)
         }
+    }
+
+    /// Runs the prediction and extracts the output outside actor isolation:
+    /// `MLModel.prediction(from:)`'s non-Sendable `MLFeatureProvider` result
+    /// can't cross back into the actor, so only the Sendable `[Float]` does.
+    private static func predict(_ box: ModelBox, provider: MLDictionaryFeatureProvider,
+                                 outputName: String, count: Int) async throws -> [Float] {
+        let output = try await box.model.prediction(from: provider)
+        guard let value = output.featureValue(for: outputName)?.multiArrayValue else {
+            throw SemanticModelError.inferenceFailed("missing \(outputName) output")
+        }
+        return extract(value, count: count)
     }
 
     private static func extract(_ multiArray: MLMultiArray, count: Int) -> [Float] {
