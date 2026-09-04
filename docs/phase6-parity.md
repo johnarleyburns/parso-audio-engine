@@ -293,19 +293,105 @@ New `parso-tonearm/Sources/DJ/Engine/PAEWorkspaceEngine.swift`:
   `TonearmDJ` gains `.product(name: "ParsoDJEngine", package: "parso-audio-engine")`
   in `Package.swift` + `project.yml`.
 
-## Still owed before 6b starts
+## Pre-6b close-out (2026-09-03) — the three "still owed" items, resolved
 
-- **Full read of `parso_engine_stub.cpp` (1072 lines) and `parso_dsp_stub.cpp`
-  (776 lines).** This audit spot-checked the command dispatch, seek/loop/hot-cue
-  handlers, and the time-pitch kernel. The buffer-swap RT-safety of
-  `pe_deck_set_buffer`, the exact `PE_EVT_BUFFER_RELEASED` arming, the existing
-  bus `BeatFXUnit` DSP, and the monitor-bus summing all need a line read before
-  their rows are final.
-- **`EngineTelemetry` / `EngineTelemetryStream` field list** from
-  `parso-tonearm/Sources/DJ/Engine/EngineTelemetry.swift` — enumerate every
-  field the pump must fill, cross-check against finding 2/telemetry rows.
-- **`DeckSource` / `DeckGrid` / `StemSet` / `StemKind` / `CueMode` /
-  `CrossfaderCurve` / `QuantizeResolution` exact shapes** from
-  `parso-tonearm/Sources/DJ/Engine/*` — which are pure value types the adapter
-  can keep (relocated to an original-work file) vs must be replaced with PAE
-  types.
+Full line reads done: `parso_engine_stub.cpp` (1072), `parso_dsp_stub.cpp`
+(776), `parso_engine.h`, `ParsoDJEngine.swift` sync/load/master paths, and the
+Tonearm value types (`DeckClock.swift`, `StemVoices.swift`, `SyncEngine.swift`,
+`EngineTelemetry.swift`, `RTCommand.swift`, `CueBus.swift`, `Mixer.swift`,
+`StemModel.swift`). New findings, and corrections to rows above:
+
+### C1 — `parso_engine_stub.cpp` is literally a stub; the mature DSP is unused
+
+`render()` / `renderMonitor()` hand-roll their own one-pole 2-band EQ
+(`processEQ`, 200 Hz / 2 kHz splits), a bounded 6-kind ColorFX
+(`processColorFX`, 24000-sample fixed delay), a 13-kind bus BeatFX
+(`processBeatFX`, 48000-sample delay), and a per-sample soft limiter
+(`processLimiter`). **None of `CParsoDSP`'s kernels (`pd_eq3` RBJ isolator,
+`pd_filter` resonant sweep, `pd_delay`, `pd_reverb` Freeverb, `pd_limiter`
+look-ahead) are called by the engine.** So:
+
+- **Mixer parity re-baseline (§35 rows) is against `processEQ`/`processColorFX`/
+  `crossfadeGains`/`processLimiter`, not the RBJ kernels.** The engine's EQ is
+  2-band (low/high one-pole, mid = residue), not a 3-band isolator — knob→dB
+  mapping in the adapter has to target *that*. This is a bigger delta from
+  Tonearm's `ThreeBandEQ` than the audit assumed; the golden re-baseline
+  rationale must say "PAE ships a 2-band shelving approximation in the stub
+  renderer" explicitly.
+- **6b decision point:** either (a) wire the `CParsoDSP` kernels into
+  `render()` (they exist, are allocation-free, already unit-tested) and
+  re-baseline once against the good DSP, or (b) keep the stub math and
+  re-baseline against it. (a) is more work now but is the only path that makes
+  the "PAE mixer is the reference" decision actually mean a Pioneer-grade
+  mixer. **Recommend (a); add as 6b item 0.**
+
+### C2 — time-pitch / key-lock is vendored but NOT wired (corrects finding 4)
+
+`pd_timepitch` (signalsmith-stretch, `pd_tp_process`, KEYLOCK vs VARISPEED) is
+compiled and C-wrapped, but `parso_engine_stub.cpp` never instantiates or calls
+it. The deck render path does varispeed only, by linear interpolation in
+`sampleAt` + `positionIncrement` scaling. `PE_CMD_SET_KEYLOCK` is in the
+`applyCommand` switch as an explicit no-op (L379). `control.deck_pitch[]` /
+`pd_tp_set_pitch_semitones` is stored and never read. `ParsoDJEngine`'s
+`Deck.keyLock` / `pitchSemitones` therefore currently change **nothing
+audible**.
+→ The lib worry is indeed moot (header-only, portable, done). But wiring
+signalsmith into each deck's reader — block-based `pd_tp_process` feeding the
+deck output, mode follows `keyLock`, transpose follows `pitchSemitones`,
+`timeRatio` follows the sync/tempo rate — is **new 6b work**, not a
+finding-4 freebie. Add as 6b item 2a (alongside the master clock, since the
+synced-deck rate has to drive `pd_tp_set_time_ratio`).
+
+### C3 — `pe_deck_set_buffer` is not RT-safe for a live swap; no `PE_EVT_BUFFER_RELEASED`
+
+`PE_EVT_BUFFER_RELEASED` appears only in the header enum — **it is never
+pushed anywhere in `parso_engine_stub.cpp`.** `pe_deck_set_buffer` mutates
+`DeckState` fields (channel pointers, `frames`, `sampleRate`, `position`, loop
+state, the 24000-float `colorDelay` array zeroed in a loop) directly on the
+calling thread with no double-buffer and no atomic publish, while `render()`
+reads the same fields on the RT thread. `ParsoDJEngine.Deck.load` calls it
+synchronously from `@MainActor` and keeps the `PCMBuffer` alive only by holding
+one strong `self.buffer` ref — the previous buffer is freed the instant that
+property is reassigned, with no fence against an in-flight callback still
+holding the old raw channel pointers.
+→ 6b item (was "verify" on the `load(_:source:)` row, now a confirmed port):
+a real RT-safe deck buffer publish — pointer-swap via an atomic generation
+counter or a pending-slot the RT thread adopts at the top of `render()`, plus
+`PE_EVT_BUFFER_RELEASED` emitted with the retired pointer so the control side
+(the adapter's `SourceBoxRegistry` equivalent) frees on the event, not on
+reassignment. Applies equally to `pe_deck_set_stem_buffer` (6b item 1).
+
+### C4 — sync one-shot confirmed at the source (reinforces finding 1)
+
+`Deck.refreshSyncFromMasterIfNeeded()` is called from exactly two places:
+`Deck.sync()` and `EngineBridge.setMaster()` (L173–175). `updatePlaybackRate()`
+— the `tempoPercent` / `pitchSemitones` / `tempoRange` `didSet` — does **not**
+re-run it. So a master-deck pitch move provably does not drag the synced deck;
+the only "sync" is the single `PE_CMD_SYNC` seek at engage time. `PE_CMD_SYNC`
+in the C++ (L447–458) is a bare position seek; there is no `unsync`, no master
+BPM, no `barSync`. Finding 1's "single biggest item after stems" stands.
+
+### C5 — value-type dispositions (resolves item 3)
+
+| Tonearm type | Shape | Adapter disposition |
+|---|---|---|
+| `DeckGrid` (`DeckClock.swift`) | `referenceSample:Double, bpm, beatsPerBar:Int, sampleRate` + `beatPhase`/`barPhase`/`samplesPerBeat` pure kernels | **keep as original-work file** in `Sources/DJ/Engine/` (spec-derived math, §30.1/§32.3; re-header as MIT-or-app-owned, no engine deps). Adapter builds it from `TrackAnalysis.tempo`. |
+| `DeckSource` | `pcm:UnsafeRawPointer, frameCount:Int64, channelCount:Int, sampleRate, grid:DeckGrid` — pure POD, boxed for `loadArm` | **keep**; the adapter's bridge target. Maps to `PCMBuffer` + minimal `TrackAnalysis` for `Deck.load`, OR (better, if the RT-safe C path lands per C3) straight to a new `pe_deck_set_buffer` variant taking the grid. |
+| `StemSet` | 4× `DeckSource` (vocals/drums/bass/other), equal-length/equal-rate preconditions | **keep**; feeds 4× `pe_deck_set_stem_buffer` (6b item 1). |
+| `StemKind` (`Sources/DJ/Stems/StemModel.swift`) | `String` enum + `.index` 0–3 + `.fileName` | **keep** (already app-side, not engine). `.index` is the RT payload. |
+| `QuantizeResolution` (`DeckClock.swift`) | `UInt8` enum `halfBeat/beat/bar/fourBars` + `divisionCount(beatsPerBar:)` | **keep**; adapter holds it (control-side snap per finding 6). PAE's `Deck.quantize` is a bare `Bool` — no PAE type to replace it with. |
+| `CueMode` (`CueBus.swift`) | `String` enum `off/splitOutput/cueInPlace/multichannel` + `displayName` | **keep**; drives 6b item 5. `off` must stay bit-exact (offline harness). |
+| `CrossfaderCurve` (`Mixer.swift`) | `Float` enum — **`constantPower=0` / `linear=1` / `sharp=2`** (audit row §35 wrongly said `smooth`) + free `crossfaderGains(_:_:)` | **keep the enum**; do **not** keep `crossfaderGains` (GPLv3, and PAE's `crossfadeGains` curve buckets differ: `<0.25` cos/sin, `<0.75` linear, else hard-at-0.5, vs Tonearm's `0.4` overlap on sharp). Adapter maps enum → PAE `xfade_curve` 0.0/0.5/1.0. Re-baseline crossfader goldens. |
+| `SyncClock` / `SyncCorrection` / `SyncEngine` (`SyncEngine.swift`) | pure §32.3 math, value types only | **re-derive spec-side** into PAE (`ParsoDJEngine`) as the render-side master-clock/continuous-rate kernel (6b item 2). Semantics only from `SyncEngine.swift` — it is GPLv3. The math is small: `targetRate = masterEffBPM / syncedGridBPM`; `continuousRate = masterRate·masterBPM/syncedBPM`; phase diff in `(−0.5, 0.5]`. |
+| `EngineTelemetry` (`EngineTelemetry.swift`) | `masterSample:Int64, masterBPM, downbeatPhase, deckA/deckB:{playheadSample:Int64, bpmEffective, phase, level:Float, playing, synced}, masterLevel:Float, renderLoad:Double` — **no `droppedRecordFrames`, no starved-frame field** (those are on the `WorkspaceEngine` protocol, not this struct) | **keep the struct** (pure value above the seam, plan already said so). The pump must fill: `masterSample` ← C3-adjacent master frame counter; `masterBPM`/`downbeatPhase` ← 6b master clock; per-deck `playheadSample` ← `PE_EVT_PLAYHEAD.frame`; `bpmEffective`/`phase`/`synced` ← 6b render-side effective-rate + sync state (finding-2 atomics); `level` ← `PE_EVT_PEAK`; `playing` ← `PE_EVT_STATE`; `masterLevel` ← `PE_EVT_PEAK deck −1`; `renderLoad` ← new atomic (6b, telemetry-fields row). `EngineTelemetryStream` stays verbatim (already AVFoundation-free, `.bufferingNewest(1)`). |
+
+`WorkspaceEngine.droppedRecordFrames` and the starved-frame counter stay in the
+recording-tap / render-load 6b items — they are protocol members the adapter
+synthesizes from polled atomics, not `EngineTelemetry` struct fields.
+
+### Net effect on the 6b backlog
+
+Add **item 0** (wire `CParsoDSP` kernels into `render()` + one mixer-golden
+re-baseline) and fold **key-lock/pitch wiring** into item 2 as **2a**. Item on
+the `load` row is upgraded from "verify" to a confirmed port (C3). Everything
+else in the frozen backlog stands.
