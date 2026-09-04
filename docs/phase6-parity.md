@@ -354,7 +354,88 @@ were already vendored and portable).
   as a standalone `ExportCodec` file; matching Tonearm's `M4AJoiner` container
   concatenation byte-for-byte is a 6d recording-parity check.
 
-## 6c backlog (the "adapter" set)
+## 6c — the adapter ✅ (2026-09-04, `parso-tonearm` `audio-engine-unification`)
+
+`parso-tonearm/Sources/DJ/Engine/PAEWorkspaceEngine.swift` —
+`@MainActor final class PAEWorkspaceEngine: WorkspaceEngine` over
+`ParsoDJEngine.DJEngine`. Every one of the 55 `WorkspaceEngine` members maps to
+PAE control objects; nothing downstream of the seam changed.
+
+- **Build wiring:** `TonearmDJ` + `TonearmDJTests` gain
+  `.product(name: "ParsoDJEngine", package: "parso-audio-engine")` in
+  `Package.swift`. `DJEntryModel.makeModel` selects the engine at its one
+  construction site: `#if PAE_DJ_ENGINE` → `PAEWorkspaceEngine`, else the
+  GPLv3 `PerformanceEngine` (unchanged, still the default). Both conform to
+  `WorkspaceEngine`; `WorkspaceModel(engine: any WorkspaceEngine)` is untouched.
+- **`DeckSource` bridge:** `pcmBuffer(from:)` de-interleaves the raw
+  `UnsafeRawPointer` PCM into a `ParsoAudioCore.PCMBuffer`; `trackAnalysis(from:)`
+  synthesises the minimal `ParsoAudioAnalysis.TrackAnalysis` PAE's `Deck.load`
+  needs from `DeckGrid` (bpm → `tempo.bpm`; grid → `beatPositions` +
+  `downbeatPositions` at `beatsPerBar`). The adapter keeps its own strong refs
+  to every backing buffer (deck + 4 stem voices) — the `SourceBoxRegistry`
+  analogue — so a reload cannot free memory an in-flight callback still reads.
+- **Control mapping:** fresh EQ knob→dB curve (`eqKnobToDB` — 0 → unity,
+  +1 → +6 dB, −1 → −∞ kill, `30x/(1+x)` dB taper between; **not**
+  `ThreeBandEQ.knobToGain`); crossfader `CrossfaderCurve {constantPower,linear,
+  sharp}` → `Mixer.Curve {smooth,linear,sharp}`; limiter dB↔linear with `nil`
+  when `limiterEnabled == false`; rate ratio → `tempoPercent` on `tempoRange
+  .wide`; global quantize → both decks + grid grain; Tonearm `QuantizeResolution`
+  / `StemKind` / `CueMode` → the PAE enums (by case / rawValue); per-deck echo
+  params accumulated and pushed together to `Deck.setEcho`; sample-addressed
+  hot cues kept in a rotating 8-slot map over PAE's index-keyed API.
+- **Telemetry:** `sampleTelemetry()` builds `EngineTelemetry` from
+  `DJEngine.telemetry()` (`EngineStats`) + the `@MainActor` deck/channel/master
+  props; `EngineTelemetryStream` (Tonearm's, already AVFoundation-free) vends it.
+- **Recording:** `MixRecorder` per session dir (`.aac(bitrate: 256_000)` M4A);
+  `interruptRecordingForInterruption` flushes a complete segment via
+  `DJEngine.interruptRecording(to:)` and appends it to the segment list;
+  `stopRecording` assembles `RecordingEncoder.RecordingOutput` from the
+  segments (`totalFrames` from the master-sample delta — see 6d checks).
+- **Tests:** `Tests/DJTests/PAEWorkspaceEngineTests.swift` (4) — conformance +
+  control calls without a graph, the EQ knob curve, the `DeckSource`
+  de-interleave + grid synthesis, a finite telemetry snapshot. Both build
+  configs compile: default (`PerformanceEngine`) and `-D PAE_DJ_ENGINE`
+  (`PAEWorkspaceEngine`). `swift build --target TonearmDJ[Tests]` green in both.
+
+### 6c — carried into 6d
+
+1. **`PerformanceEngine.Deck` is still the seam's deck-enum type.** The
+   `WorkspaceEngine` protocol types every deck arg as `PerformanceEngine.Deck`.
+   When 6d deletes `PerformanceEngine.swift`, extract a standalone
+   `public enum Deck: UInt8 { case a, b }` and repoint the protocol + adapter.
+2. **Golden-audio re-baseline (author decision).** `Tests/DJTests` EQ / filter /
+   crossfader / limiter goldens are cut against `PerformanceEngine`'s
+   `render()`. They must be re-baselined against the PAE renderer (via
+   `HeadlessDJEngine` or `ParsoDJEngineTests`) with a written rationale — "PAE
+   ships the `pd_eq3` RBJ isolator + `pd_filter` + look-ahead `pd_limiter`; the
+   knob curves are the adapter's, the DSP is PAE's" — plus the **author A-B
+   perceptual pass on ≥3 real tracks** the plan gates the cutover on.
+3. **`EngineOfflineTests` has no `PAEWorkspaceEngine` path.** Those sample-exact
+   assertions drive `PerformanceEngine.render()`. 6d either rewrites them onto
+   `HeadlessDJEngine` or accepts `ParsoDJEngineTests`' 60 FLX4 acceptance tests
+   as the replacement coverage (they already assert sample-exact transport).
+4. **Recording frame-count + M4A parity.** `totalFrames` is a master-sample
+   delta, not an exact encoder count; cross-segment M4A joining is PAE
+   per-segment `ExportCodec` files vs Tonearm's `M4AJoiner`. Already flagged in
+   "6b — deferred slivers"; confirm against `RecordingEncoderTests` in 6d.
+5. **Stems `StemKind` uses `rawValue` string bridging** — Tonearm and PAE both
+   spell the four voices `vocals/drums/bass/other`, so `init(rawValue:)` is a
+   total map; a rename on either side would silently drop a voice. Pin with a
+   round-trip test in 6d.
+
+## 6d backlog (the cutover) — not started
+
+Delete the GPLv3 `parso-tonearm/Sources/DJ/Engine/` renderer files
+(`AudioGraph`, `PerformanceEngine`, `Mixer`, `BeatEcho`, `CommandRing`,
+`CueLoop`, `RTCommand`, `RTGuard`, `Scheduler`, `SyncEngine`, `RenderLoad`,
+`EngineLiveness`, `EngineSnapshot`, `TimePitch`); **keep** the value types the
+6a C5 table marks original-work (`DeckGrid`/`DeckSource` in `DeckClock.swift`,
+`StemSet`, `QuantizeResolution`, `CueMode`, `CrossfaderCurve` enum,
+`EngineTelemetry`). Make `-D PAE_DJ_ENGINE` the default (or drop the flag).
+Re-baseline the goldens (item 2 above) + the author A-B pass. Full Tonearm
+pre-commit hook on the final commit.
+
+## 6c backlog (the "adapter" set) — as originally frozen
 
 New `parso-tonearm/Sources/DJ/Engine/PAEWorkspaceEngine.swift`:
 `@MainActor final class PAEWorkspaceEngine: WorkspaceEngine` wrapping
