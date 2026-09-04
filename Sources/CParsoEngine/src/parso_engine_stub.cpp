@@ -2,6 +2,7 @@
 // Control-side setup may allocate the handle; pe_render/pe_step only consume
 // resident caller-owned PCM and fixed-size command/control state.
 #include "parso_engine.h"
+#include "parso_dsp.h"
 
 #include <algorithm>
 #include <atomic>
@@ -122,6 +123,12 @@ struct pe_engine {
     float beatFXDelay[48000] = {};
     uint32_t beatFXDelayIndex = 0;
     float limiterGain = 1.0f;
+    // CParsoDSP kernels — the shared, unit-tested DSP (docs/phase6-parity.md C1).
+    // Owned by the engine: created in pe_create, freed in pe_destroy. All are
+    // allocation-free once constructed, so the render path stays RT-safe.
+    pd_eq3* deckEq[2] = {nullptr, nullptr};
+    pd_filter* deckFilter[2] = {nullptr, nullptr};
+    pd_limiter* masterLimiter = nullptr;
 };
 
 namespace {
@@ -154,50 +161,10 @@ static float sampleAt(const DeckState& deck, int channel, double position) {
     return a + (b - a) * fraction;
 }
 
-static float dbToGain(float db) {
-    if (std::isnan(db) || db <= -90.0f) return 0.0f;
-    if (!std::isfinite(db)) return 1.0f;
-    return std::pow(10.0f, db / 20.0f);
-}
-
-static float processLimiter(pe_engine* engine, float input) {
-    const float ceilingDB = engine->control.limiterCeilingDB.load(std::memory_order_relaxed);
-    const float safeDB = std::isfinite(ceilingDB) ? std::max(-90.0f, std::min(0.0f, ceilingDB)) : -0.3f;
-    const float ceiling = dbToGain(safeDB);
-    const float magnitude = std::fabs(input);
-    const float targetGain = magnitude > ceiling && magnitude > 0.0f ? ceiling / magnitude : 1.0f;
-    if (targetGain < engine->limiterGain) {
-        engine->limiterGain = targetGain;
-    } else {
-        const float release = 1.0f - std::exp(-1.0f / static_cast<float>(engine->sampleRate * 0.050));
-        engine->limiterGain += release * (targetGain - engine->limiterGain);
-    }
-    float output = input * engine->limiterGain;
-    if (std::fabs(output) > ceiling) output = std::copysign(ceiling, output);
-    return output;
-}
-
-static float processEQ(DeckState& deck, float sample, double sampleRate, int deckIndex,
-                       const ControlState& control) {
-    const float lowTarget = dbToGain(control.eqLow[deckIndex].load(std::memory_order_relaxed));
-    const float midTarget = dbToGain(control.eqMid[deckIndex].load(std::memory_order_relaxed));
-    const float highTarget = dbToGain(control.eqHigh[deckIndex].load(std::memory_order_relaxed));
-    const float smoothing = 1.0f - std::exp(-1.0f / static_cast<float>(sampleRate * 0.010));
-    deck.eqLowGain += smoothing * (lowTarget - deck.eqLowGain);
-    deck.eqMidGain += smoothing * (midTarget - deck.eqMidGain);
-    deck.eqHighGain += smoothing * (highTarget - deck.eqHighGain);
-
-    const float lowAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 200.0f /
-                                             static_cast<float>(sampleRate));
-    const float highAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 2000.0f /
-                                              static_cast<float>(sampleRate));
-    deck.lowState += lowAlpha * (sample - deck.lowState);
-    deck.highState += highAlpha * (sample - deck.highState);
-    const float low = deck.lowState;
-    const float high = sample - deck.highState;
-    const float mid = deck.highState - deck.lowState;
-    return low * deck.eqLowGain + mid * deck.eqMidGain + high * deck.eqHighGain;
-}
+// EQ (3-band RBJ isolator) and the master brickwall limiter are now the
+// CParsoDSP kernels — see render(). The hand-rolled one-pole EQ, the
+// approximate soft limiter and their `dbToGain` helper were removed in
+// Phase 6b item 0 (docs/phase6-parity.md C1).
 
 static float processColorFX(DeckState& deck, float input, double sampleRate, int deckIndex,
                             const ControlState& control) {
@@ -639,6 +606,136 @@ static float processBeatFX(pe_engine* engine, float input) {
     return output;
 }
 
+// The render pipeline runs in fixed-size blocks so the CParsoDSP kernels
+// (block-oriented) get a bounded, stack-resident scratch. 512 frames keeps the
+// scratch at 8 KB and matches the engine's typical device period.
+constexpr int kRenderBlock = 512;
+
+// One block of the deck→EQ→ColorFX→crossfader→mic/sampler→beatFX→master→limiter
+// chain. `frames` is already clamped to kRenderBlock. `deckPeaks`/`masterPeak`
+// accumulate across blocks. Transport (position, loops, end-of-track) advances
+// here, one source frame per output frame scaled by the deck's tempo ratio.
+static void renderChunk(pe_engine* engine, float* left, float* right, int frames,
+                        const float* channelGains, float master, float micLevel,
+                        float* deckPeaks, float& masterPeak) {
+    float dry[2][kRenderBlock];
+    float wet[2][kRenderBlock];
+
+    // Pass 1 — per deck: raw mono source + transport advance.
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        DeckState& deck = engine->decks[deckIndex];
+        for (int frame = 0; frame < frames; ++frame) {
+            if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) {
+                dry[deckIndex][frame] = 0.0f;
+                continue;
+            }
+            const int rightChannel = deck.channelCount > 1 ? 1 : 0;
+            dry[deckIndex][frame] = 0.5f * (
+                sampleAt(deck, 0, deck.position) + sampleAt(deck, rightChannel, deck.position)
+            );
+            const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
+            const double positionIncrement = deck.sampleRate / engine->sampleRate *
+                (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
+            if (deck.slip) deck.shadowPosition += positionIncrement;
+            deck.position += positionIncrement;
+            if (deck.loopActive && deck.loopEnd > deck.loopStart && deck.position >= deck.loopEnd) {
+                const double loopLength = deck.loopEnd - deck.loopStart;
+                while (deck.position >= deck.loopEnd) deck.position -= loopLength;
+            } else if (deck.position >= static_cast<double>(deck.frames)) {
+                deck.position = static_cast<double>(deck.frames);
+                deck.shadowPosition = deck.position;
+                deck.playing = false;
+                pushEvent(engine, pe_event{PE_EVT_END_OF_TRACK, deckIndex, deck.frames, 0.0f, 0.0f});
+                pushStateEvent(engine, deckIndex);
+            }
+        }
+    }
+
+    // Pass 2 — per deck: 3-band RBJ isolator EQ, then the resonant sweep filter
+    // (Color-FX "Filter", kind 0). Both kernels smooth their own control targets
+    // and are unity/pass-through when flat, so an idle deck costs almost nothing.
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        pd_eq3_set(engine->deckEq[deckIndex],
+                   engine->control.eqLow[deckIndex].load(std::memory_order_relaxed),
+                   engine->control.eqMid[deckIndex].load(std::memory_order_relaxed),
+                   engine->control.eqHigh[deckIndex].load(std::memory_order_relaxed));
+        pd_eq3_process(engine->deckEq[deckIndex], dry[deckIndex], wet[deckIndex], frames);
+
+        const int colorKind = std::max(0, std::min(6, static_cast<int>(std::lround(
+            engine->control.colorKind[deckIndex].load(std::memory_order_relaxed)))));
+        const float rawAmount = engine->control.colorAmount[deckIndex].load(std::memory_order_relaxed);
+        const float filterKnob = (colorKind == 0 && std::isfinite(rawAmount))
+            ? std::max(-1.0f, std::min(1.0f, rawAmount)) : 0.0f;
+        pd_filter_set(engine->deckFilter[deckIndex], filterKnob, 0.3f);
+        pd_filter_process(engine->deckFilter[deckIndex], wet[deckIndex], wet[deckIndex], frames);
+    }
+
+    // Pass 3 — per frame: non-filter Color-FX (still per-sample stateful),
+    // crossfader/fader/trim gain, sum, mic, sampler, bus beat FX, master gain.
+    for (int frame = 0; frame < frames; ++frame) {
+        float channelSignals[2];
+        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+            float sample = wet[deckIndex][frame];
+            const int colorKind = std::max(0, std::min(6, static_cast<int>(std::lround(
+                engine->control.colorKind[deckIndex].load(std::memory_order_relaxed)))));
+            if (colorKind != 0 && engine->decks[deckIndex].playing) {
+                sample = processColorFX(engine->decks[deckIndex], sample,
+                                        engine->decks[deckIndex].sampleRate, deckIndex, engine->control);
+            }
+            channelSignals[deckIndex] = sample * channelGains[deckIndex];
+            const float channelPeak = std::fabs(channelSignals[deckIndex]);
+            if (channelPeak > deckPeaks[deckIndex]) deckPeaks[deckIndex] = channelPeak;
+        }
+        float mixed = channelSignals[0] + channelSignals[1];
+        if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
+            engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
+            const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
+            mixed += micLevel * 0.5f * (
+                sampleAt(engine->mic, 0, engine->mic.position) +
+                sampleAt(engine->mic, rightChannel, engine->mic.position)
+            );
+            engine->mic.position += engine->mic.sampleRate / engine->sampleRate;
+            if (engine->mic.position >= static_cast<double>(engine->mic.frames)) {
+                engine->mic.position = static_cast<double>(engine->mic.frames);
+            }
+        }
+        for (int slotIndex = 0; slotIndex < 16; ++slotIndex) {
+            SamplerSlot& slot = engine->sampler[slotIndex];
+            if (!slot.playing || slot.frames <= 0) continue;
+            const int rightChannel = slot.channelCount > 1 ? 1 : 0;
+            mixed += 0.5f * (
+                sampleAt(slot, 0, slot.position) + sampleAt(slot, rightChannel, slot.position)
+            ) * 0.8f;
+            ++slot.position;
+            if (slot.position >= slot.frames) slot.playing = false;
+        }
+        if (engine->beatFXOn || engine->beatFXTail) {
+            const float extraSignal = mixed - channelSignals[0] - channelSignals[1];
+            if (engine->beatFXAssign == 0) {
+                channelSignals[0] = processBeatFX(engine, channelSignals[0]);
+                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
+            } else if (engine->beatFXAssign == 1) {
+                channelSignals[1] = processBeatFX(engine, channelSignals[1]);
+                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
+            } else if (engine->beatFXAssign == 2) {
+                mixed = processBeatFX(engine, channelSignals[0] + channelSignals[1]) + extraSignal;
+            } else {
+                mixed = processBeatFX(engine, mixed);
+            }
+        }
+        const float out = mixed * master;
+        if (left) left[frame] = out;
+        if (right) right[frame] = out;
+    }
+
+    // Pass 4 — master look-ahead brickwall limiter (block, stereo, in-place).
+    pd_limiter_process(engine->masterLimiter, left, right, frames);
+    for (int frame = 0; frame < frames; ++frame) {
+        const float peak = std::fabs(left ? left[frame] : (right ? right[frame] : 0.0f));
+        if (peak > masterPeak) masterPeak = peak;
+    }
+}
+
 static void render(pe_engine* engine, float* left, float* right, int frames) {
     if (!engine || frames <= 0) {
         clearOutput(left, right, frames);
@@ -701,91 +798,17 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
             engine->control.fader[deckIndex].load(std::memory_order_relaxed) * assignedGain;
     }
 
+    pd_limiter_set_ceiling(engine->masterLimiter,
+                           engine->control.limiterCeilingDB.load(std::memory_order_relaxed));
+
     float deckPeaks[2] = {0.0f, 0.0f};
     float masterPeak = 0.0f;
-    for (int frame = 0; frame < frames; ++frame) {
-        float channelSignals[2] = {0.0f, 0.0f};
-        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
-            DeckState& deck = engine->decks[deckIndex];
-            if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) continue;
-            const double sourcePosition = deck.position;
-            const int rightChannel = deck.channelCount > 1 ? 1 : 0;
-            float sample = 0.5f * (
-                sampleAt(deck, 0, sourcePosition) + sampleAt(deck, rightChannel, sourcePosition)
-            );
-            sample = processEQ(deck, sample, deck.sampleRate, deckIndex, engine->control);
-            sample = processColorFX(deck, sample, deck.sampleRate, deckIndex, engine->control);
-            channelSignals[deckIndex] += sample * channelGains[deckIndex];
-            const float channelSample = sample * channelGains[deckIndex];
-            const float channelPeak = std::fabs(channelSample);
-            if (channelPeak > deckPeaks[deckIndex]) deckPeaks[deckIndex] = channelPeak;
-            const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
-            const double positionIncrement = deck.sampleRate / engine->sampleRate *
-                (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
-            if (deck.slip) deck.shadowPosition += positionIncrement;
-            deck.position += positionIncrement;
-            if (deck.loopActive && deck.loopEnd > deck.loopStart && deck.position >= deck.loopEnd) {
-                const double loopLength = deck.loopEnd - deck.loopStart;
-                while (deck.position >= deck.loopEnd) {
-                    deck.position -= loopLength;
-                }
-            } else if (deck.position >= static_cast<double>(deck.frames)) {
-                deck.position = static_cast<double>(deck.frames);
-                deck.shadowPosition = deck.position;
-                deck.playing = false;
-                pushEvent(engine, pe_event{
-                    PE_EVT_END_OF_TRACK,
-                    deckIndex,
-                    deck.frames,
-                    0.0f,
-                    0.0f
-                });
-                pushStateEvent(engine, deckIndex);
-            }
-        }
-        float mixed = channelSignals[0] + channelSignals[1];
-        if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
-            engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
-            const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
-            const float micSample = 0.5f * (
-                sampleAt(engine->mic, 0, engine->mic.position) +
-                sampleAt(engine->mic, rightChannel, engine->mic.position)
-            );
-            mixed += micSample * micLevel;
-            engine->mic.position += engine->mic.sampleRate / engine->sampleRate;
-            if (engine->mic.position >= static_cast<double>(engine->mic.frames)) {
-                engine->mic.position = static_cast<double>(engine->mic.frames);
-            }
-        }
-        for (int slotIndex = 0; slotIndex < 16; ++slotIndex) {
-            SamplerSlot& slot = engine->sampler[slotIndex];
-            if (!slot.playing || slot.frames <= 0) continue;
-            const int rightChannel = slot.channelCount > 1 ? 1 : 0;
-            mixed += 0.5f * (
-                sampleAt(slot, 0, slot.position) + sampleAt(slot, rightChannel, slot.position)
-            ) * 0.8f;
-            ++slot.position;
-            if (slot.position >= slot.frames) slot.playing = false;
-        }
-        if (engine->beatFXOn || engine->beatFXTail) {
-            const float extraSignal = mixed - channelSignals[0] - channelSignals[1];
-            if (engine->beatFXAssign == 0) {
-                channelSignals[0] = processBeatFX(engine, channelSignals[0]);
-                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
-            } else if (engine->beatFXAssign == 1) {
-                channelSignals[1] = processBeatFX(engine, channelSignals[1]);
-                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
-            } else if (engine->beatFXAssign == 2) {
-                mixed = processBeatFX(engine, channelSignals[0] + channelSignals[1]) + extraSignal;
-            } else {
-                mixed = processBeatFX(engine, mixed);
-            }
-        }
-        const float output = processLimiter(engine, mixed * master);
-        const float outputPeak = std::fabs(output);
-        if (outputPeak > masterPeak) masterPeak = outputPeak;
-        if (left) left[frame] = output;
-        if (right) right[frame] = output;
+    for (int base = 0; base < frames; base += kRenderBlock) {
+        const int count = std::min(kRenderBlock, frames - base);
+        renderChunk(engine,
+                    left ? left + base : nullptr,
+                    right ? right + base : nullptr,
+                    count, channelGains, master, micLevel, deckPeaks, masterPeak);
     }
 
     for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
@@ -877,10 +900,32 @@ extern "C" {
 
 pe_engine* pe_create(double sample_rate, int max_frames) {
     if (!(sample_rate > 0.0) || max_frames <= 0) return nullptr;
-    return new (std::nothrow) pe_engine{sample_rate, max_frames};
+    pe_engine* engine = new (std::nothrow) pe_engine{sample_rate, max_frames};
+    if (!engine) return nullptr;
+    // The SPEC §35.2 isolator: low/high shelf + mid peak, crossovers 200 Hz /
+    // 2 kHz, −∞(kill)…+6 dB. Master: SPEC §35.5 look-ahead brickwall.
+    bool ok = true;
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        engine->deckEq[deckIndex] = pd_eq3_create(sample_rate, 200.0, 2000.0);
+        engine->deckFilter[deckIndex] = pd_filter_create(sample_rate);
+        ok = ok && engine->deckEq[deckIndex] && engine->deckFilter[deckIndex];
+    }
+    engine->masterLimiter = pd_limiter_create(sample_rate, -0.3f);
+    ok = ok && engine->masterLimiter;
+    if (!ok) {
+        pe_destroy(engine);
+        return nullptr;
+    }
+    return engine;
 }
 
 void pe_destroy(pe_engine* engine) {
+    if (!engine) return;
+    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        pd_eq3_destroy(engine->deckEq[deckIndex]);
+        pd_filter_destroy(engine->deckFilter[deckIndex]);
+    }
+    pd_limiter_destroy(engine->masterLimiter);
     delete engine;
 }
 

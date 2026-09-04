@@ -459,6 +459,54 @@ struct ChannelRoutingTests {
         _ = e.render(frames: 16_384) // allow the 10 ms gain smoothing to settle
         #expect((e.render(frames: 4096).left.map(abs).max() ?? 0) < 0.05)
     }
+
+    /// The shared `pd_eq3` isolator (Phase 6b item 0) splits by frequency: a
+    /// low tone loses far more level to a low-band kill than to a high-band kill.
+    @Test func isolatorEQKillsByBand() {
+        @MainActor func lowToneEngine() -> HeadlessDJEngine {
+            let e = HeadlessDJEngine()
+            let pcm = SignalGenerators.sine(frequency: 90, seconds: 8, sampleRate: 48_000, channels: 2)
+            let analysis = TrackAnalysis(
+                format: pcm.format, duration: 8,
+                tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [], isConstantTempo: true),
+                key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+                sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+                loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+            e.deckA.load(analysis, buffer: pcm)
+            e.mixer.crossfader = -1
+            e.deckA.play()
+            return e
+        }
+
+        let killLow = lowToneEngine()
+        killLow.mixer.channelA.eqLow = -.infinity
+        _ = killLow.render(frames: 32_768)
+        let lowKilled = killLow.render(frames: 8192).left.map(abs).max() ?? 0
+
+        let killHigh = lowToneEngine()
+        killHigh.mixer.channelA.eqHigh = -.infinity
+        _ = killHigh.render(frames: 32_768)
+        let highKilled = killHigh.render(frames: 8192).left.map(abs).max() ?? 0
+
+        #expect(lowKilled < highKilled * 0.5)
+    }
+
+    /// `pd_limiter_set_ceiling` (Phase 6b item 0) — a runtime ceiling change is
+    /// honored without recreating the engine.
+    @Test func limiterCeilingChangeIsHonored() {
+        let e = makeLoadedHeadless()
+        e.mixer.master.level = 1
+        e.mixer.channelA.trim = 2
+        e.mixer.channelB.trim = 2
+        e.deckA.play()
+        e.deckB.play()
+        e.mixer.master.limiterCeilingDB = -12
+        _ = e.render(frames: 8192)
+        let peak = e.render(frames: 8192).left.map(abs).max() ?? 0
+        let ceiling = pow(Float(10), Float(-12) / Float(20))
+        #expect(peak <= ceiling + 0.001)
+        #expect(peak > ceiling * 0.5)
+    }
 }
 
 @Suite("Color and Beat FX render")

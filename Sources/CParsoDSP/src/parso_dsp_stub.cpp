@@ -690,6 +690,13 @@ pd_limiter* pd_limiter_create(double sample_rate, float ceiling_db) {
     }
 }
 
+void pd_limiter_set_ceiling(pd_limiter* limiter, float ceiling_db) {
+    if (limiter == nullptr) return;
+    if (!std::isfinite(ceiling_db)) ceiling_db = -0.3f;
+    ceiling_db = std::fmax(-60.0f, std::fmin(0.0f, ceiling_db));
+    limiter->ceiling = std::pow(10.0f, ceiling_db / 20.0f);
+}
+
 void pd_limiter_process(pd_limiter* limiter, float* left, float* right, int frames) {
     if (limiter == nullptr || frames <= 0 || limiter->leftDelay.empty() ||
         limiter->rightDelay.empty()) return;

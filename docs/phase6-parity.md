@@ -235,6 +235,22 @@ Ordered by risk/size. Each lands with an added/extended FLX4 acceptance test in
 fresh or spec-driven from `docs/SPEC.md §§30–44` — **no line ports** from the
 GPLv3 `Sources/DJ/Engine/*`.
 
+0. **Wire `CParsoDSP` kernels into `render()`** — ✅ **done** (`9171ab7`).
+   `parso_engine_stub.cpp` `render()` was rebuilt as a 4-pass, 512-frame-blocked
+   pipeline over the real kernels: `pd_eq3` (SPEC §35.2 isolator, 200 Hz / 2 kHz
+   crossovers, −∞…+6 dB) per deck replaces the hand-rolled 2-band one-pole;
+   `pd_filter` (resonant sweep) drives Color-FX "Filter" (kind 0); `pd_limiter`
+   (SPEC §35.5 look-ahead brickwall) replaces the per-sample soft limiter. Added
+   `pd_limiter_set_ceiling` to `CParsoDSP` for the runtime ceiling. Non-filter
+   Color-FX kinds (space/dub/sweep/noise/crush/pitch) keep the existing
+   per-sample `processColorFX` (no kernel exists). The dead `processEQ` /
+   `processLimiter` / `dbToGain` are gone. Kernels are engine-owned (created in
+   `pe_create`, freed in `pe_destroy`); `pe_create` returns `nullptr` if any
+   kernel fails to allocate. Tests: `isolatorEQKillsByBand`,
+   `limiterCeilingChangeIsHonored` + all 39 existing DJ-engine tests green;
+   whole-package builds for watchOS + iOS. **Golden re-baseline (6d) is now
+   against real DSP, not the stub.**
+
 1. **Per-deck 4-stem voices** — `pe_deck_set_stem_buffer` + `stem_gain/mute/solo`
    control words; sum pre-EQ; one-pole gain smoothing; disarm ⇒ bit-exact single
    source. *Tests: no click on gain ramp; solo isolates; disarm = bit-exact.*

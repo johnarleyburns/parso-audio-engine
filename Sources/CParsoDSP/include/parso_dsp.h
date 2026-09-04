@@ -58,6 +58,7 @@ void       pd_reverb_destroy(pd_reverb*);
 
 typedef struct pd_limiter pd_limiter;
 pd_limiter* pd_limiter_create(double sr, float ceiling_db /*~ -0.3*/);
+void        pd_limiter_set_ceiling(pd_limiter*, float ceiling_db); /* runtime ceiling change */
 void        pd_limiter_process(pd_limiter*, float* l, float* r, int frames);
 void        pd_limiter_destroy(pd_limiter*);
 
