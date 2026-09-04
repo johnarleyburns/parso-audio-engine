@@ -650,8 +650,27 @@ static void crossfadeGains(float crossfader, float curve, float& gainA, float& g
         gainA = 1.0f - normalized;
         gainB = normalized;
     } else {
-        gainA = normalized < 0.5f ? 1.0f : 0.0f;
-        gainB = normalized < 0.5f ? 0.0f : 1.0f;
+        // "Sharp" must be steep, not a literal zero-width step: gains are
+        // computed once per render() call (block-rate, like every other
+        // mixer parameter here), so a true Heaviside step here means the
+        // output jump-cuts full-amplitude between two unrelated songs at
+        // whatever sample lands on the boundary -- an audible click/gap on
+        // real material, found via the Phase 6d A-B listening pass (see
+        // current_status.md "Phase 6"). Real hardware "sharp" crossfader
+        // curves are steep, not instantaneous, either. A narrow linear ramp
+        // around centre keeps the cut feel while staying continuous.
+        constexpr float halfWidth = 0.02f; // ~1% of full throw each side of centre
+        if (normalized < 0.5f - halfWidth) {
+            gainA = 1.0f;
+            gainB = 0.0f;
+        } else if (normalized > 0.5f + halfWidth) {
+            gainA = 0.0f;
+            gainB = 1.0f;
+        } else {
+            const float t = (normalized - (0.5f - halfWidth)) / (2.0f * halfWidth);
+            gainA = 1.0f - t;
+            gainB = t;
+        }
     }
 }
 

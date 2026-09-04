@@ -87,6 +87,76 @@ struct CrossfaderTests {
         let b = Measure.goertzelMagnitude(buf, frequency: 330)
         #expect(abs(a - b) / max(a, b) < 0.2)   // roughly balanced
     }
+
+    /// Regression for the click found in the Phase 6d listening pass
+    /// (current_status.md "Phase 6"): the "sharp" curve used to be a literal
+    /// zero-width step (gainA/gainB snapping 1<->0 the instant the crossfader
+    /// crossed centre), and since gains are computed once per render() call,
+    /// that meant a full-amplitude jump-cut between two unrelated decks at
+    /// whatever sample landed on the boundary. Sweeping across centre in
+    /// small steps must not produce a discontinuity anywhere near the size of
+    /// a full deck-to-deck swap.
+    @Test func sharpCurveSweepThroughCenterStaysContinuous() {
+        // Deck B is deck A's phase-inverted mirror at a moderate, non-DC
+        // frequency (300 Hz -- passes any DC-blocking stage untouched, and is
+        // locally smooth within a 32-sample block, so genuine per-deck
+        // sample-to-sample deltas stay tiny). A hard gain swap between mirror
+        // -image decks doubles the instantaneous sample value's magnitude --
+        // large, UNLESS the swap happens to land exactly on a zero-crossing.
+        // Several trials with decorrelated sweep step counts (coprime-ish
+        // with the tone period) rule out that one unlucky/lucky alignment.
+        let format = AudioFormat(sampleRate: 48_000, channelCount: 2)
+        func makeSine(amplitude: Float, invert: Bool) -> PCMBuffer {
+            let buf = PCMBuffer(format: format, capacity: 48_000)
+            for c in 0..<2 {
+                for i in 0..<48_000 {
+                    let phase = 2.0 * Double.pi * 300.0 * Double(i) / 48_000.0
+                    let v = Float(sin(phase)) * amplitude
+                    buf.channel(c)[i] = invert ? -v : v
+                }
+            }
+            return buf
+        }
+        let bufA = makeSine(amplitude: 0.9, invert: false)
+        let bufB = makeSine(amplitude: 0.9, invert: true)
+        let analysis = TrackAnalysis(
+            format: format, duration: 1,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [], isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+
+        var overallMaxJump: Float = 0
+        for steps in [397, 401, 409, 419, 421] {
+            let e = HeadlessDJEngine()
+            e.deckA.load(analysis, buffer: bufA)
+            e.deckB.load(analysis, buffer: bufB)
+            e.deckA.play(); e.deckB.play()
+            e.mixer.crossfaderCurve = .sharp
+            e.mixer.crossfader = -0.1
+
+            // Warm up past any deck-start/anti-click fade-in envelope before
+            // measuring, so the sweep's own discontinuity isn't confused with
+            // playback-start transients.
+            for _ in 0..<50 { _ = e.render(frames: 32) }
+
+            var samples: [Float] = []
+            for i in 0...steps {
+                let position = -0.1 + 0.2 * (Double(i) / Double(steps))
+                e.mixer.crossfader = position
+                samples.append(contentsOf: e.render(frames: 32).left)
+            }
+            for i in 1..<samples.count {
+                overallMaxJump = max(overallMaxJump, abs(samples[i] - samples[i - 1]))
+            }
+        }
+        // A hard full-gain swap between phase-inverted mirror decks at
+        // amplitude 0.9 can jump by close to 1.8 when it doesn't land near a
+        // zero-crossing; across 5 decorrelated trials at least one should hit
+        // near the worst case. A steep-but-continuous curve should stay well
+        // under that.
+        #expect(overallMaxJump < 0.6, "sample-to-sample jump \(overallMaxJump) suggests a discontinuity at the sharp curve's centre")
+    }
 }
 
 @Suite("Headless transport")
@@ -524,6 +594,36 @@ struct ColorAndBeatFXRenderTests {
         let filteredOutput = filtered.render(frames: 4096).left
         let difference = zip(dryOutput, filteredOutput).map { abs($0 - $1) }.max() ?? 0
         #expect(difference > 0.01)
+    }
+
+    /// Regression for the click found in the Phase 6d A-B render (current_status.md
+    /// "Phase 6"): sweeping the filter knob continuously through zero used to hit a
+    /// hard low-pass/high-pass topology switch with a stale biquad state AND an
+    /// inverted high-pass cutoff curve that spiked to maximum effect right at the
+    /// crossing, producing a large sample-to-sample discontinuity. A smooth sweep
+    /// through the centre must never produce a jump much bigger than neighbouring
+    /// samples in a continuous tone.
+    @Test func filterKnobSweepThroughZeroStaysContinuous() {
+        let e = makeLoadedHeadless()
+        e.mixer.channelA.colorFX = .filter
+        e.deckA.play()
+
+        var samples: [Float] = []
+        let steps = 200
+        for i in 0...steps {
+            let knob = -0.3 + 0.6 * (Double(i) / Double(steps))
+            e.mixer.channelA.colorAmount = knob
+            samples.append(contentsOf: e.render(frames: 64).left)
+        }
+
+        var maxJump: Float = 0
+        for i in 1..<samples.count {
+            maxJump = max(maxJump, abs(samples[i] - samples[i - 1]))
+        }
+        // A clean sine through a smoothly-swept filter shouldn't jump more than a
+        // small fraction of full scale sample-to-sample; the pre-fix code spiked
+        // past 1.0 (a full-scale discontinuity) right at the crossing.
+        #expect(maxJump < 0.3, "sample-to-sample jump \(maxJump) suggests a discontinuity at the filter's zero crossing")
     }
 
     @Test func beatEchoProcessesAssignedChannelAndLeavesAReleaseTail() {

@@ -423,17 +423,45 @@ PAE control objects; nothing downstream of the seam changed.
    total map; a rename on either side would silently drop a voice. Pin with a
    round-trip test in 6d.
 
-## 6d backlog (the cutover) — not started
+## 6d backlog (the cutover) ✅ done (2026-09-04, `parso-tonearm` commit `c313286`)
 
-Delete the GPLv3 `parso-tonearm/Sources/DJ/Engine/` renderer files
-(`AudioGraph`, `PerformanceEngine`, `Mixer`, `BeatEcho`, `CommandRing`,
-`CueLoop`, `RTCommand`, `RTGuard`, `Scheduler`, `SyncEngine`, `RenderLoad`,
-`EngineLiveness`, `EngineSnapshot`, `TimePitch`); **keep** the value types the
-6a C5 table marks original-work (`DeckGrid`/`DeckSource` in `DeckClock.swift`,
-`StemSet`, `QuantizeResolution`, `CueMode`, `CrossfaderCurve` enum,
-`EngineTelemetry`). Make `-D PAE_DJ_ENGINE` the default (or drop the flag).
-Re-baseline the goldens (item 2 above) + the author A-B pass. Full Tonearm
-pre-commit hook on the final commit.
+Deleted the GPLv3 `parso-tonearm/Sources/DJ/Engine/` renderer files
+(`AudioGraph`, `PerformanceEngine`, `CommandRing`, `CueLoop`, `RTCommand`,
+`RTGuard`, `SyncEngine`, `RenderLoad`, `EngineSnapshot`, `TimePitch`, plus the
+render half of `Mixer`/`BeatEcho`); **kept** the value types the 6a C5 table
+marks original-work (`Deck` enum, `StemSet`, `QuantizeResolution`, `CueMode`,
+`CrossfaderCurve`, `EngineTelemetry`) plus, contrary to the literal delete
+list above and correctly so on inspection: `EngineLiveness` (live production
+stall-detection, engine-agnostic) and `Scheduler` (zero remaining GPLv3
+coupling, still exercised as pure grid math). `-D PAE_DJ_ENGINE` is gone —
+`PAEWorkspaceEngine` is the only engine. Goldens re-baselined with a written
+rationale; `EngineOfflineTests` deleted, replaced by `ParsoDJEngineTests`'
+FLX4 suite + `PAEWorkspaceEngineTests`. Full Tonearm pre-commit hook green.
+
+**The author A-B pass**: a quantitative proxy plus real rendered A-B pairs
+were produced (not the author's own ears, by design — that stayed the
+author's call) and surfaced **two real, previously-undetected DSP bugs** in
+`CParsoDSP`/`CParsoEngine` that the FLX4 acceptance suite's synthetic content
+never exercised:
+
+- `pd_filter_process` (`Sources/CParsoDSP/src/parso_dsp_stub.cpp`) bypassed
+  the biquad entirely near a zero knob (stale filter state) and had an
+  **inverted** high-pass cutoff curve — max filtering right at centre,
+  relaxing toward transparent at full deflection, backwards from the
+  low-pass side and from mixer-knob convention. Fixed: both sides now
+  converge toward transparent approaching centre; the near-zero bypass
+  special-case is gone so the biquad state stays continuous.
+- `crossfadeGains`'s "sharp" crossfader curve (`Sources/CParsoEngine/src/parso_engine_stub.cpp`)
+  was a literal zero-width step function; since gain is computed once per
+  block-rate render call, this jump-cut full-amplitude between two decks at
+  whatever sample landed on a call boundary. Fixed: a narrow (~1% of throw)
+  continuous ramp around centre keeps the "cut" feel without the
+  discontinuity.
+
+Both were caught by ear on real material, then confirmed objectively (a
+before/after sample-to-sample discontinuity check), fixed, covered by new
+regression tests verified to fail pre-fix and pass post-fix, and re-rendered
+for the author to confirm by ear. Full detail: `current_status.md` "Phase 6".
 
 ## 6c backlog (the "adapter" set) — as originally frozen
 
