@@ -29,13 +29,21 @@ public struct STFTConfig: Sendable, Equatable {
 /// Power is magnitude-squared; magnitude is the linear amplitude.
 public struct Spectrum: Sendable, Equatable {
     public let power: [Float]
-    public let magnitude: [Float]
     /// Frequency (Hz) per bin.
     public let binHz: Double
 
+    /// Linear amplitude per bin (√power). Computed on demand — most consumers
+    /// only read `power`, so materializing this eagerly for every STFT frame of
+    /// every track was pure waste (one `[fftSize/2]` allocation + a sqrt pass
+    /// per hop). `KeyDetector.chroma` is the only caller and folds it inline.
+    public var magnitude: [Float] {
+        var out = [Float](repeating: 0, count: power.count)
+        vForce.sqrt(power, result: &out)
+        return out
+    }
+
     public init(power: [Float], binHz: Double) {
         self.power = power
-        self.magnitude = power.map { sqrt($0) }
         self.binHz = binHz
     }
 }
@@ -51,6 +59,10 @@ public final class STFTKernel {
     private var window: [Float]
     private var real: [Float]
     private var imag: [Float]
+    /// Reused windowing scratch — one `fftSize` buffer for the life of the
+    /// kernel, not one per hop (the doc-comment above promises zero per-frame
+    /// allocation; the returned `power` array is the only unavoidable one).
+    private var windowed: [Float]
 
     public init(config: STFTConfig = STFTConfig()) {
         self.config = config
@@ -63,6 +75,7 @@ public final class STFTKernel {
         vDSP_hann_window(&window, vDSP_Length(config.fftSize), Int32(vDSP_HANN_NORM))
         self.real = [Float](repeating: 0, count: config.fftSize / 2)
         self.imag = [Float](repeating: 0, count: config.fftSize / 2)
+        self.windowed = [Float](repeating: 0, count: config.fftSize)
     }
 
     /// Compute the power spectrum of one windowed frame. `frame` must contain
@@ -72,8 +85,7 @@ public final class STFTKernel {
         let n = config.fftSize
         let n2 = n / 2
 
-        // 1) Window the frame.
-        var windowed = [Float](repeating: 0, count: n)
+        // 1) Window the frame (into the reused scratch buffer).
         vDSP_vmul(frame, 1, window, 1, &windowed, 1, vDSP_Length(n))
 
         // 2) Pack real input as interleaved complex and split it (real-FFT idiom).

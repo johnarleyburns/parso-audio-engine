@@ -156,7 +156,7 @@ public enum KeyDetector {
 
         for k in 1..<spectrum.power.count {
             let f = Double(k) * binHz
-            let mag = spectrum.magnitude[k]
+            let mag = spectrum.power[k].squareRoot()
             fold(f, mag)
             if config.harmonicWeighting {
                 for h in 2...4 {
