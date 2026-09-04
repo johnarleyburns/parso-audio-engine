@@ -454,6 +454,144 @@ at a known BPM must detect that BPM; a killed EQ band must drop >60 dB; key-lock
 not pitch). Real-fixture tests assert **determinism + plausibility** on real tracks and become strict
 regressions once you record verified values. See `Tests/` and `docs/SPEC.md §5, §15`.
 
+## On-device neural: CLAP search, and why there's no vocal stem separation
+
+Phase 7 (`current_status.md` "Phase 7") is adding on-device CoreML-backed features
+behind a new, deliberately **watchOS-excluded** `ParsoAudioNeural` target
+(`#if !os(watchOS)`, since CoreML — unlike AudioToolbox — is actually present on
+watchOS 10, so `canImport` alone wouldn't exclude it; watchOS keeps building via
+plain SPM with zero neural dependency). Like every other PAE target, it ships
+**protocol surface and license-clean plumbing only** — no model weights, ever; a
+library has no On-Demand Resources mechanism, so the app supplies the actual
+`.mlpackage`.
+
+Two capabilities are in scope, and they are not equally clearable:
+
+- **Semantic/mood search (CLAP)** — moving into PAE. LAION CLAP
+  (`music_audioset_epoch_15_esc_90.14.pt`, HTSAT-base) is **Apache-2.0**, stated
+  explicitly by the upstream project and independently verified here.
+- **Vocal stem separation — deliberately NOT included.** This needs its own
+  explanation, because it's a real gap, not an oversight.
+
+### What a vocals-capable stem model needs, and why nothing available today qualifies
+
+Splitting a mix into vocals/drums/bass/other requires a *supervised* model trained on
+paired **(mixed track, isolated stems)** examples — you cannot learn vocal separation
+from mixed recordings alone. Shipping such a model inside an MIT-licensed library
+redistributed to third parties requires the **training data's license**, not just the
+code's, to permit commercial use — a permissive code license does not imply a
+permissive weights license, and that distinction is exactly what trips up every
+option surveyed:
+
+| Model | Code license | Weights / training-data reality |
+|---|---|---|
+| Demucs / htdemucs (Meta) | MIT | **Not commercially usable.** The author stated directly, on record, that the weights are "not covered by the MIT license, and are provided only for scientific purposes" ([facebookresearch/demucs#327](https://github.com/facebookresearch/demucs/issues/327)). Trained on MUSDB18/MUSDB18-HQ, itself academic-use-only, several tracks CC BY-NC-SA. |
+| Spleeter (Deezer) | MIT | Weights license **unresolved on record** — a direct GitHub issue asking this exact question has no maintainer answer. Trained on Deezer's undocumented internal dataset. |
+| Open-Unmix | MIT-ish | One published checkpoint is explicitly CC BY-NC-SA; the default is trained on the same tainted MUSDB18. |
+| MDX-Challenge / community models (MVSEP, HuggingFace mirrors) | varies | Increasingly trained on MoisesDB, also CC BY-NC-SA, non-commercial. |
+
+**Every real-recording, vocal-capable separation model in current circulation traces
+back to non-commercial training data.** This is not a licensing technicality to route
+around — MUSDB18, MUSDB18-HQ, and MoisesDB are the field's dominant training sets
+precisely because assembling *real, vocal-inclusive, isolated-stem* multitrack audio
+at scale is hard, and nobody has done it yet under commercial-safe terms.
+
+### Why Slakh2100 is the current fallback, and its real limitation
+
+[Slakh2100](https://zenodo.org/records/4599666) is the one dataset found in this
+survey with unambiguous commercial terms: **CC-BY-4.0**, 2,100 tracks / 145 hours,
+individual instrument stems. The catch: it's **synthetic** — sample-library
+instrument renders from the Lakh MIDI Dataset, not real recordings — and because it's
+MIDI-derived, **it has no vocal stems** (there is no sung-vocal MIDI to render). PAE's
+Phase 7c ships an **instrumental-only** (drums/bass/other) separator trained on
+Slakh2100. This is a genuine, licensing-clean capability, and a genuine limitation:
+no vocal isolation, and the model never saw a real mixed recording during training,
+only synthetic renders.
+
+### A proposed project: a real, vocals-included, openly-licensed stems dataset
+
+For vocal separation to become possible without waiting on Meta or another rightsholder
+to grant a commercial license, someone needs to build the dataset that doesn't
+currently exist: real recordings, paired with isolated vocal + instrumental stems,
+under CC0 / CC-BY / CC-BY-SA terms that explicitly permit commercial redistribution of
+derivative model weights (CC-BY-**NC**-SA does not qualify — the "NC" is exactly the
+trap every existing option falls into).
+
+**What it needs, concretely:**
+
+1. **Scale.** htdemucs itself trained on ~950 professionally mixed songs (MUSDB18-HQ's
+   150 + an internal Meta 800-song set). A from-scratch commercial-clean equivalent
+   should target the same order of magnitude — **realistically 400–600 tracks as a
+   minimum viable training set** (with aggressive data augmentation: pitch shift,
+   tempo stretch, in-batch remixing of the separately-available stems, all standard
+   in this literature and already used by Demucs's own training pipeline), **800–1,000+
+   to approach htdemucs-class quality**. Fewer than ~300 clean tracks is unlikely to
+   produce a usable vocal separator regardless of augmentation.
+2. **Sourcing.** No existing archive (Wikimedia Commons hosts finished mixes, not
+   paired stems, and is a non-starter for this) has this at scale today. Realistic
+   sources, in likely order of yield:
+   - **Commission originals directly under CC0.** Pay session vocalists/musicians to
+     record short (60–120s) song sections with vocals + a few instrument stems,
+     explicit CC0 release. Most control over quality and licensing; highest direct cost
+     per track (session musician day rates), lowest legal risk.
+     - Given typical indie session rates, budget roughly **$150–$400 per finished,
+       fully-stemmed, CC0-cleared track** (musician time, a mix engineer's pass to
+       confirm stem isolation is clean, and rights paperwork) — so 400 tracks is
+       roughly **$60,000–$160,000**, 800 tracks roughly **$120,000–$320,000**. This is
+       the dominant cost of the whole project, dwarfing the compute cost below.
+   - **Remix-competition communities** (ccMixter and similar) — real vocal +
+     instrumental stems already exist there with per-track CC licensing, some
+     commercial-permitting. Free, but uncurated, inconsistent per-track licensing that
+     needs individual verification, and unlikely alone to reach the scale above —
+     treat as a supplement, not the primary source.
+   - **Public-domain vocal recordings** (pre-1929 US recordings, some archival
+     folk/field recordings) paired with newly-recorded CC0 instrumental beds — a hybrid
+     approach; scarcer and harder to isolate cleanly (period recordings are rarely
+     multitrack), but worth a scoping pass.
+3. **Curation/QA procedure.** Every track needs: (a) a license check confirming CC0/
+   CC-BY/CC-BY-SA with no NC clause, recorded in a per-track manifest (source, license,
+   URL/contact, date); (b) a stem-isolation quality check (no bleed between stems,
+   levels normalized, sample-rate/bit-depth consistent — 48 kHz/24-bit is a reasonable
+   house standard matching PAE's existing analysis pipeline); (c) genre/tempo/key
+   tagging for balanced train/val/test splits (a dataset that's 90% one genre trains a
+   model that only works on that genre). Budget **~15–30 minutes of curator time per
+   track** for this pass — for 400–800 tracks, that's roughly **100–400 curator-hours**
+   (2.5–10 weeks of one person working full-time), separate from the recording cost
+   above.
+4. **Training procedure.** Architecture: htdemucs's hybrid transformer design (or a
+   lighter HDemucs v3 convolutional-only variant if the smaller dataset doesn't
+   support the transformer stage's appetite for data) trained from scratch — do not
+   fine-tune from htdemucs's actual checkpoint, since its weights carry the same
+   non-commercial taint being avoided. Standard supervised source-separation training
+   loop: L1/SDR loss per stem, augmentation as in (1), held-out validation split (an
+   80/10/10 track-level split, never track-overlapping across splits) for early
+   stopping.
+5. **Testing before any release.** Two gates, not one: (a) **quantitative** — SDR
+   (signal-to-distortion ratio) per stem on the held-out test split, reported against
+   the Slakh2100 baseline and, where legally comparable, published htdemucs SDR numbers
+   as context (not a claim of parity); (b) **human listening QA** — a blind A/B panel
+   (the author + at least 2–3 other listeners) on ≥10 held-out real tracks spanning the
+   dataset's genre spread, checking for audible bleed, artifacts, and whether the
+   result is usable for actual DJ/remix work, not just a good SDR number. Do not ship
+   without both gates passing.
+6. **Hardware and compute cost.** This part is the cheap part by comparison. htdemucs's
+   own training used 8× Nvidia V100 32GB GPUs
+   ([arXiv:2211.08553](https://arxiv.org/abs/2211.08553)); a comparable run today on
+   rented cloud A100s (~$1–3/GPU-hr depending on provider) is realistically a
+   multi-day 8-GPU job, putting total compute in the **rough low-thousands-of-dollars
+   range** (order-of-magnitude estimate — Meta never published an exact figure). **A
+   laptop is not a realistic training venue** — Apple Silicon's MPS backend is roughly
+   an order of magnitude or more slower than a single A100 on transformer-heavy
+   architectures, turning a multi-day cluster job into weeks-to-months.
+
+**Net honest assessment:** the compute and engineering are the tractable 10% of this
+project; assembling a large-enough, real, vocals-included, genuinely commercial-clean
+dataset is the hard 90%, and it costs real money (rough total project estimate,
+recording-dominated: **$150,000–$400,000+ and 3–6 months**, not a side project). This
+is why PAE ships instrumental-only separation now rather than waiting — and why the
+vocals gap is tracked as an open, fundable project rather than a near-term deliverable.
+See the tracking issue on this repo for the current status of this proposal.
+
 ## Roadmap
 
 Phased implementation plan in `docs/SPEC.md §19`. The current workstream is the three-repo

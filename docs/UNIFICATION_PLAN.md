@@ -299,3 +299,18 @@ the integration seam is proven.
 - Voxglass ships no binary audio xcframeworks.
 - Both apps' audio tests pass unchanged in behavior; PAE owns the DSP-level tests.
 - Roughly 4,000–5,000 lines removed across the two apps, replaced by ~2,500 in PAE.
+
+## 8. Phase 7 (added 2026-09-04) — on-device neural, scoped after a licensing audit
+
+Out of scope for the original Phases 0–6 (which this document's §0 table already
+excludes — see the "no watchOS" caveat there, since superseded). Full detail lives in
+`current_status.md` "Phase 7" — summary: CLAP semantic/mood search moves into a new
+watchOS-excluded PAE target (`ParsoAudioNeural`, `#if !os(watchOS)` gated, CoreML
+linked only for iOS/macCatalyst/macOS); Tonearm's Demucs-based vocal-stem separation
+does **not** move into PAE and is being replaced app-side by an instrumental-only
+model trained on the CC-BY-4.0 Slakh2100 dataset, because htdemucs's pretrained
+weights were confirmed (directly, by the author, in
+[facebookresearch/demucs#327](https://github.com/facebookresearch/demucs/issues/327))
+to be research-only, not commercially redistributable. No vocal-capable
+open-weights model with clean commercial licensing exists as of this writing —
+tracked as a standing decision to revisit, not a closed door.

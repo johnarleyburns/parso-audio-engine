@@ -33,6 +33,7 @@ let package = Package(
         .library(name: "ParsoAudioPlayback",  targets: ["ParsoAudioPlayback"]),
         .library(name: "ParsoAudioStreaming", targets: ["ParsoAudioStreaming"]),
         .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
+        .library(name: "ParsoAudioNeural",   targets: ["ParsoAudioNeural"]),
     ],
     targets: [
         // ── Vendored C libraries (permissive upstream licenses; see VENDOR.md) ──
@@ -187,6 +188,17 @@ let package = Package(
             name: "ParsoDJEngine",
             dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoEngine"]
         ),
+        // Phase 7a — CoreML-backed features, deliberately watchOS-excluded
+        // (see the file header for why `!os(watchOS)` and not `canImport`).
+        // No model weights ship in this target or ever will; see
+        // current_status.md "Phase 7".
+        .target(
+            name: "ParsoAudioNeural",
+            dependencies: ["ParsoAudioCore"],
+            linkerSettings: [
+                .linkedFramework("CoreML", .when(platforms: [.iOS, .macCatalyst, .macOS])),
+            ]
+        ),
 
         // ── Tests ──
         .testTarget(
@@ -208,6 +220,10 @@ let package = Package(
         .testTarget(
             name: "ParsoDJEngineTests",
             dependencies: ["ParsoDJEngine", "ParsoTestSupport"]
+        ),
+        .testTarget(
+            name: "ParsoAudioNeuralTests",
+            dependencies: ["ParsoAudioNeural", "ParsoTestSupport"]
         ),
         .target(
             name: "ParsoTestSupport",
