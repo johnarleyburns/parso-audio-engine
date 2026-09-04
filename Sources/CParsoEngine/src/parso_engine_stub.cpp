@@ -176,6 +176,14 @@ struct pe_engine {
     std::atomic<int64_t> masterFrame{0};
     std::atomic<double> renderLoad{0.0};
     std::atomic<int64_t> starvedFrames{0};
+    // Master-bus record tap (item 4). ~4 s stereo ring at the engine rate.
+    static constexpr uint32_t kRecordCapacity = 1u << 18;  // 262144 frames
+    float recordLeft[kRecordCapacity] = {};
+    float recordRight[kRecordCapacity] = {};
+    std::atomic<uint32_t> recordWrite{0};
+    std::atomic<uint32_t> recordRead{0};
+    std::atomic<int32_t> recordActive{0};
+    std::atomic<int64_t> recordDropped{0};
 };
 
 namespace {
@@ -987,6 +995,25 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
                     count, channelGains, master, micLevel, deckPeaks, masterPeak);
     }
 
+    // Master-bus record tap (Phase 6b item 4). Copy the rendered block into the
+    // ring; drop-and-count if the control side has not drained it in time.
+    if (engine->recordActive.load(std::memory_order_relaxed) != 0) {
+        const uint32_t cap = pe_engine::kRecordCapacity;
+        uint32_t write = engine->recordWrite.load(std::memory_order_relaxed);
+        uint32_t read = engine->recordRead.load(std::memory_order_acquire);
+        for (int frame = 0; frame < frames; ++frame) {
+            if (write - read >= cap) {
+                engine->recordDropped.fetch_add(1, std::memory_order_relaxed);
+                engine->recordRead.fetch_add(1, std::memory_order_release);
+                ++read;
+            }
+            engine->recordLeft[write % cap] = left ? left[frame] : 0.0f;
+            engine->recordRight[write % cap] = right ? right[frame] : 0.0f;
+            ++write;
+        }
+        engine->recordWrite.store(write, std::memory_order_release);
+    }
+
     for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
         pushPlayheadEvent(engine, deckIndex);
         pushPeakEvent(engine, deckIndex, deckPeaks[deckIndex]);
@@ -1384,6 +1411,38 @@ void pe_set_deck_sync(pe_engine* engine, int deck, int synced, double effective_
     d.effectiveBpm = std::isfinite(effective_bpm) && effective_bpm > 0 ? effective_bpm : 0.0;
     d.beatPhase = std::isfinite(beat_phase) ? beat_phase - std::floor(beat_phase) : 0.0;
     d.echoBpm = d.effectiveBpm > 0 ? d.effectiveBpm : d.echoBpm;
+}
+
+void pe_record_set_active(pe_engine* engine, int active) {
+    if (!engine) return;
+    engine->recordActive.store(active != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+int pe_record_drain(pe_engine* engine, float* out_l, float* out_r, int max_frames) {
+    if (!engine || max_frames <= 0) return 0;
+    const uint32_t cap = pe_engine::kRecordCapacity;
+    uint32_t read = engine->recordRead.load(std::memory_order_relaxed);
+    const uint32_t write = engine->recordWrite.load(std::memory_order_acquire);
+    int count = 0;
+    while (read != write && count < max_frames) {
+        if (out_l) out_l[count] = engine->recordLeft[read % cap];
+        if (out_r) out_r[count] = engine->recordRight[read % cap];
+        ++read;
+        ++count;
+    }
+    engine->recordRead.store(read, std::memory_order_release);
+    return count;
+}
+
+int64_t pe_record_dropped_frames(pe_engine* engine) {
+    return engine ? engine->recordDropped.load(std::memory_order_relaxed) : 0;
+}
+
+void pe_record_reset(pe_engine* engine) {
+    if (!engine) return;
+    engine->recordRead.store(engine->recordWrite.load(std::memory_order_acquire),
+                             std::memory_order_release);
+    engine->recordDropped.store(0, std::memory_order_relaxed);
 }
 
 void pe_render(pe_engine* engine, float* left, float* right, int frames) {

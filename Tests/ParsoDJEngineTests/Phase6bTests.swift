@@ -294,6 +294,52 @@ struct GraphRecoveryTests {
     }
 }
 
+// MARK: - Item 4 — record tap + segments + interruption
+
+@Suite("Phase 6b — record tap")
+@MainActor
+struct RecordTapTests {
+    private func tempURL(_ ext: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
+    }
+
+    @Test func headlessRenderFeedsTheTapAndProducesAPlayableFile() throws {
+        let e = loadedDeckA(freq: 440)
+        let url = tempURL("wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let recorder = try MixRecorder(codec: .wavPCM(bitDepth: 24), url: url)
+        e.startRecording(recorder)
+        e.deckA.play()
+        _ = e.render(frames: 24_000)          // 0.5 s
+        try e.stopRecording()
+
+        let out = try AudioFileReader(url: url, container: .wav).readAll()
+        #expect(out.frameCount > 20_000)
+        #expect(Measure.dominantFrequency(out, searchRange: 300...600) == 440)
+        #expect(e.droppedRecordFrames == 0)
+    }
+
+    @Test func interruptMidStreamFlushesACompleteSegmentAndResumes() throws {
+        let e = loadedDeckA(freq: 440)
+        let segment = tempURL("wav")
+        let final = tempURL("wav")
+        defer { try? FileManager.default.removeItem(at: segment); try? FileManager.default.removeItem(at: final) }
+        let recorder = try MixRecorder(codec: .wavPCM(bitDepth: 24), url: final)
+        e.startRecording(recorder)
+        e.deckA.play()
+        _ = e.render(frames: 12_000)
+        let flushed = try e.interruptRecording(to: segment)
+        #expect(flushed == segment)
+        _ = e.render(frames: 12_000)
+        try e.stopRecording()
+
+        let first = try AudioFileReader(url: segment, container: .wav).readAll()
+        let second = try AudioFileReader(url: final, container: .wav).readAll()
+        #expect(first.frameCount > 8_000)      // segment is complete + playable
+        #expect(second.frameCount > 8_000)     // resumed segment is its own file
+    }
+}
+
 // MARK: - Item 2a — key-lock wiring
 
 @Suite("Phase 6b — key-lock")

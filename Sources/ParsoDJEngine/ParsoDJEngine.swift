@@ -151,6 +151,31 @@ public final class DJEngine {
     /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
     public func telemetry() -> EngineStats { bridge.engineStats() }
 
+    // MARK: Recording (Phase 6b item 4)
+    private var recordingPump: Task<Void, Never>?
+
+    /// Begins tapping the master bus into `recorder`. A background pump drains the
+    /// render-thread ring ~20×/s; if it can't keep up, frames are dropped and
+    /// counted on `droppedRecordFrames`.
+    public func startRecording(_ recorder: MixRecorder) {
+        bridge.startRecording(recorder)
+        recordingPump?.cancel()
+        recordingPump = Task { @MainActor [weak self] in
+            while !Task.isCancelled, self?.bridge.isRecordingActive == true {
+                self?.bridge.drainRecordTap()
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+    }
+    @discardableResult
+    public func interruptRecording(to url: URL) throws -> URL? { try bridge.interruptRecording(to: url) }
+    public func stopRecording() throws {
+        recordingPump?.cancel()
+        recordingPump = nil
+        try bridge.stopRecording()
+    }
+    public var droppedRecordFrames: Int64 { bridge.droppedRecordFrames }
+
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
         HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender)
@@ -160,6 +185,7 @@ public final class DJEngine {
 @MainActor
 fileprivate final class EngineBridge {
     private let handleBits: UInt
+    let engineSampleRate: Double
     var control: pe_control
     private(set) var masterDeckIndex: Int?
     private var trackBPM: [Double] = [120, 120]
@@ -178,6 +204,7 @@ fileprivate final class EngineBridge {
             fatalError("CParsoEngine could not be created")
         }
         self.handleBits = UInt(bitPattern: handle)
+        self.engineSampleRate = sampleRate
         var control = pe_control()
         control.crossfader = 0
         control.xfade_curve = 0
@@ -288,6 +315,56 @@ fileprivate final class EngineBridge {
         }
     }
 
+    // MARK: Record tap (Phase 6b item 4)
+
+    private var recorder: MixRecorder?
+    private var scratchL = [Float](repeating: 0, count: 8192)
+    private var scratchR = [Float](repeating: 0, count: 8192)
+
+    var isRecordingActive: Bool { recorder != nil }
+    var droppedRecordFrames: Int64 { pe_record_dropped_frames(handle) }
+
+    func startRecording(_ recorder: MixRecorder) {
+        self.recorder = recorder
+        recorder.start()
+        pe_record_reset(handle)
+        pe_record_set_active(handle, 1)
+    }
+
+    /// Pulls whatever the render tap has buffered into the recorder.
+    func drainRecordTap() {
+        guard let recorder, recorder.isRecording else { return }
+        while true {
+            let n = scratchL.withUnsafeMutableBufferPointer { l in
+                scratchR.withUnsafeMutableBufferPointer { r in
+                    Int(pe_record_drain(handle, l.baseAddress, r.baseAddress, Int32(l.count)))
+                }
+            }
+            if n == 0 { break }
+            let buffer = PCMBuffer(format: .init(sampleRate: engineSampleRate, channelCount: 2), capacity: n)
+            for i in 0..<n {
+                buffer.channel(0)[i] = scratchL[i]
+                buffer.channel(1)[i] = scratchR[i]
+            }
+            recorder.append(buffer)
+            if n < scratchL.count { break }
+        }
+    }
+
+    @discardableResult
+    func interruptRecording(to url: URL) throws -> URL? {
+        drainRecordTap()
+        return try recorder?.flushSegment(to: url)
+    }
+
+    func stopRecording() throws {
+        drainRecordTap()
+        pe_record_set_active(handle, 0)
+        recorder?.droppedFrames = droppedRecordFrames
+        try recorder?.stop()
+        recorder = nil
+    }
+
     func engineStats() -> EngineStats {
         var s = pe_stats()
         pe_get_stats(handle, &s)
@@ -335,6 +412,7 @@ public final class HeadlessDJEngine {
             }
         }
         drainEvents()
+        bridge.drainRecordTap()
         return (left, right)
     }
     /// Advance the monitor/headphone bus.
@@ -353,6 +431,13 @@ public final class HeadlessDJEngine {
 
     /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
     public func telemetry() -> EngineStats { bridge.engineStats() }
+
+    // MARK: Recording (Phase 6b item 4)
+    public func startRecording(_ recorder: MixRecorder) { bridge.startRecording(recorder) }
+    @discardableResult
+    public func interruptRecording(to url: URL) throws -> URL? { try bridge.interruptRecording(to: url) }
+    public func stopRecording() throws { try bridge.stopRecording() }
+    public var droppedRecordFrames: Int64 { bridge.droppedRecordFrames }
 
     private func drainEvents() {
         var events = [pe_event](repeating: pe_event(type: PE_EVT_PLAYHEAD, deck: -1, frame: 0, f0: 0, f1: 0), count: 64)
@@ -1480,10 +1565,26 @@ public final class MixRecorder {
         self.url = url
     }
 
+    /// Frames the render tap had to drop because the encoder fell behind
+    /// (Phase 6b item 4). Set by the engine on `stopRecording` / interruption.
+    public internal(set) var droppedFrames: Int64 = 0
+
     public func start() {
         chunks.removeAll(keepingCapacity: true)
         captureFormat = nil
+        droppedFrames = 0
         isRecording = true
+    }
+
+    /// Finalizes everything captured so far into `url` as a complete, playable
+    /// file and keeps recording into a fresh segment (Phase 6b item 4 —
+    /// interruption flush, NFR-REL-2). Returns nil if nothing was captured.
+    @discardableResult
+    public func flushSegment(to url: URL) throws -> URL? {
+        guard isRecording, !chunks.isEmpty else { return nil }
+        try encode(chunks, to: url)
+        chunks.removeAll(keepingCapacity: true)
+        return url
     }
 
     /// Append a non-interleaved master-bus block. The engine may call this
@@ -1506,12 +1607,15 @@ public final class MixRecorder {
             chunks.removeAll(keepingCapacity: true)
             captureFormat = nil
         }
+        try encode(chunks, to: url)
+    }
 
-        let format = captureFormat ?? AudioFormat(sampleRate: 48_000, channelCount: 2)
-        let frameCount = chunks.reduce(0) { $0 + $1.frameCount }
+    private func encode(_ blocks: [PCMBuffer], to destination: URL) throws {
+        let format = captureFormat ?? blocks.first?.format ?? AudioFormat(sampleRate: 48_000, channelCount: 2)
+        let frameCount = blocks.reduce(0) { $0 + $1.frameCount }
         let output = PCMBuffer(format: format, capacity: frameCount)
         var offset = 0
-        for chunk in chunks {
+        for chunk in blocks {
             for channel in 0..<format.channelCount {
                 for frame in 0..<chunk.frameCount {
                     output.channel(channel)[offset + frame] = chunk.channel(channel)[frame]
@@ -1519,8 +1623,7 @@ public final class MixRecorder {
             }
             offset += chunk.frameCount
         }
-
-        let writer = try AudioFileWriter(url: url, format: format, codec: codec)
+        let writer = try AudioFileWriter(url: destination, format: format, codec: codec)
         try writer.write(output)
         try writer.finish()
     }

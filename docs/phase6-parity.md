@@ -251,41 +251,108 @@ GPLv3 `Sources/DJ/Engine/*`.
    whole-package builds for watchOS + iOS. **Golden re-baseline (6d) is now
    against real DSP, not the stub.**
 
-1. **Per-deck 4-stem voices** — `pe_deck_set_stem_buffer` + `stem_gain/mute/solo`
-   control words; sum pre-EQ; one-pole gain smoothing; disarm ⇒ bit-exact single
-   source. *Tests: no click on gain ramp; solo isolates; disarm = bit-exact.*
-2. **Render-side master clock + continuous sync** — monotonic master frame
-   counter; master BPM + downbeat phase; per-deck effective rate + `synced`
-   state published from the render side; `PE_CMD_SYNC` becomes engage/disengage
-   with per-callback rate tracking; `barSync` flag; scheduled sample-accurate
-   `syncNudge`. *Tests: extend `syncMatchesTempoToMaster`; master pitch move
-   drags the synced deck; nudge shifts phase by exactly N samples.*
-3. **Per-deck beat echo (§35A)** — new per-deck DSP line, `enabled/beats/depth/
-   feedback`, master-clock-derived delay, read-pointer crossfade, feedback
-   clamped < 1, tail after disable. *Test: "echo out" — disable source, tail
-   decays on the assigned channel.*
-4. **Recording tap + segments + interruption** — render-fed ring + drop counter;
-   segment/interruption model; M4A joiner parity vs `ExportCodec`. *Test: record
-   a headless render, interrupt mid-stream, flushed segment is a complete
-   playable M4A, resumed segment is new.*
-5. **`CueMode` + split-output** — `{off, splitOutput, cueInPlace, multichannel}`;
-   `off` bit-exact; `splitOutput` mono-L master / mono-R cue in
-   `pe_render_monitor`. *Test: `off` unchanged; `splitOutput` channel isolation.*
-6. **Integer-sample transport** — `PE_CMD_SEEK` / `PE_CMD_SET_CUE` /
-   `PE_CMD_SET_LOOP` / `PE_CMD_HOTCUE_SET` take `i0`(/`i1`) int32 samples;
-   half-open `[start, end)` loops. *Tests: seek lands on the exact sample; loop
-   bounds exact.*
-7. **`QuantizeResolution` grain** — 1/1…1/32 on `Deck`, feeds the snap. (Small;
-   may stay adapter-side — decide in implementation.)
-8. **Limiter bypass state** — so `limiterCeiling` can be `nil`.
-9. **Graph recovery** — `DJEngine.recoverGraph()` +
-   `configurationChanges()` observing `.AVAudioEngineConfigurationChangeNotification`;
-   rebuild the source-node graph without dropping `pe_engine` state. *Test:
-   simulate a config change, `isRunning` recovers, playheads preserved.*
+1. **Per-deck 4-stem voices** — ✅ (commit on `audio-engine-unification`).
+   `pe_deck_set_stem_buffer` / `pe_deck_clear_stems` + `PE_CMD_STEM_GAIN/_MUTE/
+   _SOLO`. `DeckState.stems[4]` + `stemsArmed`; Pass 1 sums present voices with
+   one-pole-smoothed gain, mute, and any-soloed⇒only-soloed, **before** the
+   EQ/filter/fader chain. `stemsArmed == false` ⇒ the exact prior single-source
+   reader. Swift: `Deck.armStems([StemKind: PCMBuffer])` / `disarmStems()` /
+   `setStemGain/Mute/Solo`. *Tests: disarmed-deck render is bit-exact vs
+   never-armed; solo isolates a voice (goertzel); mute drops a voice; finite
+   under a gain change.*
+2. **Render-side master clock + telemetry + continuous-ish sync** — ✅ (partial,
+   see note). Monotonic `pe_engine.masterFrame`; `pe_stats` poll (`renderLoad`,
+   per-deck effective BPM / beat phase / `synced`, `masterBpm`, `downbeatPhase`);
+   `pe_set_master_clock` / `pe_set_deck_sync` published from the control actor;
+   `pe_record_dropped_frames`. `Deck.effectiveRate`, explicit `unsync()` +
+   `PE_CMD_UNSYNC`, `sync(barSync:)` (aligns to `downbeatPositions`).
+   **Continuous drag: done control-side** — `EngineBridge.setDeckPlayback`
+   re-derives the synced deck whenever the master's rate changes (finding C4),
+   with a re-entrancy guard. **Deferred to 6c/author:** a fully render-side
+   per-callback rate integrator (the `SyncEngine.swift` spec re-derivation) —
+   the control-side re-derivation covers the observable "master pitch move drags
+   the synced deck" behaviour and the C `pe_set_deck_sync` atomics carry the
+   telemetry; a render-side integrator only matters for sample-locked phase
+   under sustained master automation and is a bigger, riskier change best done
+   with the 6d A-B pass. `RTCommand.syncNudge` sample-accurate scheduling also
+   deferred (nudge remains transient-rate, as `Deck.nudge`). *Tests:
+   `masterFrame` monotonic + `renderLoad` finite; `effectiveRate` tracks the
+   fader; master pitch move drags the synced deck without a fresh `sync()`;
+   `unsync()` disengages.*
+2a. **Key-lock wiring** — ✅. Per-deck `pd_timepitch` (signalsmith-stretch),
+   created in `pe_create`, freed in `pe_destroy`. New render Pass 1.5: when
+   `deck_keylock` is set **and** the deck is off nominal speed (|ratio−1|>1e-3
+   or |semis|>1e-2), the block is run through `PD_TP_KEYLOCK` at unity length to
+   undo the varispeed pitch shift and apply `−12·log2(ratio) + semitones`. Flat
+   or key-lock off ⇒ the block is untouched (bit-exact). `Deck.keyLock` didSet
+   publishes `control.deck_keylock`. *Test: key-lock vs varispeed outputs
+   diverge at +12 % and stay finite.*
+3. **Per-deck beat echo (§35A)** — ✅. `PE_CMD_ECHO_SET` (`i0`=on, `f0`=beats,
+   `f1`=depth, `i1`=feedback·1000, `i2`=keep-tail). A `pd_delay` line per deck in
+   the deck chain (after EQ/filter), period = `beats · 60/effectiveBPM`; live =
+   dry + depth·repeats, released = repeats-only with a 3 s decaying tail.
+   `Deck.setEcho(enabled:beats:depth:feedback:)`. *Test: tail is audible right
+   after disable and decays.*
+4. **Record tap + segments + interruption** — ✅. `pe_record_set_active` /
+   `pe_record_drain` / `pe_record_dropped_frames` / `pe_record_reset`; a ~4 s
+   stereo ring the render thread fills and the control side drains (drop-and-
+   count when it falls behind — the render thread never blocks). `MixRecorder`
+   gains `flushSegment(to:)` + `droppedFrames`; `DJEngine`/`HeadlessDJEngine`
+   get `startRecording(_:)` / `interruptRecording(to:)` / `stopRecording()` /
+   `droppedRecordFrames`; `HeadlessDJEngine.render` auto-drains, `DJEngine` runs
+   a 20 Hz `Task` pump. *Tests: a headless render feeds the tap and yields a
+   playable WAV at the right tone with zero drops; interrupt mid-stream flushes
+   a complete segment file and the resumed take is its own file.* **Carried:**
+   M4A-joiner byte parity vs Tonearm's `M4AJoiner` is a 6d check — PAE encodes
+   each segment as a standalone file via `ExportCodec`, no cross-segment
+   container joining.
+5. **`CueMode` + split-output** — ✅. `control.cue_mode`; `Monitoring.cueMode`
+   (`CueMode { off, splitOutput, cueInPlace, multichannel }`). `splitOutput`
+   sums master→mono-left, cue→mono-right in `pe_render_monitor`; `off` and
+   `cueInPlace` keep the exact blended-mono path (offline harness unaffected);
+   `multichannel` is honest-inert. *Tests: split-output carries master on L and
+   cue on R; `off` ≡ `cueInPlace` render.*
+6. **Integer-sample transport** — ✅. `PE_CMD_SEEK` / `PE_CMD_SET_CUE` /
+   `PE_CMD_HOTCUE_SET` take `i1` int32 samples when `i2 == 1`; `PE_CMD_SET_LOOP`
+   takes `i0`=active / `i1`=start / `i2`=end when `f0 == -1`. Half-open loops via
+   the existing wrap logic. Swift: `Deck.seek(toSample:quantized:)`,
+   `setCue(atSample:)`, `setLoop(startSample:endSample:)`,
+   `triggerHotCue(_:atSample:)`. Float-seconds paths untouched. *Tests: seek
+   lands on the exact sample; integer loop bounds are `[start, end)`.*
+7. **`QuantizeResolution` grain** — ✅. `QuantizeResolution` enum
+   (⅛-beat … 4-bar); `Deck.quantizeResolution` feeds `quantizedTime` — sub-beat
+   / multi-beat grains snap to `anchor + round((t−anchor)/step)·step`; `.beat`
+   reproduces the prior grid/quarter-note snap. Control-side (no C change), per
+   finding 6. *Test: half-beat grain snaps a 0.32 s cue to 0.25 s.*
+8. **Limiter bypass state** — ✅. `control.limiter_enabled` (default 1);
+   `render()` Pass 4 skips `pd_limiter_process` when 0. `MasterOut.limiterEnabled`.
+   *Test: bypass lets the master peak exceed a −12 dB ceiling.*
+9. **Graph recovery** — ✅. `DJEngine.recoverGraph()` tears down and rebuilds the
+   `AVAudioSourceNode` graph via a shared `buildGraph()` without recreating the
+   `EngineBridge` (deck buffers / playheads / control survive);
+   `configurationChanges() -> AsyncStream<Void>` observes
+   `.AVAudioEngineConfigurationChange`. `sampleRate` / `bufferPeriodMillis`
+   surfaced. *Tests: `recoverGraph()` keeps `isRunning` + the loaded deck; the
+   change stream is vended.*
 
-**6b exit:** `swift test -c release` green with new tests; whole-package scheme
-still builds for watchOS + iOS (C++ additions stay portable — no new platform
-deps; `signalsmith-stretch` already covers time-pitch).
+**6b exit:** `swift test --filter ParsoDJEngineTests` **60/60**;
+`swift test -c release` green; whole-package scheme builds for watchOS + iOS
+(no new platform deps — `signalsmith-stretch` / `pd_delay` / `pd_timepitch`
+were already vendored and portable).
+
+### 6b — deferred slivers (carried to 6c / the author, with rationale)
+
+- **Render-side continuous sync integrator** (part of item 2). The control-side
+  re-derivation delivers the observable behaviour and telemetry; a per-callback
+  render-side rate integrator (spec re-derivation of `SyncClock`/`SyncCorrection`)
+  is a larger, higher-risk change whose only additional benefit is sample-locked
+  phase under sustained master tempo automation. Do it with the 6d A-B pass.
+- **`syncNudge` sample-accurate scheduling** (part of item 2). `Deck.nudge`
+  stays a transient rate bend; a scheduled sample-exact playhead shift at the
+  callback boundary is a small follow-up once the render-side integrator lands.
+- **M4A cross-segment joiner parity** (part of item 4). PAE writes each segment
+  as a standalone `ExportCodec` file; matching Tonearm's `M4AJoiner` container
+  concatenation byte-for-byte is a 6d recording-parity check.
 
 ## 6c backlog (the "adapter" set)
 

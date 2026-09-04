@@ -138,6 +138,18 @@ void pe_render_monitor(pe_engine*, float* out_l, float* out_r, int frames);
 /* Synchronous, device-free advance for deterministic tests. Identical DSP to pe_render. */
 void pe_step(pe_engine*, float* out_l, float* out_r, int frames);
 
+/*
+ * Master-bus record tap (Phase 6b item 4). While active, every rendered master
+ * block is copied into a bounded ring on the render thread. The control side
+ * drains it at its own cadence into the file encoder. If the control side falls
+ * behind and the ring fills, the oldest frames are dropped and counted — the
+ * render thread never blocks.
+ */
+void    pe_record_set_active(pe_engine*, int active);
+int     pe_record_drain(pe_engine*, float* out_l, float* out_r, int max_frames); /* frames written */
+int64_t pe_record_dropped_frames(pe_engine*);
+void    pe_record_reset(pe_engine*);  /* clears the ring + drop counter (segment boundary) */
+
 #ifdef __cplusplus
 }
 #endif
