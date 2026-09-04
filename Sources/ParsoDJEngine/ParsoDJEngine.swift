@@ -18,6 +18,19 @@ public enum AudioEngineError: Error, Sendable {
     case invalidOutputFormat
 }
 
+/// Render-side telemetry snapshot (Phase 6b item 2). The Tonearm adapter maps
+/// this onto its app-facing `EngineTelemetry` value type.
+public struct EngineStats: Sendable {
+    public var masterSample: Int64
+    public var masterBPM: Double
+    public var downbeatPhase: Double
+    public var deckEffectiveBPM: (Double, Double)
+    public var deckBeatPhase: (Double, Double)
+    public var deckSynced: (Bool, Bool)
+    public var renderLoad: Double
+    public var starvedFrames: Int64
+}
+
 // MARK: - Top-level engine
 
 /// The complete two-deck software DJ engine. Owns two `Deck`s, a `Mixer`, a
@@ -31,15 +44,21 @@ public final class DJEngine {
     public let mic: MicInput
     public let monitoring: Monitoring
     private let bridge: EngineBridge
-    private let sampleRate: Double
+    private let sampleRateValue: Double
+    /// Engine sample rate (Phase 6a `WorkspaceEngine.sampleRate`).
+    public var sampleRate: Double { sampleRateValue }
     private let maxFramesPerRender: Int
+    /// Nominal render buffer period in milliseconds.
+    public var bufferPeriodMillis: Double { Double(maxFramesPerRender) / sampleRateValue * 1000 }
     public private(set) var isRunning: Bool = false
     private var audioEngine: AVAudioEngine?
+    private var configChangeObserver: NSObjectProtocol?
+    private var configChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
 
     public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
         let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
         self.bridge = bridge
-        self.sampleRate = sampleRate
+        self.sampleRateValue = sampleRate
         self.maxFramesPerRender = maxFramesPerRender
         deckA = Deck(bridge: bridge, index: 0)
         deckB = Deck(bridge: bridge, index: 1)
@@ -52,6 +71,45 @@ public final class DJEngine {
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
     public func start() throws {
         guard !isRunning else { return }
+        try buildGraph()
+        isRunning = true
+        installConfigurationObserver()
+    }
+
+    /// Tears the `AVAudioEngine` graph down and rebuilds it in place without
+    /// dropping `pe_engine` state — deck buffers, playheads, loops and control
+    /// all survive (Phase 6b item 9 / `WorkspaceEngine.recoverGraph()`).
+    public func recoverGraph() throws {
+        audioEngine?.stop()
+        audioEngine = nil
+        try buildGraph()
+        isRunning = true
+    }
+
+    /// Emits when the audio hardware configuration changes (route change,
+    /// sample-rate change). Consumers typically call `recoverGraph()` in response.
+    public func configurationChanges() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let id = UUID()
+            configChangeContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in self?.configChangeContinuations[id] = nil }
+            }
+        }
+    }
+
+    private func installConfigurationObserver() {
+        guard configChangeObserver == nil else { return }
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.configChangeContinuations.values.forEach { $0.yield(()) }
+            }
+        }
+    }
+
+    private func buildGraph() throws {
         let audioEngine = AVAudioEngine()
         let outputFormat = audioEngine.outputNode.inputFormat(forBus: 0)
         guard let sourceFormat = AVAudioFormat(
@@ -78,14 +136,20 @@ public final class DJEngine {
         audioEngine.connect(sourceNode, to: audioEngine.mainMixerNode, format: sourceFormat)
         try audioEngine.start()
         self.audioEngine = audioEngine
-        isRunning = true
     }
 
     public func stop() {
         audioEngine?.stop()
         audioEngine = nil
         isRunning = false
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+            self.configChangeObserver = nil
+        }
     }
+
+    /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
+    public func telemetry() -> EngineStats { bridge.engineStats() }
 
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
@@ -139,6 +203,9 @@ fileprivate final class EngineBridge {
         control.fader = (1, 1)
         control.deck_time_ratio = (1, 1)
         control.deck_pitch = (0, 0)
+        control.deck_keylock = (1, 1)  // Deck.keyLock defaults to true
+        control.limiter_enabled = 1
+        control.cue_mode = 0
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -175,6 +242,8 @@ fileprivate final class EngineBridge {
         deckB?.refreshSyncFromMasterIfNeeded()
     }
 
+    private var isRefreshingSync = false
+
     func setDeckPlayback(index: Int, tempoRatio: Double, pitchSemitones: Double) {
         let ratio = tempoRatio.isFinite && tempoRatio > 0 ? tempoRatio : 1
         let pitch = pitchSemitones.isFinite ? pitchSemitones : 0
@@ -188,6 +257,50 @@ fileprivate final class EngineBridge {
             return
         }
         publishControl()
+        publishSyncState(index: index)
+        // Phase 6b item 2: a master-deck rate change drags the synced deck.
+        // Finding C4 — this re-derivation used to run only at engage time.
+        if !isRefreshingSync, masterDeckIndex == index {
+            isRefreshingSync = true
+            deckA?.refreshSyncFromMasterIfNeeded()
+            deckB?.refreshSyncFromMasterIfNeeded()
+            isRefreshingSync = false
+        }
+    }
+
+    func setDeckKeylock(_ on: Bool, index: Int) {
+        if index == 0 { control.deck_keylock.0 = on ? 1 : 0 }
+        else if index == 1 { control.deck_keylock.1 = on ? 1 : 0 }
+        else { return }
+        publishControl()
+    }
+
+    /// Publishes the render-side master clock + per-deck sync/effective-rate
+    /// telemetry inputs (Phase 6b item 2).
+    func publishSyncState(index: Int) {
+        guard let deck = deck(at: index) else { return }
+        pe_set_deck_sync(handle, Int32(index), deck.isSynced ? 1 : 0,
+                         deck.effectiveBPM, deck.beatPhase)
+        if masterDeckIndex == index {
+            pe_set_master_clock(handle, Int32(index), deck.effectiveBPM, deck.beatPhase)
+        } else if masterDeckIndex == nil {
+            pe_set_master_clock(handle, -1, 0, 0)
+        }
+    }
+
+    func engineStats() -> EngineStats {
+        var s = pe_stats()
+        pe_get_stats(handle, &s)
+        return EngineStats(
+            masterSample: s.master_frame,
+            masterBPM: s.master_bpm,
+            downbeatPhase: s.downbeat_phase,
+            deckEffectiveBPM: (s.deck_effective_bpm.0, s.deck_effective_bpm.1),
+            deckBeatPhase: (s.deck_beat_phase.0, s.deck_beat_phase.1),
+            deckSynced: (s.deck_synced.0 != 0, s.deck_synced.1 != 0),
+            renderLoad: s.render_load,
+            starvedFrames: s.starved_frames
+        )
     }
 }
 
@@ -238,6 +351,9 @@ public final class HeadlessDJEngine {
         return (left, right)
     }
 
+    /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
+    public func telemetry() -> EngineStats { bridge.engineStats() }
+
     private func drainEvents() {
         var events = [pe_event](repeating: pe_event(type: PE_EVT_PLAYHEAD, deck: -1, frame: 0, f0: 0, f1: 0), count: 64)
         while true {
@@ -266,6 +382,37 @@ public final class HeadlessDJEngine {
 }
 
 // MARK: - Deck (mirror ×2)
+
+/// Grid grain the quantize snap targets (Phase 6b item 7). `.beat` reproduces
+/// the prior behaviour (snap to the analyzed beat grid / quarter notes).
+public enum QuantizeResolution: Sendable, CaseIterable {
+    case eighthBeat, quarterBeat, halfBeat, beat, bar, fourBars
+
+    /// Number of these grains per beat (values < 1 span multiple beats).
+    public var beatFraction: Double {
+        switch self {
+        case .eighthBeat: return 0.125
+        case .quarterBeat: return 0.25
+        case .halfBeat: return 0.5
+        case .beat: return 1
+        case .bar: return 4
+        case .fourBars: return 16
+        }
+    }
+}
+
+/// The four stem voices of a per-deck stem set (Phase 6b item 1).
+public enum StemKind: String, Sendable, CaseIterable {
+    case vocals, drums, bass, other
+    public var index: Int {
+        switch self {
+        case .vocals: return 0
+        case .drums: return 1
+        case .bass: return 2
+        case .other: return 3
+        }
+    }
+}
 
 public enum PadMode: Sendable {
     case hotCue        // 8 cues
@@ -400,8 +547,10 @@ public final class Deck {
         isPlaying = false
     }
 
-    private func post(_ type: pe_cmd_type, i0: Int = 0, i1: Int = 0, f0: Float = 0, f1: Float = 0) {
-        var command = pe_command(type: type, deck: Int32(index), i0: Int32(i0), i1: Int32(i1), i2: 0, f0: f0, f1: f1)
+    private func post(_ type: pe_cmd_type, i0: Int = 0, i1: Int = 0, i2: Int = 0, f0: Float = 0, f1: Float = 0) {
+        var command = pe_command(type: type, deck: Int32(index), i0: Int32(truncatingIfNeeded: i0),
+                                 i1: Int32(truncatingIfNeeded: i1), i2: Int32(truncatingIfNeeded: i2),
+                                 f0: f0, f1: f1)
         _ = pe_post_command(bridge.handle, &command)
     }
 
@@ -428,6 +577,51 @@ public final class Deck {
         jumpToCue()
         isPlaying = false
     }
+
+    // MARK: Integer-sample transport (Phase 6b item 6)
+
+    private var sampleRate: Double { buffer?.format.sampleRate ?? 48_000 }
+
+    /// Sample-exact seek. `quantized` snaps to the analysis grid first.
+    /// Precision survives past ~5.8 min where the float-seconds path rounds.
+    public func seek(toSample sample: Int64, quantized: Bool) {
+        var target = max(0, sample)
+        if quantized {
+            let seconds = quantizedTime(Double(target) / sampleRate)
+            target = Int64((seconds * sampleRate).rounded())
+        }
+        currentPlayhead = Double(target) / sampleRate
+        shadowPlayhead = currentPlayhead
+        post(PE_CMD_SEEK, i1: Int(target), i2: 1)
+    }
+
+    /// Sets the temporary cue to an exact sample.
+    public func setCue(atSample sample: Int64) {
+        let target = max(0, sample)
+        cueTime = Double(target) / sampleRate
+        post(PE_CMD_SET_CUE, i1: Int(target), i2: 1)
+    }
+
+    /// Sets a sample-addressed loop, half-open `[start, end)`.
+    public func setLoop(startSample start: Int64, endSample end: Int64) {
+        let lo = max(0, min(start, end))
+        let hi = max(lo, max(start, end))
+        setLocalLoop(start: Double(lo) / sampleRate, end: Double(hi) / sampleRate)
+        post(PE_CMD_SET_LOOP, i0: 1, i1: Int(lo), i2: Int(hi), f0: -1)
+    }
+
+    /// Jumps a hot cue slot to an exact sample.
+    public func triggerHotCue(_ slot: Int, atSample sample: Int64) {
+        guard hotCueTimes.indices.contains(slot) else { return }
+        let target = max(0, sample)
+        hotCueTimes[slot] = Double(target) / sampleRate
+        post(PE_CMD_HOTCUE_SET, i0: slot, i1: Int(target), i2: 1)
+    }
+
+    // MARK: Quantize grain (Phase 6b item 7)
+
+    /// Grid resolution the cue / hot-cue / loop snap targets when `quantize` is on.
+    public var quantizeResolution: QuantizeResolution = .beat
 
     /// Stops the deck and returns its transport to frame zero.
     public func returnToStart() {
@@ -458,6 +652,7 @@ public final class Deck {
     public var keyLock: Bool = true {
         didSet {
             post(PE_CMD_SET_KEYLOCK, f0: keyLock ? 1 : 0)
+            bridge.setDeckKeylock(keyLock, index: index)
             updatePlaybackRate()
         }
     }
@@ -585,6 +780,18 @@ public final class Deck {
         let duration = trackDuration
         let clamped = max(0, min(time, duration))
         guard quantize else { return clamped }
+
+        let fraction = quantizeResolution.beatFraction
+        // Sub-beat / multi-beat grain: derive the step from the analyzed grid
+        // spacing (or the BPM) and snap to the nearest multiple of it.
+        if fraction != 1 {
+            guard trackBPM.isFinite, trackBPM > 0 else { return clamped }
+            let beatLength = 60 / trackBPM
+            let anchor = beatPositions.first ?? 0
+            let step = beatLength * fraction
+            guard step.isFinite, step > 0 else { return clamped }
+            return max(0, min(duration, anchor + ((clamped - anchor) / step).rounded() * step))
+        }
 
         let grid = beatPositions.filter { $0.isFinite && $0 >= 0 && $0 <= duration }
         if let nearest = grid.min(by: { abs($0 - clamped) < abs($1 - clamped) }) {
@@ -748,11 +955,36 @@ public final class Deck {
         tempoPercent = (ratio - 1) * 100
         updatePlaybackRate()
 
-        let target = syncTargetPosition(master: master, masterBPM: masterBPM)
+        var target = syncTargetPosition(master: master, masterBPM: masterBPM)
+        if barSync, let downbeats = trackAnalysis?.tempo.downbeatPositions, !downbeats.isEmpty {
+            if let nearest = downbeats.min(by: { abs($0 - target) < abs($1 - target) }) {
+                target = nearest
+            }
+        }
         post(PE_CMD_SYNC, f0: Float(target))
+        bridge.publishSyncState(index: index)
     }
 
-    private var effectiveBPM: Double { trackBPM * playbackRatio }
+    fileprivate var effectiveBPM: Double { trackBPM * playbackRatio * nudgeRatio }
+
+    /// Effective playback rate as a ratio of nominal (1.0 == nominal), including
+    /// the tempo fader and any transient nudge. Phase 6a `deckRate(_:)`.
+    public var effectiveRate: Double { playbackRatio * nudgeRatio }
+
+    /// Explicitly disengages tempo-sync for this deck (Phase 6b item 2).
+    public func unsync() {
+        guard isSynced else { return }
+        isSynced = false
+        post(PE_CMD_UNSYNC)
+        bridge.publishSyncState(index: index)
+    }
+
+    /// Engage sync, optionally aligning bars (downbeats) rather than beats.
+    public func sync(barSync: Bool) {
+        self.barSync = barSync
+        sync()
+    }
+    private var barSync = false
 
     private func syncTargetPosition(master: Deck?, masterBPM: Double) -> TimeInterval {
         guard let master else { return 0 }
@@ -830,6 +1062,67 @@ public final class Deck {
     }
     /// Beat-jump size for `.beatJump` mode.
     public var beatJumpSize: Double = 4
+
+    // MARK: Per-deck stems (Phase 6b item 1)
+
+    private var stemBuffers: [PCMBuffer?] = Array(repeating: nil, count: 4)
+    /// `true` while a 4-voice stem set drives this deck's source signal.
+    public private(set) var stemsArmed = false
+
+    /// Arms a per-deck 4-voice stem overlay. The voices share this deck's
+    /// playhead and grid; the summed, gain-weighted voices replace the single
+    /// full-mix reader until `disarmStems()`. A deck with no stems armed renders
+    /// bit-for-bit identically to before.
+    public func armStems(_ voices: [StemKind: PCMBuffer]) {
+        for kind in StemKind.allCases {
+            guard let pcm = voices[kind] else {
+                stemBuffers[kind.index] = nil
+                pe_deck_set_stem_buffer(bridge.handle, Int32(index), Int32(kind.index), nil, 0, 0)
+                continue
+            }
+            stemBuffers[kind.index] = pcm
+            pcm.withUnsafeChannels { channels, frames in
+                channels.withMemoryRebound(to: UnsafePointer<Float>?.self, capacity: pcm.channelCount) { pointers in
+                    pe_deck_set_stem_buffer(bridge.handle, Int32(index), Int32(kind.index),
+                                            UnsafePointer(pointers), Int32(pcm.channelCount), Int64(frames))
+                }
+            }
+        }
+        stemsArmed = true
+        // pe_deck_set_stem_buffer already armed the overlay synchronously; no
+        // deferred PE_CMD_STEM_ARM (it would fight a subsequent disarm still in
+        // the command ring).
+    }
+
+    public func disarmStems() {
+        stemsArmed = false
+        for i in stemBuffers.indices { stemBuffers[i] = nil }
+        pe_deck_clear_stems(bridge.handle, Int32(index))
+    }
+
+    public func setStemGain(_ kind: StemKind, _ gain: Double) {
+        post(PE_CMD_STEM_GAIN, i0: kind.index, f0: Float(max(0, min(4, gain))))
+    }
+    public func setStemMute(_ kind: StemKind, _ muted: Bool) {
+        post(PE_CMD_STEM_MUTE, i0: kind.index, i1: muted ? 1 : 0)
+    }
+    public func setStemSolo(_ kind: StemKind, _ soloed: Bool) {
+        post(PE_CMD_STEM_SOLO, i0: kind.index, i1: soloed ? 1 : 0)
+    }
+
+    // MARK: Per-deck beat echo (Phase 6b item 3)
+
+    private var echoEnabled = false
+    /// Configures / toggles this deck's beat echo. The delay period tracks the
+    /// deck's (synced) effective BPM. Disabling with a live tail lets the
+    /// repeats decay rather than cutting them.
+    public func setEcho(enabled: Bool, beats: Double = 1, depth: Double = 0.5, feedback: Double = 0.4) {
+        echoEnabled = enabled
+        let fb = Int(max(0, min(0.95, feedback)) * 1000)
+        post(PE_CMD_ECHO_SET, i0: enabled ? 1 : 0, i1: fb, i2: 1,
+             f0: Float(beats > 0 ? beats : 1), f1: Float(max(0, min(1, depth))))
+    }
+    public func setEchoEnabled(_ on: Bool) { setEcho(enabled: on) }
 
     /// Jumps by musical beats and snaps the destination when quantize is on.
     public func beatJump(beats: Double) {
@@ -996,6 +1289,9 @@ public final class MasterOut {
     public var masterCue: Bool = false
     /// Limiter ceiling in dBTP (default −0.3).
     public var limiterCeilingDB: Double = -0.3 { didSet { publishControl() } }
+    /// `false` bypasses the master brickwall limiter entirely (Phase 6b item 8),
+    /// so `WorkspaceEngine.limiterCeiling` can be represented as `nil`.
+    public var limiterEnabled: Bool = true { didSet { publishControl() } }
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
     fileprivate func updatePeak(_ value: Float) {
@@ -1006,6 +1302,7 @@ public final class MasterOut {
     private func publishControl() {
         bridge.control.master_level = Float(max(0, min(1, level)))
         bridge.control.limiter_ceiling_db = Float(limiterCeilingDB.isFinite ? limiterCeilingDB : -0.3)
+        bridge.control.limiter_enabled = limiterEnabled ? 1 : 0
         bridge.publishControl()
     }
 }
@@ -1136,18 +1433,35 @@ public final class MicInput {
     }
 }
 
+/// Headphone cue routing model (Phase 6b item 5, SPEC §44.2a).
+public enum CueMode: String, Sendable, CaseIterable {
+    case off, splitOutput, cueInPlace, multichannel
+    fileprivate var raw: Float {
+        switch self {
+        case .off: return 0
+        case .splitOutput: return 1
+        case .cueInPlace: return 2
+        case .multichannel: return 3
+        }
+    }
+}
+
 @MainActor
 public final class Monitoring {
     private let bridge: EngineBridge
     public var masterCue: Bool = false { didSet { publishControl() } }
     public var cueMasterMix: Double = 0.5 { didSet { publishControl() } } // 0 = cue only, 1 = master only
     public var headphoneLevel: Double = 0.7 { didSet { publishControl() } }
+    /// `.splitOutput` sums master→mono-left, cue→mono-right in the monitor bus.
+    /// `.off` keeps the monitor render path bit-exact (offline harness relies on it).
+    public var cueMode: CueMode = .off { didSet { publishControl() } }
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
     private func publishControl() {
         bridge.control.master_cue = masterCue ? 1 : 0
         bridge.control.cue_master_mix = Float(max(0, min(1, cueMasterMix)))
         bridge.control.headphone_level = Float(max(0, min(1, headphoneLevel)))
+        bridge.control.cue_mode = cueMode.raw
         bridge.publishControl()
     }
 }
