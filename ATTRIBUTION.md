@@ -35,6 +35,8 @@ the exact license (CC0 / CC-BY / CC-BY-SA, etc.) and required attribution before
 | Josh Woodward - 17 - Little Tomcat | unknown | oggVorbis | https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_17_-_Little_Tomcat.ogg |
 | Bach, Toccata und Fuge d-moll BWV 565, Norbert Schenk | classical | mp3 | https://commons.wikimedia.org/wiki/File:Bach,_Toccata_und_Fuge_d-moll_BWV_565,_Norbert_Schenk.mp3 |
 | Enrique Granados - danza espanola, op. 37, h. 142 - xii. arabesca | classical | oggVorbis | https://commons.wikimedia.org/wiki/File:Enrique_Granados_-_danza_espanola,_op._37,_h._142_-_xii._arabesca.ogg |
+| Josh Woodward - Ashes - 06 - Anchor | singer-songwriter | oggVorbis | https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_Ashes_-_06_-_Anchor.ogg |
+| Josh Woodward - The Wake - 07 - Invisible Light | singer-songwriter | oggVorbis | https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_The_Wake_-_07_-_Invisible_Light.ogg |
 
 > To lock verified BPM/key ground truth for regression tests, edit the matching
 > `expected` entry in `Tests/Fixtures/fixtures.json`.

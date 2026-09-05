@@ -56,6 +56,76 @@ labels use the analyzer's current best-effort classifications (`intro`,
 acceptance aid, not ground truth: verify questionable phrases by listening and record verified
 values in the fixture ledger.
 
+## Stem separation and CLAP semantic search (Phase 7b/7c)
+
+These two neural features don't fit the WAV+JSON+video-overlay contract above (stems produce
+four full-length audio files, not one; CLAP is a text→track ranking, not a per-track render), so
+they're separate executables in the same `Tools/AcceptanceArtifacts` package: `ParsoStemsAcceptance`
+and `ParsoClapAcceptance`. Both take real, caller-supplied `.mlpackage` weights — this repo never
+ships them (`Sources/ParsoAudioNeural/Semantic.swift`, `Separation.swift`) — and neither tool
+attempts to fake or bypass a missing model; each errors out with the expected path if the model
+isn't there.
+
+### Stem separation
+
+Runs real Demucs inference (`DemucsStems.mlpackage`, already converted for `parso-tonearm` — see
+`ATTRIBUTION.md`) through the same `StemModelProviding`/`StemSeparator` seam PAE ships, and writes
+each of the four voices as its own WAV so you can listen to vocals/drums/bass/other in isolation
+and against the mix:
+
+```bash
+swift run --package-path Tools/AcceptanceArtifacts ParsoStemsAcceptance \
+  --fixture josh_woodward_anchor \
+  --stems-model /path/to/parso-tonearm/Resources/Models/DemucsStems.mlpackage \
+  --output-dir artifacts/acceptance/stems
+```
+
+`--max-seconds N` clips the source before separating (omit or `0` for the complete track — Demucs
+runs in ~7.8 s chunks with 50% overlap-add, so the full track gives the most representative
+listening review). `josh_woodward_anchor` and `josh_woodward_invisible_light` are vocal-forward
+full-band fixtures added specifically for this review (`Tests/Fixtures/fixtures.json`, role
+`stems`) — the tempo/key analysis fixtures skew instrumental house/disco and are a worse test of
+vocal isolation.
+
+Demucs is a real converted model used here to prove the separation pipeline end-to-end; it is
+**not** PAE's shipping default (Spleeter is — see README.md "On-device neural"). Spleeter has no
+converted `.mlpackage` yet — converting its TF checkpoint is separate follow-up work — so this tool
+takes any `StemModelProviding` conformance and needs no changes once one exists; pass its path to
+`--stems-model` instead.
+
+A `.mlpackage` must be compiled before `MLModel` can load it (an Xcode app target does this at
+build time automatically; this standalone CLI does it itself via `MLModel.compileModel(at:)`).
+
+### CLAP semantic search
+
+Embeds each given fixture once with the CLAP audio encoder, embeds each text query once with the
+text encoder, ranks the fixtures by cosine similarity, and writes/prints the ranking so you can
+listen through it top-to-bottom and judge relevance — this is a search-relevance review, not a
+per-track effect:
+
+```bash
+swift run --package-path Tools/AcceptanceArtifacts ParsoClapAcceptance \
+  --fixtures audial_waking_up,bach_toccata_fugue_d_minor_norbert_schenk,josh_woodward_anchor \
+  --query "driving house beat" \
+  --query "melancholy piano" \
+  --text-model /path/to/CLAPTextEncoder.mlmodelc \
+  --audio-model /path/to/CLAPAudioEncoder.mlmodelc \
+  --tokenizer-dir /path/to/parso-tonearm/Resources/CLAP \
+  --mel-filterbank /path/to/parso-tonearm/Resources/CLAP/mel_filterbank_slaney_64.bin \
+  --output-dir artifacts/acceptance/clap
+```
+
+The CLAP models, tokenizer vocab/merges, and mel filterbank are the ones already converted for
+`parso-tonearm` (`Resources/Models/CLAPTextEncoder.mlpackage` / `CLAPAudioEncoder.mlpackage`,
+`Resources/CLAP/`) — see `ATTRIBUTION.md`. Unlike the stems tool, `--text-model`/`--audio-model`
+must already be compiled `.mlmodelc` directories (`CoreMLSemanticModel` itself, unlike this tool's
+Demucs wrapper, does not compile a raw `.mlpackage`); compile once with:
+
+```bash
+xcrun coremlcompiler compile /path/to/CLAPTextEncoder.mlpackage /path/to/compiled-dir
+xcrun coremlcompiler compile /path/to/CLAPAudioEncoder.mlpackage /path/to/compiled-dir
+```
+
 ## Engine scenario matrix
 
 The same sidecar schema will be used for rendered headless-engine scenarios. Each scenario must

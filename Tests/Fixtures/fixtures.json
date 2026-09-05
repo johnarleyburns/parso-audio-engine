@@ -208,6 +208,20 @@
       "sourceFormat": "oggVorbis", "genre": "classical", "beatBased": true,
       "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
       "note": "Human reference: Am / 85.5 BPM. The current v1 tempo estimator reports 152.0 BPM with 0.19 confidence; strict BPM/key assertions remain pending estimator refinement.",
-      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null, "confidenceFloor": 0.1 } }
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null, "confidenceFloor": 0.1 } },
+
+    { "id": "josh_woodward_anchor", "filename": "Josh_Woodward_-_Ashes_-_06_-_Anchor.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_Ashes_-_06_-_Anchor.ogg",
+      "sourceFormat": "oggVorbis", "genre": "singer-songwriter", "beatBased": true,
+      "roles": ["stems"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Vocal-forward full-band track added for the Phase 7b/7c stem-separation human-listening review (docs/human-visible-acceptance.md); not used for BPM/key assertions.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "josh_woodward_invisible_light", "filename": "Josh_Woodward_-_The_Wake_-_07_-_Invisible_Light.ogg",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_The_Wake_-_07_-_Invisible_Light.ogg",
+      "sourceFormat": "oggVorbis", "genre": "singer-songwriter", "beatBased": true,
+      "roles": ["stems"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Vocal-forward full-band track added for the Phase 7b/7c stem-separation human-listening review (docs/human-visible-acceptance.md); not used for BPM/key assertions.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } }
   ]
 }

@@ -25,7 +25,25 @@ let package = Package(
                 .product(name: "ParsoAudioAnalysis", package: "parso-audio-engine"),
                 .product(name: "ParsoDJEngine", package: "parso-audio-engine"),
             ]
-        )
+        ),
+        // Phase 7b/7c human-listening acceptance: real stem separation and
+        // real CLAP semantic search over Wikimedia Commons fixtures, run
+        // against caller-supplied `.mlpackage` weights (never shipped).
+        .executableTarget(
+            name: "ParsoStemsAcceptance",
+            dependencies: [
+                .product(name: "ParsoAudioCore", package: "parso-audio-engine"),
+                .product(name: "ParsoAudioNeural", package: "parso-audio-engine"),
+            ]
+        ),
+        .executableTarget(
+            name: "ParsoClapAcceptance",
+            dependencies: [
+                .product(name: "ParsoAudioCore", package: "parso-audio-engine"),
+                .product(name: "ParsoAudioAnalysis", package: "parso-audio-engine"),
+                .product(name: "ParsoAudioNeural", package: "parso-audio-engine"),
+            ]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )
