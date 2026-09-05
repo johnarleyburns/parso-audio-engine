@@ -182,16 +182,14 @@ struct CachingResourceLoaderWarmTests {
         #expect(onDisk == StubRangeProtocol.blob)
     }
 
-    /// `warm` runs on a detached `.background`-priority task, so it can be
-    /// starved for an unbounded time (not just slowed) by higher-priority
-    /// concurrent work — the fixture-analysis suites (scalar FFT over every
-    /// audio fixture) plus the Phase 7b/7c neural suites (CLAP tokenization,
-    /// pooling, quantization) on a CPU-saturated CI runner. Observed CI timing
-    /// has varied from under a second to over a minute on the same commit, so
-    /// this is a reliability floor, not a performance budget: the poll exits
-    /// the instant the condition holds, so a healthy run still finishes in
-    /// tens of milliseconds.
-    private func pollUntil(timeout: TimeInterval = 300,
+    /// `warm` runs on a detached `.background`-priority task, so on a
+    /// CPU-saturated CI runner it gets essentially zero CPU until the other
+    /// concurrent CPU-heavy suites (fixture-analysis FFT, Phase 7b/7c neural
+    /// tokenization/pooling/quantization) finish, then completes within
+    /// milliseconds. Observed CI totals for the whole test binary have run up
+    /// to ~320s, so the deadline needs headroom above that, not just above a
+    /// typical run — this is a reliability floor, not a performance budget.
+    private func pollUntil(timeout: TimeInterval = 600,
                            _ condition: @Sendable () async -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
