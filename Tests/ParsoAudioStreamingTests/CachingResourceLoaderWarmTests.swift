@@ -184,10 +184,11 @@ struct CachingResourceLoaderWarmTests {
 
     /// `warm` runs on a detached background-priority task; under a full
     /// `swift test -c release` run the fixture-analysis suites (scalar FFT over
-    /// every audio fixture) saturate the CPU and starve it, so the deadline is
+    /// every audio fixture) plus the Phase 7b/7c neural suites (CLAP tokenization,
+    /// pooling, quantization) saturate the CPU and starve it, so the deadline is
     /// generous. The poll exits the instant the condition holds, so a healthy run
     /// still finishes in tens of milliseconds.
-    private func pollUntil(timeout: TimeInterval = 30,
+    private func pollUntil(timeout: TimeInterval = 60,
                            _ condition: @Sendable () async -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
