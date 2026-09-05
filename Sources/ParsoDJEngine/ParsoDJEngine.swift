@@ -121,8 +121,25 @@ public final class DJEngine {
             throw AudioEngineError.invalidOutputFormat
         }
 
-        let handle = bridge.handle
-        let sourceNode = AVAudioSourceNode(format: sourceFormat) { _, _, frameCount, audioBufferList in
+        let sourceNode = AVAudioSourceNode(format: sourceFormat,
+                                          renderBlock: Self.makeRenderBlock(handle: bridge.handle))
+        audioEngine.attach(sourceNode)
+        audioEngine.connect(sourceNode, to: audioEngine.mainMixerNode, format: sourceFormat)
+        try audioEngine.start()
+        self.audioEngine = audioEngine
+    }
+
+    /// Builds the `AVAudioSourceNode` render callback in a `nonisolated`
+    /// static context so the closure literal does not inherit `DJEngine`'s
+    /// `@MainActor` isolation. Core Audio invokes this from its own
+    /// dedicated real-time thread (`AURemoteIO::IOThread`), never the main
+    /// actor's executor — a MainActor-isolated closure compiles in a runtime
+    /// isolation check that fires (and traps, `EXC_BREAKPOINT`/`SIGTRAP` via
+    /// `dispatch_assert_queue_fail`) the moment the engine starts rendering.
+    /// `handle` is an `OpaquePointer`, so it crosses into this nonisolated
+    /// scope safely with no shared mutable state.
+    nonisolated private static func makeRenderBlock(handle: OpaquePointer) -> AVAudioSourceNodeRenderBlock {
+        { _, _, frameCount, audioBufferList in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
             guard buffers.count >= 2,
                   let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
@@ -132,10 +149,6 @@ public final class DJEngine {
             pe_render(handle, left, right, Int32(frameCount))
             return noErr
         }
-        audioEngine.attach(sourceNode)
-        audioEngine.connect(sourceNode, to: audioEngine.mainMixerNode, format: sourceFormat)
-        try audioEngine.start()
-        self.audioEngine = audioEngine
     }
 
     public func stop() {
