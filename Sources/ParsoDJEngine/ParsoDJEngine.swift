@@ -175,6 +175,13 @@ public final class DJEngine {
     /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
     public func telemetry() -> EngineStats { bridge.engineStats() }
 
+    /// The current tempo-master deck's sounding key, or nil if no master is set
+    /// or it has no analysed key (CDJ3000 parity C2 — the DJM/CDJ "master key").
+    public var masterKey: KeyResult? {
+        guard let idx = bridge.masterDeckIndex, decks.indices.contains(idx) else { return nil }
+        return decks[idx].soundingKey
+    }
+
     // MARK: Recording (Phase 6b item 4)
     private var recordingPump: Task<Void, Never>?
 
@@ -496,6 +503,13 @@ public final class HeadlessDJEngine {
     /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
     public func telemetry() -> EngineStats { bridge.engineStats() }
 
+    /// The current tempo-master deck's sounding key, or nil if no master is set
+    /// or it has no analysed key (CDJ3000 parity C2 — the DJM/CDJ "master key").
+    public var masterKey: KeyResult? {
+        guard let idx = bridge.masterDeckIndex, decks.indices.contains(idx) else { return nil }
+        return decks[idx].soundingKey
+    }
+
     // MARK: Recording (Phase 6b item 4)
     public func startRecording(_ recorder: MixRecorder) { bridge.startRecording(recorder) }
     @discardableResult
@@ -807,6 +821,39 @@ public final class Deck {
     }
     /// Independent key change (Key Shift), in semitones.
     public var pitchSemitones: Double = 0 { didSet { updatePlaybackRate() } }
+
+    // MARK: Key Sync / detected key (CDJ3000 parity C2)
+
+    /// The analysed key of the loaded track, if any.
+    public var detectedKey: KeyResult? { trackAnalysis?.key }
+
+    /// The key the deck is currently *sounding* in — `detectedKey` transposed by
+    /// the current Key Shift. Tempo changes are pitch-neutral under key-lock so
+    /// they do not affect this; with key-lock off, varispeed does shift pitch but
+    /// the CDJ likewise reports the nominal shifted key here.
+    public var soundingKey: KeyResult? {
+        detectedKey?.transposed(by: Int(pitchSemitones.rounded()))
+    }
+
+    /// Maximum shift Key Sync will apply, in semitones (CDJ default ±6 — a
+    /// perfect-fourth/fifth is the farthest musically sensible pull).
+    public var keySyncRange: Int = 6
+
+    /// Shifts this deck's key (pitch only) to sit in `reference`'s detected key,
+    /// shortest path, clamped to `keySyncRange`. Engages key-lock if it was off
+    /// (Key Shift needs the time-pitch path). Returns the shift applied, or nil
+    /// if either track has no analysed key. Mirrors the CDJ-3000 Key Sync button.
+    @discardableResult
+    public func keySync(to reference: Deck) -> Int? {
+        guard let mine = detectedKey, let theirs = reference.detectedKey else { return nil }
+        let shift = max(-keySyncRange, min(keySyncRange, mine.shortestShift(to: theirs)))
+        if !keyLock { keyLock = true }
+        pitchSemitones = Double(shift)
+        return shift
+    }
+
+    /// Returns Key Shift / Key Sync to the track's native key.
+    public func keyReset() { pitchSemitones = 0 }
 
     /// `true` when this deck is following the current master deck's tempo.
     public private(set) var isSynced: Bool = false

@@ -808,3 +808,80 @@ struct FourDeckTests {
         #expect(t.deckSyncedAll[3])
     }
 }
+
+// MARK: - CDJ-3000 parity C2a: Key Sync / detected key / master key
+
+@Suite("CDJ3000 C2 — Key Sync")
+@MainActor
+struct KeySyncTests {
+    private func load(_ deck: Deck, tonic: Int, minor: Bool = false, freq: Double = 220) {
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let cam = "8\(minor ? "A" : "B")"
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: tonic, mode: minor ? .minor : .major, camelot: cam,
+                       openKey: "1\(minor ? "m" : "d")", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        deck.load(analysis, buffer: pcm)
+    }
+
+    @Test func detectedKeyComesFromTheLoadedAnalysis() {
+        let e = HeadlessDJEngine()
+        load(e.deckA, tonic: 7)               // G major
+        #expect(e.deckA.detectedKey?.tonic == 7)
+        #expect(e.deckB.detectedKey == nil)   // nothing loaded
+    }
+
+    @Test func keySyncShiftsToTheReferenceKeyShortestPath() {
+        let e = HeadlessDJEngine()
+        load(e.deckA, tonic: 0)   // C
+        load(e.deckB, tonic: 2)   // D  -> B should drop 2 semitones to reach C
+        let shift = e.deckB.keySync(to: e.deckA)
+        #expect(shift == -2)
+        #expect(e.deckB.pitchSemitones == -2)
+        #expect(e.deckB.keyLock)                       // engaged automatically
+        #expect(e.deckB.soundingKey?.tonic == 0)       // now sounding in C
+    }
+
+    @Test func keySyncTakesTheShortWayAroundTheOctave() {
+        let e = HeadlessDJEngine()
+        load(e.deckA, tonic: 1)   // C#
+        load(e.deckB, tonic: 11)  // B -> +2 is shorter than -10
+        #expect(e.deckB.keySync(to: e.deckA) == 2)
+    }
+
+    @Test func keySyncClampsToTheRange() {
+        let e = HeadlessDJEngine()
+        e.deckB.keySyncRange = 1
+        load(e.deckA, tonic: 6)
+        load(e.deckB, tonic: 0)   // wants +6, clamped to +1
+        #expect(e.deckB.keySync(to: e.deckA) == 1)
+    }
+
+    @Test func keyResetReturnsToNativeKey() {
+        let e = HeadlessDJEngine()
+        load(e.deckA, tonic: 0); load(e.deckB, tonic: 5)
+        e.deckB.keySync(to: e.deckA)
+        e.deckB.keyReset()
+        #expect(e.deckB.pitchSemitones == 0)
+        #expect(e.deckB.soundingKey?.tonic == 5)
+    }
+
+    @Test func masterKeyFollowsTheMasterDeck() {
+        let e = HeadlessDJEngine()
+        load(e.decks[2], tonic: 9)   // A
+        e.decks[2].setAsMaster()
+        #expect(e.masterKey?.tonic == 9)
+        e.decks[2].pitchSemitones = 3
+        #expect(e.masterKey?.tonic == 0)   // A + 3 = C
+    }
+
+    @Test func keySyncNoOpsWithoutAnalysedKeys() {
+        let e = HeadlessDJEngine()
+        load(e.deckA, tonic: 0)
+        #expect(e.deckB.keySync(to: e.deckA) == nil)  // deck B has no track
+    }
+}
