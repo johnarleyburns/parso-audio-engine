@@ -14,3 +14,6 @@ Tests/Fixtures/expected.local.json
 
 # Agent phase ledger — untracked by design (see AGENTS.md §3)
 current_status.md
+
+# CDJ3000 parity C7 — fetched sample packs / IR libraries (never committed)
+SampleLibrary/downloads/

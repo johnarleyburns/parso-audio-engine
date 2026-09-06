@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "Built-in sampler content + convolution impulse responses for the CDJ-3000",
+    "parity work (docs/CDJ3000-parity-research.md C5, C7).",
+    "",
+    "NOTHING here is committed to this repository. scripts/download-samples.sh",
+    "fetches each pack into SampleLibrary/downloads/ (git-ignored), the same",
+    "pattern as scripts/download-fixtures.sh. An app that ships PAE curates its",
+    "own subset from these and records attribution per SAMPLES-NOTICE.md.",
+    "",
+    "License policy mirrors the codec / stem-model policy: CC0 is preferred;",
+    "CC-BY-4.0 is acceptable for a data pack WITH a per-file attribution",
+    "manifest; anything with a Non-Commercial (NC) clause is DISQUALIFIED for a",
+    "commercially redistributable app."
+  ],
+  "packs": [
+    {
+      "id": "vcsl",
+      "name": "Versilian Community Sample Library",
+      "kind": "instrument-oneshots",
+      "license": "CC0-1.0",
+      "homepage": "https://versilian-studios.com/vcsl/",
+      "fetch": { "type": "git", "url": "https://github.com/sgossner/VCSL.git", "depth": 1 },
+      "provides": ["orchestral", "world", "keys", "mallets", "experimental"],
+      "use": "Keyboard pad mode, tonal sampler banks, orchestral hits / stabs"
+    },
+    {
+      "id": "vsco2-ce",
+      "name": "Versilian Studios Chamber Orchestra 2 — Community Edition",
+      "kind": "instrument-oneshots",
+      "license": "CC0-1.0",
+      "homepage": "https://vis.versilstudios.com/vsco-community.html",
+      "fetch": { "type": "archive", "url": "https://github.com/sgossner/VSCO-2-CE/archive/refs/heads/master.zip" },
+      "provides": ["strings", "brass", "woodwinds", "percussion"],
+      "use": "Orchestral stabs / pads for the sampler"
+    },
+    {
+      "id": "virtuosity-drums",
+      "name": "Virtuosity Drums (Versilian Studios)",
+      "kind": "drum-oneshots",
+      "license": "CC0-1.0",
+      "homepage": "https://vis.versilstudios.com/virtuosity-drums.html",
+      "fetch": { "type": "archive", "url": "https://github.com/sgossner/Virtuosity_Drums/archive/refs/heads/master.zip" },
+      "provides": ["acoustic-kit"],
+      "use": "Acoustic drum one-shots for the sampler"
+    },
+    {
+      "id": "openair-irs",
+      "name": "OpenAIR impulse responses (Univ. of York)",
+      "kind": "impulse-responses",
+      "license": "CC-BY-4.0",
+      "attributionRequired": true,
+      "homepage": "https://www.openair.hosted.york.ac.uk/",
+      "fetch": { "type": "manual", "note": "Per-space downloads; each space page lists its own contributor + CC-BY attribution. Pull only the spaces you ship and record them in SAMPLES-NOTICE.md." },
+      "provides": ["halls", "cathedrals", "tunnels", "plates", "rooms"],
+      "use": "Convolution Reverb / Space Beat FX (C7)"
+    },
+    {
+      "id": "echothief-irs",
+      "name": "EchoThief impulse response library",
+      "kind": "impulse-responses",
+      "license": "free-for-any-use",
+      "homepage": "http://www.echothief.com/",
+      "fetch": { "type": "archive", "url": "http://www.echothief.com/wp-content/uploads/2016/06/EchoThiefImpulseResponseLibrary.zip" },
+      "provides": ["~1000 real spaces"],
+      "use": "Convolution Reverb / Space Beat FX (C7)"
+    }
+  ]
+}
