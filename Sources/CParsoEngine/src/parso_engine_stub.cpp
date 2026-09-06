@@ -135,6 +135,9 @@ struct ControlState {
     std::atomic<float> beatFXDepth{0.5f};
     std::atomic<float> beatFXAssign{0.0f};
     std::atomic<float> beatFXOn{0.0f};
+    std::atomic<float> beatFXXpad{-1.0f};
+    std::atomic<float> beatFXBand{0.0f};
+    std::atomic<float> colorParam[PE_MAX_DECKS]{{0.5f}, {0.5f}, {0.5f}, {0.5f}};
     std::atomic<float> fader[PE_MAX_DECKS]{{1.0f}, {1.0f}, {1.0f}, {1.0f}};
     std::atomic<float> trim[PE_MAX_DECKS]{{0.5f}, {0.5f}, {0.5f}, {0.5f}};
     std::atomic<float> deckTimeRatio[PE_MAX_DECKS]{{1.0f}, {1.0f}, {1.0f}, {1.0f}};
@@ -176,6 +179,8 @@ struct pe_engine {
     int beatFXTailFrames = 0;
     float beatFXDelay[48000] = {};
     uint32_t beatFXDelayIndex = 0;
+    float beatFXBandLP = 0.0f;   // FX-input band-limit filter state (CDJ3000 C4)
+    float beatFXBandHP = 0.0f;
     float limiterGain = 1.0f;
     // CParsoDSP kernels — the shared, unit-tested DSP (docs/phase6-parity.md C1).
     // Owned by the engine: created in pe_create, freed in pe_destroy. All are
@@ -252,7 +257,10 @@ static float processColorFX(DeckState& deck, float input, double sampleRate, int
                             const ControlState& control) {
     const float rawAmount = control.colorAmount[deckIndex].load(std::memory_order_relaxed);
     const float amount = std::isfinite(rawAmount) ? std::max(-1.0f, std::min(1.0f, rawAmount)) : 0.0f;
-    const float wet = std::fabs(amount);
+    // Sound Color FX PARAMETER knob (CDJ3000 C4): scales the effect intensity.
+    // 0.5 is neutral (×1.0), so a default engine matches pre-C4 output exactly.
+    const float param = control.colorParam[deckIndex].load(std::memory_order_relaxed);
+    const float wet = std::min(1.0f, std::fabs(amount) * (param / 0.5f));
     const float lowAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 250.0f /
                                              static_cast<float>(sampleRate));
     const float highAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 1800.0f /
@@ -383,7 +391,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         } else if (command.type == PE_CMD_SAMPLER_STOP && command.i0 >= 0 && command.i0 < 16) {
             engine->sampler[command.i0].playing = false;
         } else if (command.type == PE_CMD_BEATFX_KIND && std::isfinite(command.f0)) {
-            engine->beatFXKind = std::max(0, std::min(13, static_cast<int>(std::lround(command.f0))));
+            engine->beatFXKind = std::max(0, std::min(19, static_cast<int>(std::lround(command.f0))));
         } else if (command.type == PE_CMD_BEATFX_ONOFF) {
             engine->beatFXOn = command.f0 > 0.5f;
             if (engine->beatFXOn) engine->beatFXTail = false;
@@ -445,7 +453,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             break;
         case PE_CMD_BEATFX_KIND:
             if (std::isfinite(command.f0)) {
-                engine->beatFXKind = std::max(0, std::min(13, static_cast<int>(std::lround(command.f0))));
+                engine->beatFXKind = std::max(0, std::min(19, static_cast<int>(std::lround(command.f0))));
             }
             break;
         case PE_CMD_BEATFX_ONOFF:
@@ -732,45 +740,65 @@ static float processBeatFX(pe_engine* engine, float input) {
     const bool active = engine->beatFXOn || engine->beatFXTail;
     if (!active) return input;
 
+    // FX-input band limit (CDJ3000 C4): 0 all, 1 low, 2 mid, 3 high. One-pole
+    // shelves at ~250 Hz / ~2 kHz on the FX send only — the dry path is untouched.
+    const int band = std::max(0, std::min(3, static_cast<int>(std::lround(
+        engine->control.beatFXBand.load(std::memory_order_relaxed)))));
+    float fxIn = input;
+    if (band != 0) {
+        const float sr = static_cast<float>(engine->sampleRate);
+        const float aLo = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 250.0f / sr);
+        const float aHi = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 2000.0f / sr);
+        engine->beatFXBandLP += aLo * (input - engine->beatFXBandLP);
+        engine->beatFXBandHP += aHi * (input - engine->beatFXBandHP);
+        if (band == 1) fxIn = engine->beatFXBandLP;                       // low
+        else if (band == 3) fxIn = input - engine->beatFXBandHP;         // high
+        else fxIn = engine->beatFXBandHP - engine->beatFXBandLP;         // mid
+    }
+
     const float rawBeats = engine->control.beatFXBeats.load(std::memory_order_relaxed);
-    const float beats = std::isfinite(rawBeats) ? std::max(0.0625f, std::min(8.0f, rawBeats)) : 0.5f;
+    float beats = std::isfinite(rawBeats) ? std::max(0.0625f, std::min(8.0f, rawBeats)) : 0.5f;
+    // X-Pad (CDJ3000 C4): when touched (0..1) it sweeps the beat division
+    // exponentially from 1/16 to 4 beats, the DJM X-Pad's primary axis.
+    const float xpad = engine->control.beatFXXpad.load(std::memory_order_relaxed);
+    if (xpad >= 0.0f) beats = std::pow(2.0f, -4.0f + std::min(1.0f, xpad) * 6.0f);
+
     const int kind = engine->beatFXKind;
     int delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * beats * 0.5f)));
-    if (kind == 2) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.08)));
-    if (kind == 5 || kind == 6) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.005)));
+    if (kind == 2 || kind == 19) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.08)));
+    if (kind == 5 || kind == 6 || kind == 18) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.005)));
+    if (kind == 16 || kind == 17) delaySamples = std::max(1, delaySamples * 2 / 3);  // triplet timing
 
     const uint32_t index = engine->beatFXDelayIndex;
     const uint32_t delayedIndex = (index + 48000u - static_cast<uint32_t>(delaySamples)) % 48000u;
+    const uint32_t halfIndex = (index + 48000u - static_cast<uint32_t>(delaySamples / 2 + 1)) % 48000u;
     const float delayed = engine->beatFXDelay[delayedIndex];
     const float rawDepth = engine->control.beatFXDepth.load(std::memory_order_relaxed);
     const float depth = std::isfinite(rawDepth) ? std::max(0.0f, std::min(1.0f, rawDepth)) : 0.5f;
     float wet = delayed;
     float feedback = 0.55f;
     switch (kind) {
-        case 2: // Reverb.
-            feedback = 0.72f;
-            wet = delayed + input * 0.35f;
-            break;
-        case 5: // Flanger.
-            wet = delayed;
-            feedback = 0.4f;
-            break;
-        case 6: // Phaser approximation with a short all-pass-like blend.
-            wet = input - delayed;
-            feedback = 0.35f;
-            break;
-        case 7: // Trans.
-            wet = delayed;
-            feedback = 0.25f;
-            break;
-        case 8: // Roll.
-            wet = delayed;
-            feedback = 0.75f;
-            break;
-        default:
-            break;
+        case 2: feedback = 0.72f; wet = delayed + input * 0.35f; break;   // Reverb
+        case 5: wet = delayed; feedback = 0.4f; break;                    // Flanger
+        case 6: wet = input - delayed; feedback = 0.35f; break;           // Phaser
+        case 7: wet = delayed; feedback = 0.25f; break;                   // Trans
+        case 8: wet = delayed; feedback = 0.75f; break;                   // Roll
+        case 14: // Ping Pong — a second, shorter tap folded in.
+            wet = delayed + engine->beatFXDelay[halfIndex] * 0.7f; feedback = 0.6f; break;
+        case 15: // Mobius (barber-pole) — high-feedback resonant comb.
+            wet = delayed; feedback = 0.9f; break;
+        case 16: // Triplet Filter — gated (trans-like) at triplet timing.
+            wet = delayed; feedback = 0.2f; break;
+        case 17: // Triplet Roll.
+            wet = delayed; feedback = 0.78f; break;
+        case 18: // Enigma — flanger/phaser hybrid with feedback.
+            wet = input - delayed; feedback = 0.6f; break;
+        case 19: // Shimmer — reverb-ish plus a half-time (octave-suggestive) tap.
+            wet = delayed + engine->beatFXDelay[halfIndex] * 0.5f + input * 0.3f;
+            feedback = 0.8f; break;
+        default: break;
     }
-    engine->beatFXDelay[index] = input + wet * feedback;
+    engine->beatFXDelay[index] = fxIn + wet * feedback;
     engine->beatFXDelayIndex = (index + 1) % 48000u;
     const float output = input * (1.0f - depth) + wet * depth;
     if (engine->beatFXTail) {
@@ -936,7 +964,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         const float rawAmount = engine->control.colorAmount[deckIndex].load(std::memory_order_relaxed);
         const float filterKnob = (colorKind == 0 && std::isfinite(rawAmount))
             ? std::max(-1.0f, std::min(1.0f, rawAmount)) : 0.0f;
-        pd_filter_set(engine->deckFilter[deckIndex], filterKnob, 0.3f);
+        // PARAMETER knob scales filter resonance; 0.5 -> 0.3 (the pre-C4 value).
+        const float colorParam = engine->control.colorParam[deckIndex].load(std::memory_order_relaxed);
+        const float resonance = std::max(0.0f, std::min(0.9f, 0.6f * colorParam));
+        pd_filter_set(engine->deckFilter[deckIndex], filterKnob, resonance);
         pd_filter_process(engine->deckFilter[deckIndex], wet[deckIndex], wet[deckIndex], frames);
 
         // Per-deck beat echo (Phase 6b item 3) — a delay line in the deck chain,
@@ -1075,7 +1106,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
 
     const float rawBeatKind = engine->control.beatFXKind.load(std::memory_order_relaxed);
     if (std::isfinite(rawBeatKind)) {
-        engine->beatFXKind = std::max(0, std::min(13, static_cast<int>(std::lround(rawBeatKind))));
+        engine->beatFXKind = std::max(0, std::min(19, static_cast<int>(std::lround(rawBeatKind))));
     }
     const float rawBeatAssign = engine->control.beatFXAssign.load(std::memory_order_relaxed);
     if (std::isfinite(rawBeatAssign)) {
@@ -1348,6 +1379,12 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
         std::memory_order_relaxed
     );
     engine->control.beatFXOn.store(control->beatfx_on > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
+    engine->control.beatFXXpad.store(
+        std::isfinite(control->beatfx_xpad) ? std::min(1.0f, control->beatfx_xpad) : -1.0f,
+        std::memory_order_relaxed);
+    engine->control.beatFXBand.store(
+        std::isfinite(control->beatfx_band) ? std::max(0.0f, std::min(3.0f, control->beatfx_band)) : 0.0f,
+        std::memory_order_relaxed);
     engine->control.limiterEnabled.store(control->limiter_enabled > 0.5f ? 1.0f : 0.0f,
                                          std::memory_order_relaxed);
     engine->control.cueMode.store(
@@ -1394,6 +1431,10 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
             std::isfinite(colorKind) ? std::max(0.0f, std::min(6.0f, colorKind)) : 0.0f,
             std::memory_order_relaxed
         );
+        const float colorParam = control->color_param[index];
+        engine->control.colorParam[index].store(
+            std::isfinite(colorParam) ? std::max(0.0f, std::min(1.0f, colorParam)) : 0.5f,
+            std::memory_order_relaxed);
         const float ratio = control->deck_time_ratio[index];
         engine->control.deckTimeRatio[index].store(
             std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f,

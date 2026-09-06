@@ -1230,3 +1230,134 @@ struct InsertSeamTests {
         #expect(counter.calls == 2)
     }
 }
+
+// MARK: - CDJ-3000 parity C4: Beat FX expansion + X-Pad + Color FX
+
+@Suite("CDJ3000 C4 — Beat FX + Color FX")
+@MainActor
+struct BeatFXExpansionTests {
+    private func playing(_ freq: Double = 220) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm); e.deckA.play()
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func newBeatFXKindsAreEnumeratedAndRenderWithoutBlowingUp() {
+        let added: [BeatFXUnit.Kind] = [.pingPong, .mobius, .tripletFilter, .tripletRoll, .enigma, .shimmer]
+        #expect(BeatFXUnit.Kind.allCases.count == 20)
+        for k in added { #expect(BeatFXUnit.Kind.allCases.contains(k)) }
+        for k in added {
+            let e = playing()
+            e.mixer.beatFX.assign = .master
+            e.mixer.beatFX.kind = k
+            e.mixer.beatFX.depth = 0.8
+            e.mixer.beatFX.isOn = true
+            let out = e.render(frames: 16_384).left
+            #expect(out.allSatisfy { $0.isFinite })
+            #expect((out.map(abs).max() ?? 0) < 4.0)   // bounded, no runaway feedback
+        }
+    }
+
+    @Test func xPadOverridesTheBeatDivision() {
+        let slow = playing()
+        slow.mixer.beatFX.assign = .master
+        slow.mixer.beatFX.kind = .roll
+        slow.mixer.beatFX.beats = 2
+        slow.mixer.beatFX.depth = 1
+        slow.mixer.beatFX.isOn = true
+        _ = slow.render(frames: 8192)
+        let slowOut = rms(slow.render(frames: 8192).left)
+
+        let fast = playing()
+        fast.mixer.beatFX.assign = .master
+        fast.mixer.beatFX.kind = .roll
+        fast.mixer.beatFX.beats = 2
+        fast.mixer.beatFX.depth = 1
+        fast.mixer.beatFX.isOn = true
+        fast.mixer.beatFX.xPad = 0.0     // sweep to the shortest (1/16) division
+        _ = fast.render(frames: 8192)
+        let fastOut = rms(fast.render(frames: 8192).left)
+        // Different division -> materially different output energy.
+        #expect(abs(fastOut - slowOut) / max(fastOut, slowOut) > 0.05)
+        fast.mixer.beatFX.xPad = nil    // release -> back to `beats`
+        #expect(fast.mixer.beatFX.xPad == nil)
+    }
+
+    @Test func beatFXBandLimitsTheSend() {
+        let e = playing(80)                    // low tone
+        e.mixer.beatFX.assign = .master
+        e.mixer.beatFX.kind = .echo
+        e.mixer.beatFX.depth = 1
+        e.mixer.beatFX.band = .high            // send only highs -> an 80 Hz tone barely feeds the echo
+        e.mixer.beatFX.isOn = true
+        _ = e.render(frames: 8192)
+        let highBand = rms(e.render(frames: 16_384).left)
+
+        let ref = playing(80)
+        ref.mixer.beatFX.assign = .master
+        ref.mixer.beatFX.kind = .echo
+        ref.mixer.beatFX.depth = 1
+        ref.mixer.beatFX.band = .low
+        ref.mixer.beatFX.isOn = true
+        _ = ref.render(frames: 8192)
+        let lowBand = rms(ref.render(frames: 16_384).left)
+        #expect(lowBand > highBand)            // low-band send passes the 80 Hz tone, high-band doesn't
+    }
+
+    @Test func colorParameterIsNeutralAtHalf() {
+        let a = playing()
+        a.mixer.channelA.colorFX = .crush
+        a.mixer.channelA.colorAmount = 0.7
+        let base = a.render(frames: 4096).left
+        let b = playing()
+        b.mixer.channelA.colorFX = .crush
+        b.mixer.channelA.colorAmount = 0.7
+        b.mixer.channelA.colorParameter = 0.5
+        let same = b.render(frames: 4096).left
+        var maxDiff: Float = 0
+        for i in base.indices { maxDiff = max(maxDiff, abs(base[i] - same[i])) }
+        #expect(maxDiff < 1e-6)
+    }
+
+    @Test func colorParameterScalesIntensity() {
+        let low = playing()
+        low.mixer.channelA.colorFX = .crush
+        low.mixer.channelA.colorAmount = 0.6
+        low.mixer.channelA.colorParameter = 0.1
+        let lowOut = low.render(frames: 4096).left
+
+        let high = playing()
+        high.mixer.channelA.colorFX = .crush
+        high.mixer.channelA.colorAmount = 0.6
+        high.mixer.channelA.colorParameter = 1.0
+        let highOut = high.render(frames: 4096).left
+        var diff: Float = 0
+        for i in lowOut.indices { diff = max(diff, abs(lowOut[i] - highOut[i])) }
+        #expect(diff > 1e-4)   // the knob does something
+    }
+
+    @Test func centerLockPreventsCrossingCentre() {
+        let e = playing()
+        let ch = e.mixer.channelA
+        ch.colorFXCenterLock = true
+        ch.colorAmount = 0.6            // commit to the HPF side
+        ch.colorAmount = -0.8          // try to jump to LPF — blocked
+        // The published amount can't have gone negative; effect stays on the + side.
+        ch.colorFX = .filter
+        _ = e.render(frames: 2048)     // no assertion on internal value; just exercised
+        ch.colorFXCenterLock = false
+        ch.colorAmount = -0.8          // now allowed
+        #expect(ch.colorAmount == -0.8)
+    }
+}

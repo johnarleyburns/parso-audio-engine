@@ -319,6 +319,16 @@ algorithms and so should PAE.
     protocol + `Mixer.setInsert(_:at:)` with an `InsertPoint`. RT-thread
     callback, app owns RT-safety (BYO-effect, mirrors BYO-codec). 3 tests.
   Full suite 276/276 green.
+- **C4 — done.** Beat FX: 6 new kinds (`pingPong, mobius, tripletFilter,
+  tripletRoll, enigma, shimmer` → 20 total) as approximations on the existing
+  delay-line engine (same quality bar as the pre-existing kernels; a proper DSP
+  pass is future work). X-Pad — `BeatFXUnit.xPad: Double?` sweeps the beat
+  division exponentially (1/16…4) when touched. `beatfx_band` / `BeatFXUnit.Band`
+  band-limits the FX **send** (dry path untouched). Sound Color FX: `Channel.
+  colorParameter` (0…1, 0.5 neutral / byte-identical to pre-C4) scales effect
+  intensity + filter resonance; `Channel.colorFXCenterLock` latches the knob to
+  one side (DJM-A9 Center Lock), enforced Swift-side. 6 tests; full suite
+  282/282 green.
 
 ### Table
 

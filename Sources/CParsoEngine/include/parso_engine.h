@@ -37,11 +37,13 @@ typedef struct {
     float eq_low[PE_MAX_DECKS], eq_mid[PE_MAX_DECKS], eq_high[PE_MAX_DECKS]; /* dB, -INFINITY == kill */
     float color_amount[PE_MAX_DECKS];   /* -1..+1 */
     float color_kind[PE_MAX_DECKS];     /* Color FX enum value */
-    float beatfx_kind;       /* Beat FX enum value */
+    float beatfx_kind;       /* Beat FX enum value (0..19) */
     float beatfx_beats;      /* beat division, expressed in quarter notes */
     float beatfx_depth;      /* 0..1 wet amount */
     float beatfx_assign;     /* 0=A, 1=B, 2=both, 3=master */
     float beatfx_on;         /* 0/1 */
+    float beatfx_xpad;       /* 0..1 X-Pad sweep of the primary param; <0 == not touched (CDJ3000 C4) */
+    float beatfx_band;       /* FX-input band limit: 0 all, 1 low, 2 mid, 3 high (CDJ3000 C4) */
     float fader[PE_MAX_DECKS];          /* 0..1 */
     float deck_time_ratio[PE_MAX_DECKS];
     float deck_pitch[PE_MAX_DECKS];     /* semitones */
@@ -52,6 +54,8 @@ typedef struct {
      * (CDJ3000 parity C3 — the DJM MASTER ISOLATOR). dB, -INFINITY == kill,
      * 0 == flat (bit-transparent, the default). */
     float master_eq_low, master_eq_mid, master_eq_high;
+    /* Sound Color FX (CDJ3000 C4): per-channel parameter knob + center lock. */
+    float color_param[PE_MAX_DECKS];   /* 0..1 depth / resonance, default 0.5 */
     /* Booth output (CDJ3000 parity C3 — DJM BOOTH). Independent level + 3-band
      * EQ, fed from the final master. booth_level default 0.8; EQ 0 == flat. */
     float booth_level;

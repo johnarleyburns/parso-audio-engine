@@ -315,6 +315,9 @@ fileprivate final class EngineBridge {
         control.beatfx_depth = 0.5
         control.beatfx_assign = 0
         control.beatfx_on = 0
+        control.beatfx_xpad = -1
+        control.beatfx_band = 0
+        control.color_param = peQuad(0.5)
         control.trim = peQuad(0.5)
         control.fader = peQuad(1)
         control.deck_time_ratio = peQuad(1)
@@ -1525,6 +1528,15 @@ public final class Channel {
     public var eqHigh: Double = 0 { didSet { publishControl() } }
     public var colorFX: ColorFX = .filter { didSet { publishControl() } }
     public var colorAmount: Double = 0 { didSet { publishControl() } } // -1..+1 (center = off)
+    /// Sound Color FX PARAMETER knob (CDJ3000 C4) — 0…1 depth / resonance.
+    /// 0.5 is neutral: a default channel is byte-identical to pre-C4.
+    public var colorParameter: Double = 0.5 { didSet { publishControl() } }
+    /// DJM-A9 "Center Lock" — once the knob leaves centre it cannot cross to the
+    /// other side (no accidental LPF↔HPF flip) until this is turned off.
+    public var colorFXCenterLock: Bool = false {
+        didSet { if !colorFXCenterLock { colorLockedSide = 0 }; publishControl() }
+    }
+    private var colorLockedSide: Double = 0   // -1 / 0 / +1
     public var fader: Double = 1 { didSet { publishControl() } } // 0..1
     public var cuePFL: Bool = false { didSet { publishControl() } } // headphone pre-listen
     public var faderStart: Bool = false { didSet { publishControl() } }
@@ -1552,8 +1564,16 @@ public final class Channel {
         let low = Float(eqLow.isNaN ? 0 : eqLow)
         let mid = Float(eqMid.isNaN ? 0 : eqMid)
         let high = Float(eqHigh.isNaN ? 0 : eqHigh)
-        let colorAmount = Float(self.colorAmount.isFinite ? max(-1, min(1, self.colorAmount)) : 0)
+        var colorAmt = self.colorAmount.isFinite ? max(-1, min(1, self.colorAmount)) : 0
+        if colorFXCenterLock {
+            if colorLockedSide == 0, colorAmt != 0 { colorLockedSide = colorAmt < 0 ? -1 : 1 }
+            if colorLockedSide > 0 { colorAmt = max(0, colorAmt) }
+            if colorLockedSide < 0 { colorAmt = min(0, colorAmt) }
+        }
+        let colorAmount = Float(colorAmt)
         let colorKind = Float(ColorFX.allCases.firstIndex(of: colorFX) ?? 0)
+        let colorParam = Float(colorParameter.isFinite ? max(0, min(1, colorParameter)) : 0.5)
+        peSet(&bridge.control.color_param, index, colorParam)
         peSet(&bridge.control.trim, index, gain)
         peSet(&bridge.control.fader, index, channelFader)
         peSet(&bridge.control.cue_pfl, index, pfl)
@@ -1572,8 +1592,12 @@ public final class Channel {
 public final class BeatFXUnit {
     public enum Kind: Sendable, CaseIterable, Equatable {
         case echo, echoOut, reverb, delay, multiTapDelay, flanger, phaser,
-             trans, roll, spiral, pitch, lowCutEcho, vinylBrake, helix
+             trans, roll, spiral, pitch, lowCutEcho, vinylBrake, helix,
+             // CDJ3000 parity C4 — DJM-A9 / 900NXS2 additions
+             pingPong, mobius, tripletFilter, tripletRoll, enigma, shimmer
     }
+    /// FX-input band limit (CDJ3000 C4 — the DJM FX FREQUENCY switch).
+    public enum Band: Sendable, CaseIterable { case all, low, mid, high }
     public enum Assign: Sendable { case chA, chB, both, master }
     private let bridge: EngineBridge
     public var kind: Kind = .echo { didSet { publishControl() } }
@@ -1581,6 +1605,11 @@ public final class BeatFXUnit {
     public var depth: Double = 0.5 { didSet { publishControl() } } // wet/level
     public var assign: Assign = .chA { didSet { publishControl() } }
     public var isOn: Bool = false { didSet { publishControl() } }
+    /// X-Pad sweep of the primary parameter (0…1). `nil` = not touched, `beats`
+    /// governs. Touching it overrides `beats` with an exponential 1/16…4 sweep.
+    public var xPad: Double? = nil { didSet { publishControl() } }
+    /// Band-limit the FX send (dry path untouched).
+    public var band: Band = .all { didSet { publishControl() } }
 
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -1603,6 +1632,13 @@ public final class BeatFXUnit {
         case .master: 3
         }
         bridge.control.beatfx_on = isOn ? 1 : 0
+        bridge.control.beatfx_xpad = xPad.map { Float(max(0, min(1, $0))) } ?? -1
+        bridge.control.beatfx_band = switch band {
+        case .all: 0
+        case .low: 1
+        case .mid: 2
+        case .high: 3
+        }
         bridge.publishControl()
     }
 }
