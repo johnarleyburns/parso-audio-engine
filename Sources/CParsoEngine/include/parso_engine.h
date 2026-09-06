@@ -66,6 +66,7 @@ typedef struct {
      * post-isolator / pre-limiter. send 0 == fully dry (default). */
     float master_reverb_send;
     float master_reverb_size, master_reverb_decay, master_reverb_damp;
+    float master_reverb_mode;   /* 0 = FDN (default), 1 = convolution (needs an IR, C7c) */
     /* Booth output (CDJ3000 parity C3 — DJM BOOTH). Independent level + 3-band
      * EQ, fed from the final master. booth_level default 0.8; EQ 0 == flat. */
     float booth_level;
@@ -168,6 +169,10 @@ void pe_render_monitor(pe_engine*, float* out_l, float* out_r, int frames);
  * level + booth EQ. Call once per cycle, right after pe_render, with the same
  * frame count (CDJ3000 parity C3). */
 void pe_render_booth(pe_engine*, float* out_l, float* out_r, int frames);
+/* Load a real impulse response for the master convolution reverb (CDJ3000 C7c).
+ * Copies the samples; call from the control thread. Set master_reverb_mode = 1
+ * to route the reverb send through it. */
+void pe_master_convolution_ir(pe_engine*, const float* ir, int ir_len);
 
 /* Synchronous, device-free advance for deterministic tests. Identical DSP to pe_render. */
 void pe_step(pe_engine*, float* out_l, float* out_r, int frames);

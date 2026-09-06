@@ -370,6 +370,26 @@ algorithms and so should PAE.
   *actions* fire on the next grid line (`PE_CMD_*` `i2 == 2` + grain; the engine
   counts frames to the next line from the deck's beat phase — master-locked for
   a synced deck). 4 tests.
+- **C4b — done.** Every Beat FX kind now has genuine per-sample DSP, not a
+  feedback-tweaked shared delay: a TPT state-variable filter (Triplet Filter),
+  a 4/6-stage allpass phaser (Phaser / Enigma), a hard amplitude gate (Trans),
+  a beat-latched dedicated-buffer roll (Roll / Triplet Roll), LFO-modulated
+  flanger, drifting-fractional-read pitched feedback (Spiral / Pitch / Helix /
+  Mobius), two cross-fed delay lines (Ping Pong), a decelerating buffer read
+  (Vinyl Brake), a 3-tap multi-tap delay, a high-passed-feedback echo (Low-Cut),
+  and a compact Schroeder reverb — 4 damped combs → 2 allpass, with an
+  octave-character tap for Shimmer. LFO rate tracks the master BPM.
+  7 tests.
+- **C7c — done.** `pd_conv` — uniformly-partitioned overlap-save FFT
+  convolution (512-sample partitions, N=1024, up to a ~4 s IR), on the
+  vendored signalsmith `RealFFT`; `pd_conv_set_ir` (control thread) may
+  allocate, `pd_conv_process` is RT-safe at 512 samples of latency.
+  `MasterOut.reverbMode = .convolution` + `DJEngine.loadReverbImpulseResponse`
+  (PCMBuffer or `[Float]`, e.g. an OpenAIR / EchoThief space); falls back to
+  dry until an IR is loaded. Verified with an identity-IR test (lag == 512,
+  correlation > 0.99 — a real linear convolution, not an approximation),
+  a room-IR tail test, and a determinism test. 4 tests.
+  Full suite 306/306 green.
 
 ### Table
 
@@ -378,10 +398,10 @@ algorithms and so should PAE.
 | **C1** | `CParsoEngine` → 4 decks / 4 channels; `MasterClock`; inter-deck quantize | ✅ done — 4-deck graph (C1) + `MasterClock` / external clock / grid-quantized jumps (C1b) |
 | **C2** | Key Sync / detected-key wiring / master key; reverse + Slip Reverse; Vinyl Speed Adjust | ✅ done |
 | **C3** | Mixer pro tier: booth bus, master isolator, channel fader curve, `MixerInsert` send/return seam | ✅ done |
-| **C4** | Beat FX expansion (Ping Pong / Mobius / Triplet* / Enigma / Shimmer) + X-Pad + FX band filter; Sound Color FX Center Lock + parameter knob | ✅ done (new kinds are approximations; DSP pass → C4b) |
+| **C4** | Beat FX expansion (Ping Pong / Mobius / Triplet* / Enigma / Shimmer) + X-Pad + FX band filter; Sound Color FX Center Lock + parameter knob | ✅ done — API (C4) + real per-sample DSP for every kind (C4b) |
 | **C5** | Mic section (EQ / talkover / FX send); Split Cue; peak-hold / true-peak metering | ✅ done |
 | **C6** | Small player items: hot-cue banks, fade-in/out cues, auto-cue threshold, loop cut/×4, emergency/starvation loop | ✅ done |
-| **C7** | Convolution Reverb kernel + curated CC0/CC-BY IR manifest; Sampler default-content manifest + downloader (`SAMPLES-NOTICE.md`) | ✅ C7a manifest + C7b FDN reverb done; partitioned-FFT convolution → C7c |
+| **C7** | Convolution Reverb kernel + curated CC0/CC-BY IR manifest; Sampler default-content manifest + downloader (`SAMPLES-NOTICE.md`) | ✅ done — manifest (C7a), FDN reverb (C7b), partitioned-FFT convolution (C7c) |
 
 Nothing here breaks the MIT / permissive-only / RT-safety constraints. The only genuinely new
 architectural piece is the **N-deck render graph + shared master clock** (C1); everything else

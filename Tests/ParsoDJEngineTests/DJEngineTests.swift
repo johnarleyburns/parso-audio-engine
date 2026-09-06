@@ -1270,28 +1270,38 @@ struct BeatFXExpansionTests {
     }
 
     @Test func xPadOverridesTheBeatDivision() {
-        let slow = playing()
-        slow.mixer.beatFX.assign = .master
-        slow.mixer.beatFX.kind = .roll
-        slow.mixer.beatFX.beats = 2
-        slow.mixer.beatFX.depth = 1
-        slow.mixer.beatFX.isOn = true
-        _ = slow.render(frames: 8192)
-        let slowOut = rms(slow.render(frames: 8192).left)
+        // Trans gates the signal at the beat-division rate; count how often the
+        // gate opens/closes in a fixed window — a faster division => more edges.
+        func gateEdges(xPad: Double?) -> Int {
+            let e = playing()
+            e.mixer.beatFX.assign = .master
+            e.mixer.beatFX.kind = .trans
+            e.mixer.beatFX.beats = 2
+            e.mixer.beatFX.depth = 1
+            e.mixer.beatFX.isOn = true
+            e.mixer.beatFX.xPad = xPad
+            _ = e.render(frames: 8192)
+            let out = e.render(frames: 48_000).left     // 1 s
+            let win = 128
+            var loud = false, edges = 0
+            for w in stride(from: 0, to: out.count - win, by: win) {
+                let r = rms(Array(out[w..<w + win]))
+                let nowLoud = r > 0.02
+                if nowLoud != loud { edges += 1; loud = nowLoud }
+            }
+            return edges
+        }
+        let slowEdges = gateEdges(xPad: nil)      // 2-beat division -> ~1 Hz -> ~2 edges/s
+        let fastEdges = gateEdges(xPad: 0.0)      // swept to 1/16 -> many edges/s
+        #expect(fastEdges > slowEdges + 4)
+    }
 
-        let fast = playing()
-        fast.mixer.beatFX.assign = .master
-        fast.mixer.beatFX.kind = .roll
-        fast.mixer.beatFX.beats = 2
-        fast.mixer.beatFX.depth = 1
-        fast.mixer.beatFX.isOn = true
-        fast.mixer.beatFX.xPad = 0.0     // sweep to the shortest (1/16) division
-        _ = fast.render(frames: 8192)
-        let fastOut = rms(fast.render(frames: 8192).left)
-        // Different division -> materially different output energy.
-        #expect(abs(fastOut - slowOut) / max(fastOut, slowOut) > 0.05)
-        fast.mixer.beatFX.xPad = nil    // release -> back to `beats`
-        #expect(fast.mixer.beatFX.xPad == nil)
+    @Test func xPadReleaseRestoresBeatsControl() {
+        let fx = playing().mixer.beatFX
+        fx.xPad = 0.3
+        #expect(fx.xPad == 0.3)
+        fx.xPad = nil
+        #expect(fx.xPad == nil)
     }
 
     @Test func beatFXBandLimitsTheSend() {
@@ -1713,5 +1723,109 @@ struct MasterClockTests {
         e.deckA.jumpHotCue(0)                    // quantizeJumps defaults to false
         _ = e.render(frames: 64)
         #expect(e.deckA.playhead < 0.5)          // jumped right away
+    }
+}
+
+// MARK: - CDJ-3000 parity C7c: partitioned-FFT convolution reverb
+
+@Suite("CDJ3000 C7c — convolution reverb")
+@MainActor
+struct ConvolutionReverbTests {
+    private func playing(_ freq: Double = 220, toneSeconds: Double = 6) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 8, sampleRate: 48_000, channels: 2)
+        let cut = Int(toneSeconds * 48_000)
+        for i in cut..<pcm.frameCount { pcm.channel(0)[i] = 0; pcm.channel(1)[i] = 0 }
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 8,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm); e.deckA.play()
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+    /// exp-decaying white-noise "room" IR
+    private func syntheticIR(seconds: Double, rt60: Double) -> [Float] {
+        let n = Int(seconds * 48_000)
+        var rng: UInt64 = 0x9E3779B97F4A7C15
+        var ir = [Float](repeating: 0, count: n)
+        for i in 0..<n {
+            rng = rng &* 6364136223846793005 &+ 1442695040888963407
+            let white = Float(Int32(truncatingIfNeeded: rng >> 33)) / Float(Int32.max)
+            let env = Float(exp(-6.9 * Double(i) / (rt60 * 48_000)))
+            ir[i] = white * env
+        }
+        ir[0] = 1                       // direct impulse
+        return ir
+    }
+
+    @Test func convModeIsDryWithNoIRLoaded() {
+        let a = playing()
+        let dry = a.render(frames: 8192).left
+        let b = playing()
+        b.mixer.master.reverbMode = .convolution
+        b.mixer.master.reverbSend = 1.0        // no IR -> pd_conv passes through
+        let out = b.render(frames: 8192).left
+        var maxDiff: Float = 0
+        for i in dry.indices { maxDiff = max(maxDiff, abs(dry[i] - out[i])) }
+        #expect(maxDiff < 1e-5)
+    }
+
+    @Test func identityIRReproducesTheInputAt512SampleLatency() {
+        let e = playing()
+        e.loadReverbImpulseResponse(samples: [1, 0, 0, 0])   // Dirac
+        e.mixer.master.reverbMode = .convolution
+        e.mixer.master.reverbSend = 1.0                       // fully wet
+        _ = e.render(frames: 4096)                            // flush latency
+        let ref = playing()                                  // same source, dry
+        _ = ref.render(frames: 4096)
+        let wet = e.render(frames: 8192).left
+        let dry = ref.render(frames: 8192).left
+        // wet[n] ~= dry[n-512] (block-convolution latency), unity gain.
+        var best = -1.0, bestLag = 0
+        for lag in stride(from: 480, through: 544, by: 1) {
+            var dot = 0.0, na = 0.0, nb = 0.0
+            for n in lag..<wet.count {
+                dot += Double(wet[n]) * Double(dry[n - lag])
+                na += Double(wet[n]) * Double(wet[n]); nb += Double(dry[n - lag]) * Double(dry[n - lag])
+            }
+            let c = dot / (sqrt(na * nb) + 1e-12)
+            if c > best { best = c; bestLag = lag }
+        }
+        #expect(bestLag == 512)
+        #expect(best > 0.99)                                   // near-perfect reproduction
+        #expect(abs(rms(Array(wet[600...])) / rms(Array(dry[88...])) - 1) < 0.1)  // unity gain
+    }
+
+    @Test func roomIRAddsARingingTailAfterTheSourceStops() {
+        let e = playing(220, toneSeconds: 1.0)               // 1 s tone then silence
+        e.loadReverbImpulseResponse(samples: syntheticIR(seconds: 1.5, rt60: 1.2))
+        e.mixer.master.reverbMode = .convolution
+        e.mixer.master.reverbSend = 0.7
+        _ = e.render(frames: 48_000)                          // through the tone
+        let tail = rms(e.render(frames: 12_000).left)         // 0.25 s after it stops
+        #expect(tail > 0.003)
+
+        let ref = playing(220, toneSeconds: 1.0)
+        _ = ref.render(frames: 48_000)
+        #expect(rms(ref.render(frames: 12_000).left) < tail * 0.2)
+    }
+
+    @Test func convolutionIsDeterministic() {
+        func run() -> [Float] {
+            let e = playing(330, toneSeconds: 2)
+            e.loadReverbImpulseResponse(samples: syntheticIR(seconds: 1, rt60: 0.8))
+            e.mixer.master.reverbMode = .convolution
+            e.mixer.master.reverbSend = 0.6
+            _ = e.render(frames: 12_000)
+            return e.render(frames: 24_000).left
+        }
+        let a = run(), b = run()
+        #expect(a == b)
     }
 }

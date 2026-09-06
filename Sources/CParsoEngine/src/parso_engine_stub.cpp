@@ -167,6 +167,7 @@ struct ControlState {
     std::atomic<float> masterReverbSize{0.6f};
     std::atomic<float> masterReverbDecay{0.6f};
     std::atomic<float> masterReverbDamp{0.5f};
+    std::atomic<float> masterReverbMode{0.0f};
     std::atomic<float> boothLevel{0.8f};
     std::atomic<float> boothEqLow{0.0f};
     std::atomic<float> boothEqMid{0.0f};
@@ -200,6 +201,25 @@ struct pe_engine {
     uint32_t beatFXDelayIndex = 0;
     float beatFXBandLP = 0.0f;   // FX-input band-limit filter state (CDJ3000 C4)
     float beatFXBandHP = 0.0f;
+    // Real per-sample Beat FX DSP state (CDJ3000 parity C4b).
+    float bfxSvfLp = 0.0f, bfxSvfBp = 0.0f;      // TPT state-variable filter
+    float bfxLfoPhase = 0.0f;                     // sweep / gate / modulation LFO
+    float bfxAp[6] = {};                          // up-to-6-stage allpass phaser state
+    float bfxDelay2[48000] = {};                  // ping-pong / multi-tap 2nd line
+    uint32_t bfxDelay2Index = 0;
+    int64_t bfxSampleClock = 0;                   // monotonic per-processBeatFX sample counter
+    int64_t bfxRollAnchor = -1;                   // roll capture start (clock units), -1 = re-latch
+    int bfxRollLen = 0;
+    float bfxRollBuf[48000] = {};                 // dedicated roll capture buffer
+    float bfxSpiralPhase = 0.0f;                  // fractional read offset for pitch kinds
+    // Compact Schroeder reverb for the Reverb / Shimmer kinds (sized for 96 kHz).
+    static constexpr int kBfxCombLen = 4800;
+    static constexpr int kBfxApLen = 1600;
+    float bfxComb[4][kBfxCombLen] = {};
+    uint32_t bfxCombIdx[4] = {};
+    float bfxCombLp[4] = {};
+    float bfxAllpassBuf[2][kBfxApLen] = {};
+    uint32_t bfxApIdx[2] = {};
     float limiterGain = 1.0f;
     // CParsoDSP kernels — the shared, unit-tested DSP (docs/phase6-parity.md C1).
     // Owned by the engine: created in pe_create, freed in pe_destroy. All are
@@ -211,6 +231,7 @@ struct pe_engine {
     pd_eq3* boothEq = nullptr;    // booth-output EQ (CDJ3000 parity C3)
     pd_eq3* micEq = nullptr;      // 2-band mic EQ (CDJ3000 parity C5)
     pd_fdnverb* masterReverb = nullptr;  // master reverb send (CDJ3000 parity C7)
+    pd_conv* masterConv = nullptr;       // master convolution reverb (CDJ3000 parity C7c)
     float talkoverGain = 1.0f;    // smoothed music-duck under talkover
     float micBlock[512] = {};     // per-block EQ'd mono mic, filled in the mic pre-pass
     int micBlockFrames = 0;
@@ -444,6 +465,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         } else if (command.type == PE_CMD_BEATFX_ONOFF) {
             engine->beatFXOn = command.f0 > 0.5f;
             if (engine->beatFXOn) engine->beatFXTail = false;
+            if (engine->beatFXOn) { engine->bfxRollAnchor = -1; engine->bfxLfoPhase = 0.0f; }
         } else if (command.type == PE_CMD_BEATFX_RELEASE) {
             engine->beatFXOn = false;
             engine->beatFXTail = true;
@@ -515,6 +537,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_BEATFX_ONOFF:
             engine->beatFXOn = command.f0 > 0.5f;
             if (engine->beatFXOn) engine->beatFXTail = false;
+            if (engine->beatFXOn) { engine->bfxRollAnchor = -1; engine->bfxLfoPhase = 0.0f; }
             break;
         case PE_CMD_BEATFX_RELEASE:
             engine->beatFXOn = false;
@@ -816,6 +839,73 @@ static void crossfadeGains(float crossfader, float curve, float& gainA, float& g
     }
 }
 
+// --- Beat FX per-sample DSP primitives (CDJ3000 parity C4b) ---
+
+// One TPT (topology-preserving transform) state-variable filter step. Returns
+// the low-pass output; band-pass is kept in state for resonant sweeps.
+static float bfxSvfLowpass(pe_engine* e, float in, float cutoffHz, float res) {
+    const float sr = static_cast<float>(e->sampleRate);
+    const float g = std::tan(static_cast<float>(M_PI) * std::min(cutoffHz, sr * 0.45f) / sr);
+    const float k = 2.0f - 1.9f * std::min(1.0f, std::max(0.0f, res));   // damping
+    const float a1 = 1.0f / (1.0f + g * (g + k));
+    const float a2 = g * a1;
+    const float v1 = a1 * e->bfxSvfBp + a2 * (in - e->bfxSvfLp);
+    const float v2 = e->bfxSvfLp + g * v1;
+    e->bfxSvfBp = 2.0f * v1 - e->bfxSvfBp;
+    e->bfxSvfLp = 2.0f * v2 - e->bfxSvfLp;
+    if (!std::isfinite(e->bfxSvfLp)) { e->bfxSvfLp = e->bfxSvfBp = 0.0f; }
+    return e->bfxSvfLp;
+}
+
+// N-stage allpass phaser with a shared, LFO-swept coefficient + feedback.
+static float bfxPhaser(pe_engine* e, float in, int stages, float coef, float feedback) {
+    float x = in + e->bfxAp[std::min(stages, 6) - 1] * feedback;
+    for (int s = 0; s < std::min(stages, 6); ++s) {
+        const float y = -coef * x + e->bfxAp[s];
+        e->bfxAp[s] = x + coef * y;
+        x = y;
+    }
+    return x;
+}
+
+// Compact Schroeder reverb (4 damped combs in parallel -> 2 allpass in series).
+static float bfxSchroeder(pe_engine* e, float in, float size, float damp, float octaveMix) {
+    static constexpr int combLen[4] = {1687, 1601, 2053, 2251};
+    static constexpr int apLen[2]   = {389, 307};
+    const double scale = e->sampleRate / 48000.0;
+    const float fb = 0.72f + 0.26f * std::min(1.0f, std::max(0.0f, size));
+    const float dc = 0.15f + 0.8f * std::min(1.0f, std::max(0.0f, damp));
+    const int CL = pe_engine::kBfxCombLen;
+    const int AL = pe_engine::kBfxApLen;
+    float combSum = 0.0f;
+    for (int c = 0; c < 4; ++c) {
+        int len = std::max(1, std::min(CL - 1, static_cast<int>(combLen[c] * scale)));
+        uint32_t& idx = e->bfxCombIdx[c];
+        const uint32_t readIdx = (idx + static_cast<uint32_t>(CL) - static_cast<uint32_t>(len)) % static_cast<uint32_t>(CL);
+        float out = e->bfxComb[c][readIdx];
+        if (octaveMix > 0.0f) {
+            const uint32_t up = (readIdx + static_cast<uint32_t>(len / 2)) % static_cast<uint32_t>(CL);
+            out += e->bfxComb[c][up] * octaveMix;
+        }
+        e->bfxCombLp[c] += dc * (out - e->bfxCombLp[c]);
+        e->bfxComb[c][idx] = in + e->bfxCombLp[c] * fb;
+        idx = (idx + 1) % static_cast<uint32_t>(CL);
+        combSum += out;
+    }
+    float x = combSum * 0.25f;
+    for (int p = 0; p < 2; ++p) {
+        int len = std::max(1, std::min(AL - 1, static_cast<int>(apLen[p] * scale)));
+        uint32_t& idx = e->bfxApIdx[p];
+        const uint32_t readIdx = (idx + static_cast<uint32_t>(AL) - static_cast<uint32_t>(len)) % static_cast<uint32_t>(AL);
+        const float buffered = e->bfxAllpassBuf[p][readIdx];
+        const float y = -0.5f * x + buffered;
+        e->bfxAllpassBuf[p][idx] = x + 0.5f * y;
+        idx = (idx + 1) % static_cast<uint32_t>(AL);
+        x = y;
+    }
+    return std::isfinite(x) ? x : 0.0f;
+}
+
 static float processBeatFX(pe_engine* engine, float input) {
     const bool active = engine->beatFXOn || engine->beatFXTail;
     if (!active) return input;
@@ -836,56 +926,166 @@ static float processBeatFX(pe_engine* engine, float input) {
         else fxIn = engine->beatFXBandHP - engine->beatFXBandLP;         // mid
     }
 
+    const float sr = static_cast<float>(engine->sampleRate);
     const float rawBeats = engine->control.beatFXBeats.load(std::memory_order_relaxed);
     float beats = std::isfinite(rawBeats) ? std::max(0.0625f, std::min(8.0f, rawBeats)) : 0.5f;
-    // X-Pad (CDJ3000 C4): when touched (0..1) it sweeps the beat division
-    // exponentially from 1/16 to 4 beats, the DJM X-Pad's primary axis.
+    // X-Pad (CDJ3000 C4): sweeps the beat division exponentially 1/16..4.
     const float xpad = engine->control.beatFXXpad.load(std::memory_order_relaxed);
     if (xpad >= 0.0f) beats = std::pow(2.0f, -4.0f + std::min(1.0f, xpad) * 6.0f);
 
     const int kind = engine->beatFXKind;
-    int delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * beats * 0.5f)));
-    if (kind == 2 || kind == 19) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.08)));
-    if (kind == 5 || kind == 6 || kind == 18) delaySamples = std::max(1, std::min(47999, static_cast<int>(engine->sampleRate * 0.005)));
-    if (kind == 16 || kind == 17) delaySamples = std::max(1, delaySamples * 2 / 3);  // triplet timing
+    const double bpm = engine->control.masterBpm.load(std::memory_order_relaxed) > 20.0
+        ? engine->control.masterBpm.load(std::memory_order_relaxed) : 120.0;
+    const float beatFrames = static_cast<float>(sr * 60.0 / bpm);
+    // LFO advance: one cycle per `beats` (triplet kinds run 1.5x faster).
+    const bool triplet = (kind == 16 || kind == 17);
+    const float lfoInc = (triplet ? 1.5f : 1.0f) / std::max(1.0f, beatFrames * beats);
+    engine->bfxLfoPhase += lfoInc;
+    if (engine->bfxLfoPhase >= 1.0f) engine->bfxLfoPhase -= 1.0f;
+    const float lfo = engine->bfxLfoPhase;
+    const float lfoSin = 0.5f + 0.5f * std::sin(6.2831853f * lfo);
+
+    int delaySamples = std::max(1, std::min(47999, static_cast<int>(sr * beats * 0.5f)));
+    if (kind == 5 || kind == 6 || kind == 18) delaySamples = std::max(1, static_cast<int>(sr * 0.004f));
+    if (triplet) delaySamples = std::max(1, delaySamples * 2 / 3);
 
     const uint32_t index = engine->beatFXDelayIndex;
     const uint32_t delayedIndex = (index + 48000u - static_cast<uint32_t>(delaySamples)) % 48000u;
-    const uint32_t halfIndex = (index + 48000u - static_cast<uint32_t>(delaySamples / 2 + 1)) % 48000u;
     const float delayed = engine->beatFXDelay[delayedIndex];
     const float rawDepth = engine->control.beatFXDepth.load(std::memory_order_relaxed);
     const float depth = std::isfinite(rawDepth) ? std::max(0.0f, std::min(1.0f, rawDepth)) : 0.5f;
-    float wet = delayed;
+
+    float wet;
+    float feed = fxIn;          // what gets written into the primary delay line
     float feedback = 0.55f;
+
     switch (kind) {
-        case 2: feedback = 0.72f; wet = delayed + input * 0.35f; break;   // Reverb
-        case 5: wet = delayed; feedback = 0.4f; break;                    // Flanger
-        case 6: wet = input - delayed; feedback = 0.35f; break;           // Phaser
-        case 7: wet = delayed; feedback = 0.25f; break;                   // Trans
-        case 8: wet = delayed; feedback = 0.75f; break;                   // Roll
-        case 14: // Ping Pong — a second, shorter tap folded in.
-            wet = delayed + engine->beatFXDelay[halfIndex] * 0.7f; feedback = 0.6f; break;
-        case 15: // Mobius (barber-pole) — high-feedback resonant comb.
-            wet = delayed; feedback = 0.9f; break;
-        case 16: // Triplet Filter — gated (trans-like) at triplet timing.
-            wet = delayed; feedback = 0.2f; break;
-        case 17: // Triplet Roll.
-            wet = delayed; feedback = 0.78f; break;
-        case 18: // Enigma — flanger/phaser hybrid with feedback.
-            wet = input - delayed; feedback = 0.6f; break;
-        case 19: // Shimmer — reverb-ish plus a half-time (octave-suggestive) tap.
-            wet = delayed + engine->beatFXDelay[halfIndex] * 0.5f + input * 0.3f;
-            feedback = 0.8f; break;
-        default: break;
+        case 2:   // Reverb — compact Schroeder.
+        case 19: {// Shimmer — Schroeder + octave-up feedback.
+            wet = bfxSchroeder(engine, fxIn, 0.6f + 0.35f * depth, 0.4f,
+                               kind == 19 ? 0.5f : 0.0f);
+            feed = 0.0f; feedback = 0.0f;   // reverb keeps its own buffers
+            break;
+        }
+        case 5: {  // Flanger — LFO-modulated 1..5 ms delay + feedback.
+            const int mod = static_cast<int>(sr * (0.001f + 0.004f * lfoSin));
+            const uint32_t mi = (index + 48000u - static_cast<uint32_t>(std::max(1, mod))) % 48000u;
+            wet = engine->beatFXDelay[mi];
+            feed = fxIn + wet * 0.6f; feedback = 0.0f;
+            break;
+        }
+        case 6:    // Phaser — 4-stage allpass, LFO-swept.
+            wet = bfxPhaser(engine, fxIn, 4, -0.2f + 0.7f * lfoSin, 0.5f);
+            feed = 0.0f; feedback = 0.0f;
+            break;
+        case 18:   // Enigma — deeper 6-stage phaser, more resonance + feedback.
+            wet = bfxPhaser(engine, fxIn, 6, -0.1f + 0.85f * lfoSin, 0.72f);
+            feed = 0.0f; feedback = 0.0f;
+            break;
+        case 7: {  // Trans — hard amplitude gate (50% duty square at the beat rate).
+            const float gate = lfo < 0.5f ? 1.0f : 0.06f;
+            wet = fxIn * gate; feed = 0.0f; feedback = 0.0f;
+            break;
+        }
+        case 8:    // Roll
+        case 17: { // Triplet Roll — capture one division into a dedicated buffer,
+                   // then loop it. Fresh audio passes through during capture.
+            const int rollLen = std::max(1, std::min(47999, delaySamples));
+            if (engine->bfxRollAnchor < 0 || engine->bfxRollLen != rollLen) {
+                engine->bfxRollAnchor = engine->bfxSampleClock;
+                engine->bfxRollLen = rollLen;
+            }
+            const int64_t age = engine->bfxSampleClock - engine->bfxRollAnchor;
+            if (age < rollLen) {
+                engine->bfxRollBuf[age] = fxIn;   // still capturing
+                wet = fxIn;
+            } else {
+                wet = engine->bfxRollBuf[age % rollLen];   // loop the captured bar
+            }
+            feed = fxIn; feedback = 0.0f;
+            break;
+        }
+        case 16: { // Triplet Filter — resonant LP swept by the triplet LFO.
+            const float cutoff = 150.0f * std::pow(60.0f, lfoSin);   // ~150 Hz..9 kHz
+            wet = bfxSvfLowpass(engine, fxIn, cutoff, 0.85f);
+            feed = 0.0f; feedback = 0.0f;
+            break;
+        }
+        case 9:    // Spiral
+        case 10:   // Pitch
+        case 13:   // Helix
+        case 15: { // Mobius — pitched feedback via a drifting fractional read.
+            const float rate = (kind == 10) ? 1.06f
+                             : (kind == 15) ? (1.0f + 0.04f * std::sin(6.2831853f * lfo))
+                             : 1.03f;   // spiral / helix rise
+            engine->bfxSpiralPhase += (rate - 1.0f);
+            if (engine->bfxSpiralPhase > static_cast<float>(delaySamples)) engine->bfxSpiralPhase -= static_cast<float>(delaySamples);
+            const float readPos = static_cast<float>(delaySamples) + engine->bfxSpiralPhase;
+            const int r0 = static_cast<int>(readPos);
+            const float frac = readPos - static_cast<float>(r0);
+            const uint32_t i0 = (index + 96000u - static_cast<uint32_t>(r0)) % 48000u;
+            const uint32_t i1 = (i0 + 47999u) % 48000u;
+            wet = engine->beatFXDelay[i0] * (1.0f - frac) + engine->beatFXDelay[i1] * frac;
+            feed = fxIn + wet * (kind == 13 ? 0.85f : 0.7f);  // helix sustains
+            feedback = 0.0f;
+            break;
+        }
+        case 14: { // Ping Pong — two cross-fed delay lines (folded to mono).
+            const uint32_t j = engine->bfxDelay2Index;
+            const uint32_t d2 = static_cast<uint32_t>(std::max(1, delaySamples * 3 / 2));
+            const float tapA = delayed;
+            const float tapB = engine->bfxDelay2[(j + 48000u - d2) % 48000u];
+            engine->beatFXDelay[index] = fxIn + tapB * 0.62f;
+            engine->bfxDelay2[j] = tapA * 0.62f;
+            engine->bfxDelay2Index = (j + 1) % 48000u;
+            engine->beatFXDelayIndex = (index + 1) % 48000u;
+            const float out = input * (1.0f - depth) + (tapA + tapB) * depth;
+            if (engine->beatFXTail) {
+                engine->beatFXTailFrames -= 1;
+                if (engine->beatFXTailFrames <= 0) engine->beatFXTail = false;
+            }
+            return out;
+        }
+        case 12: { // Vinyl Brake — the echo tail decelerates to a stop.
+            // bfxSpiralPhase runs as the brake envelope: 1 at engage, ramps to 0.
+            if (engine->bfxLfoPhase < lfoInc * 2.0f) engine->bfxSpiralPhase = 1.0f;  // re-arm each cycle
+            engine->bfxSpiralPhase = std::max(0.0f, engine->bfxSpiralPhase - 1.0f / (sr * 1.5f));
+            const uint32_t bi = (index + 96000u -
+                static_cast<uint32_t>(delaySamples * (1.0f + (1.0f - engine->bfxSpiralPhase) * 3.0f))) % 48000u;
+            wet = engine->beatFXDelay[bi] * engine->bfxSpiralPhase;
+            feed = fxIn; feedback = 0.0f;
+            break;
+        }
+        case 11:   // Low-Cut Echo — echo whose feedback path is high-passed.
+            wet = delayed;
+            feed = fxIn + (delayed - engine->bfxSvfLp) * 0.6f;
+            engine->bfxSvfLp += 0.02f * (delayed - engine->bfxSvfLp);   // reuse Lp as the HP state
+            feedback = 0.0f;
+            break;
+        case 4: {  // Multi-Tap Delay — three taps.
+            const uint32_t t2 = (index + 48000u - static_cast<uint32_t>(delaySamples * 2 / 3)) % 48000u;
+            const uint32_t t3 = (index + 48000u - static_cast<uint32_t>(delaySamples / 3)) % 48000u;
+            wet = delayed + engine->beatFXDelay[t2] * 0.6f + engine->beatFXDelay[t3] * 0.35f;
+            feed = fxIn + delayed * 0.45f; feedback = 0.0f;
+            break;
+        }
+        default:   // echo (0), echo out (1), delay (3) — clean feedback delay.
+            wet = delayed;
+            feed = fxIn; feedback = (kind == 1) ? 0.6f : 0.45f;
+            break;
     }
-    engine->beatFXDelay[index] = fxIn + wet * feedback;
-    engine->beatFXDelayIndex = (index + 1) % 48000u;
+
+    if (kind != 14) {
+        engine->beatFXDelay[index] = feed + wet * feedback;
+        engine->beatFXDelayIndex = (index + 1) % 48000u;
+    }
+    ++engine->bfxSampleClock;
     const float output = input * (1.0f - depth) + wet * depth;
     if (engine->beatFXTail) {
         if (engine->beatFXTailFrames > 0) --engine->beatFXTailFrames;
         if (engine->beatFXTailFrames == 0) engine->beatFXTail = false;
     }
-    return output;
+    return std::isfinite(output) ? output : input;
 }
 
 // The render pipeline runs in fixed-size blocks so the CParsoDSP kernels
@@ -1232,13 +1432,21 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
     {
         const float send = engine->control.masterReverbSend.load(std::memory_order_relaxed);
         if (send > 0.0001f && left) {
-            pd_fdnverb_set(engine->masterReverb,
-                           engine->control.masterReverbSize.load(std::memory_order_relaxed),
-                           engine->control.masterReverbDecay.load(std::memory_order_relaxed),
-                           engine->control.masterReverbDamp.load(std::memory_order_relaxed),
-                           send);
             float* r = right ? right : left;
-            pd_fdnverb_process(engine->masterReverb, left, r, left, r, frames);
+            const bool convMode = engine->control.masterReverbMode.load(std::memory_order_relaxed) > 0.5f;
+            if (convMode) {
+                // Convolution reverb (C7c) — runs a real IR. Falls back to a dry
+                // passthrough inside pd_conv when no IR is loaded.
+                pd_conv_set_mix(engine->masterConv, send);
+                pd_conv_process(engine->masterConv, left, r, left, r, frames);
+            } else {
+                pd_fdnverb_set(engine->masterReverb,
+                               engine->control.masterReverbSize.load(std::memory_order_relaxed),
+                               engine->control.masterReverbDecay.load(std::memory_order_relaxed),
+                               engine->control.masterReverbDamp.load(std::memory_order_relaxed),
+                               send);
+                pd_fdnverb_process(engine->masterReverb, left, r, left, r, frames);
+            }
         }
     }
 
@@ -1480,8 +1688,9 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     engine->boothEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
     engine->micEq = pd_eq3_create(sample_rate, 200.0, 3000.0);
     engine->masterReverb = pd_fdnverb_create(sample_rate);
+    engine->masterConv = pd_conv_create(sample_rate);
     ok = ok && engine->masterLimiter && engine->masterEq && engine->boothEq &&
-         engine->micEq && engine->masterReverb;
+         engine->micEq && engine->masterReverb && engine->masterConv;
     if (!ok) {
         pe_destroy(engine);
         return nullptr;
@@ -1502,6 +1711,7 @@ void pe_destroy(pe_engine* engine) {
     pd_eq3_destroy(engine->boothEq);
     pd_eq3_destroy(engine->micEq);
     pd_fdnverb_destroy(engine->masterReverb);
+    pd_conv_destroy(engine->masterConv);
     delete engine;
 }
 
@@ -1537,6 +1747,8 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
     engine->control.masterReverbSize.store(clamp01f(control->master_reverb_size, 0.6f), std::memory_order_relaxed);
     engine->control.masterReverbDecay.store(clamp01f(control->master_reverb_decay, 0.6f), std::memory_order_relaxed);
     engine->control.masterReverbDamp.store(clamp01f(control->master_reverb_damp, 0.5f), std::memory_order_relaxed);
+    engine->control.masterReverbMode.store(control->master_reverb_mode > 0.5f ? 1.0f : 0.0f,
+                                           std::memory_order_relaxed);
     engine->control.cueMasterMix.store(
         std::isfinite(control->cue_master_mix) ?
             std::max(0.0f, std::min(1.0f, control->cue_master_mix)) : 0.5f,
@@ -1849,6 +2061,11 @@ void pe_render(pe_engine* engine, float* left, float* right, int frames) {
 
 void pe_render_monitor(pe_engine* engine, float* left, float* right, int frames) {
     renderMonitor(engine, left, right, frames);
+}
+
+void pe_master_convolution_ir(pe_engine* engine, const float* ir, int ir_len) {
+    if (!engine || !engine->masterConv) return;
+    pd_conv_set_ir(engine->masterConv, ir, ir_len);
 }
 
 void pe_render_booth(pe_engine* engine, float* left, float* right, int frames) {

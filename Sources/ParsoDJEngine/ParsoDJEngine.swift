@@ -217,6 +217,16 @@ public final class DJEngine {
     /// Stop using the external clock (revert to a master deck / none).
     public func clearExternalClock() { bridge.clearExternalClock() }
 
+    /// Load a real impulse response for the master `.convolution` reverb mode
+    /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
+    /// then set `mixer.master.reverbMode = .convolution` and raise `reverbSend`.
+    public func loadReverbImpulseResponse(_ ir: PCMBuffer) {
+        var samples = [Float](repeating: 0, count: ir.frameCount)
+        for i in 0..<ir.frameCount { samples[i] = ir.channel(0)[i] }
+        bridge.loadConvolutionIR(samples)
+    }
+    public func loadReverbImpulseResponse(samples: [Float]) { bridge.loadConvolutionIR(samples) }
+
     // MARK: Recording (Phase 6b item 4)
     private var recordingPump: Task<Void, Never>?
 
@@ -377,6 +387,7 @@ fileprivate final class EngineBridge {
         control.master_reverb_size = 0.6
         control.master_reverb_decay = 0.6
         control.master_reverb_damp = 0.5
+        control.master_reverb_mode = 0
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -433,6 +444,14 @@ fileprivate final class EngineBridge {
     func clearExternalClock() {
         externalClock = nil
         pe_set_master_clock(handle, -1, 0, 0)
+    }
+
+    // MARK: Convolution reverb IR (CDJ3000 parity C7c)
+
+    func loadConvolutionIR(_ samples: [Float]) {
+        samples.withUnsafeBufferPointer { p in
+            pe_master_convolution_ir(handle, p.baseAddress, Int32(p.count))
+        }
     }
 
     /// The master BPM / bar-phase currently driving the clock (deck or external),
@@ -662,6 +681,16 @@ public final class HeadlessDJEngine {
     }
     /// Stop using the external clock (revert to a master deck / none).
     public func clearExternalClock() { bridge.clearExternalClock() }
+
+    /// Load a real impulse response for the master `.convolution` reverb mode
+    /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
+    /// then set `mixer.master.reverbMode = .convolution` and raise `reverbSend`.
+    public func loadReverbImpulseResponse(_ ir: PCMBuffer) {
+        var samples = [Float](repeating: 0, count: ir.frameCount)
+        for i in 0..<ir.frameCount { samples[i] = ir.channel(0)[i] }
+        bridge.loadConvolutionIR(samples)
+    }
+    public func loadReverbImpulseResponse(samples: [Float]) { bridge.loadConvolutionIR(samples) }
 
     // MARK: Recording (Phase 6b item 4)
     public func startRecording(_ recorder: MixRecorder) { bridge.startRecording(recorder) }
@@ -1880,14 +1909,20 @@ public final class MasterOut {
     public var boothEqMid: Double = 0 { didSet { publishControl() } }
     public var boothEqHigh: Double = 0 { didSet { publishControl() } }
 
-    // MARK: Master reverb send (CDJ3000 parity C7 — 8-line FDN reverb)
+    // MARK: Master reverb send (CDJ3000 parity C7)
     /// Wet amount of the master-bus reverb (0…1). 0 (default) is fully dry and
     /// bit-transparent. Feed the DJM Reverb / SHIMMER Beat FX into this.
     public var reverbSend: Double = 0 { didSet { publishControl() } }
     /// Room size (0…1), tail length (0…1), high-frequency damping (0…1).
+    /// `.algorithmic` only — the convolution reverb uses its loaded IR.
     public var reverbSize: Double = 0.6 { didSet { publishControl() } }
     public var reverbDecay: Double = 0.6 { didSet { publishControl() } }
     public var reverbDamp: Double = 0.5 { didSet { publishControl() } }
+    /// `.algorithmic` — the 8-line FDN (default, no assets). `.convolution` —
+    /// runs the IR loaded via `DJEngine.loadReverbImpulseResponse` (CDJ3000 C7c);
+    /// falls back to dry until one is loaded.
+    public enum ReverbMode: Sendable { case algorithmic, convolution }
+    public var reverbMode: ReverbMode = .algorithmic { didSet { publishControl() } }
 
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
@@ -1915,6 +1950,7 @@ public final class MasterOut {
         bridge.control.master_reverb_size = Float(reverbSize.isFinite ? max(0, min(1, reverbSize)) : 0.6)
         bridge.control.master_reverb_decay = Float(reverbDecay.isFinite ? max(0, min(1, reverbDecay)) : 0.6)
         bridge.control.master_reverb_damp = Float(reverbDamp.isFinite ? max(0, min(1, reverbDamp)) : 0.5)
+        bridge.control.master_reverb_mode = reverbMode == .convolution ? 1 : 0
         bridge.publishControl()
     }
 }

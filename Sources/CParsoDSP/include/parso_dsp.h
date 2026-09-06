@@ -64,6 +64,17 @@ void        pd_fdnverb_process(pd_fdnverb*, const float* in_l, const float* in_r
                                float* out_l, float* out_r, int frames);
 void        pd_fdnverb_destroy(pd_fdnverb*);
 
+/* Uniformly-partitioned FFT convolution (CDJ3000 parity C7c). Runs a real
+ * impulse response (OpenAIR / EchoThief). pd_conv_set_ir may allocate;
+ * pd_conv_process is RT-safe at 512 samples of latency. */
+typedef struct pd_conv pd_conv;
+pd_conv*    pd_conv_create(double sr);
+int         pd_conv_set_ir(pd_conv*, const float* ir, int ir_len);  /* 0 == PD_OK */
+void        pd_conv_set_mix(pd_conv*, float mix /*0..1*/);
+void        pd_conv_process(pd_conv*, const float* in_l, const float* in_r,
+                            float* out_l, float* out_r, int frames);
+void        pd_conv_destroy(pd_conv*);
+
 typedef struct pd_limiter pd_limiter;
 pd_limiter* pd_limiter_create(double sr, float ceiling_db /*~ -0.3*/);
 void        pd_limiter_set_ceiling(pd_limiter*, float ceiling_db); /* runtime ceiling change */
