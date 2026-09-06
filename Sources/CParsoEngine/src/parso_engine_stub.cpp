@@ -48,6 +48,9 @@ struct DeckState {
     float motorTarget = 1.0f;
     float brakeSeconds = 0.0f;
     float spinupSeconds = 0.0f;
+    // Fade-in cue (CDJ3000 parity C6): one-shot gain ramp 0->1 after a cue jump.
+    float cueFadeGain = 1.0f;
+    float cueFadeRate = 0.0f;
     // Stems (item 1).
     StemVoice stems[4];
     bool stemsArmed = false;
@@ -690,6 +693,15 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             if (command.i0 >= 0 && command.i0 < 8 && deck.hotCueSet[command.i0]) {
                 deck.position = static_cast<double>(deck.hotCueFrames[command.i0]);
                 deck.shadowPosition = deck.position;
+                // Fade-in cue (CDJ3000 parity C6): f0 > 0 ramps the deck up from
+                // silence over f0 seconds.
+                if (std::isfinite(command.f0) && command.f0 > 0.0f) {
+                    deck.cueFadeGain = 0.0f;
+                    deck.cueFadeRate = 1.0f / (command.f0 * static_cast<float>(engine->sampleRate));
+                } else {
+                    deck.cueFadeGain = 1.0f;
+                    deck.cueFadeRate = 0.0f;
+                }
                 pushPlayheadEvent(engine, command.deck);
             }
             break;
@@ -891,6 +903,11 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 dry[deckIndex][frame] = 0.5f * (
                     sampleAt(deck, 0, deck.position) + sampleAt(deck, rightChannel, deck.position)
                 );
+            }
+            // Fade-in cue ramp (CDJ3000 parity C6).
+            if (deck.cueFadeGain < 1.0f) {
+                dry[deckIndex][frame] *= deck.cueFadeGain;
+                deck.cueFadeGain = std::min(1.0f, deck.cueFadeGain + deck.cueFadeRate);
             }
             const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
             const double forwardIncrement = deck.sampleRate / engine->sampleRate *
@@ -1565,6 +1582,8 @@ void pe_deck_set_buffer(
     state.reverse = false;
     state.motorLevel = 0.0f;   // a paused platter is stopped; PLAY spins it up
     state.motorTarget = 0.0f;
+    state.cueFadeGain = 1.0f;
+    state.cueFadeRate = 0.0f;
     state.cueFrame = 0;
     state.cueSet = false;
     state.eqLowGain = 1.0f;

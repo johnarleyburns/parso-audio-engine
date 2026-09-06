@@ -699,6 +699,9 @@ public final class Deck {
         currentPlayhead = 0
         shadowPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
+        hotCueBankStore = Array(repeating: Array(repeating: nil, count: 8), count: Deck.hotCueBankCount)
+        hotCueFadeIn = Array(repeating: 0, count: 8)
+        hotCueBank = 0
         cueTime = nil
         nudgeRatio = 1
         isPlaying = false
@@ -725,10 +728,7 @@ public final class Deck {
                 )
             }
         }
-        if autoCue {
-            cueTime = 0
-            post(PE_CMD_SET_CUE)
-        }
+        if autoCue { applyAutoCue() }
     }
 
     public func play() {
@@ -995,20 +995,54 @@ public final class Deck {
         updatePlaybackRate()
     }
 
-    // Hot cues (8)
-    public func setHotCue(_ index: Int) {
+    // Hot cues (8 per bank)
+
+    /// Number of hot-cue banks (rekordbox A/B/C/D → 8×4 effective cues).
+    public static let hotCueBankCount = 4
+    private var hotCueBankStore: [[TimeInterval?]] =
+        Array(repeating: Array(repeating: nil, count: 8), count: Deck.hotCueBankCount)
+    private var hotCueFadeIn: [TimeInterval] = Array(repeating: 0, count: 8)
+
+    /// Active hot-cue bank (0…3). Switching banks re-points the engine's 8 hot
+    /// cue slots (CDJ3000 parity C6).
+    public var hotCueBank: Int = 0 {
+        didSet {
+            guard hotCueBank != oldValue,
+                  (0..<Deck.hotCueBankCount).contains(hotCueBank) else {
+                if !(0..<Deck.hotCueBankCount).contains(hotCueBank) { hotCueBank = oldValue }
+                return
+            }
+            hotCueBankStore[oldValue] = hotCueTimes
+            hotCueTimes = hotCueBankStore[hotCueBank]
+            for slot in 0..<8 {
+                if let t = hotCueTimes[slot] {
+                    post(PE_CMD_HOTCUE_SET, i0: slot, f0: Float(t))
+                } else {
+                    post(PE_CMD_HOTCUE_DELETE, i0: slot)
+                }
+            }
+        }
+    }
+
+    public func setHotCue(_ index: Int) { setHotCue(index, fadeIn: 0) }
+
+    /// Set a hot cue, optionally with a fade-in applied when it is triggered
+    /// (rekordbox fade-in cue point).
+    public func setHotCue(_ index: Int, fadeIn: TimeInterval) {
         guard hotCueTimes.indices.contains(index) else { return }
         hotCueTimes[index] = quantizedTime(currentPlayhead)
+        hotCueFadeIn[index] = max(0, fadeIn)
         post(PE_CMD_HOTCUE_SET, i0: index, f0: Float(hotCueTimes[index] ?? currentPlayhead))
     }
     public func jumpHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index), let time = hotCueTimes[index] else { return }
         currentPlayhead = time
-        post(PE_CMD_HOTCUE_JUMP, i0: index)
+        post(PE_CMD_HOTCUE_JUMP, i0: index, f0: Float(hotCueFadeIn[index]))
     }
     public func deleteHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index) else { return }
         hotCueTimes[index] = nil
+        hotCueFadeIn[index] = 0
         post(PE_CMD_HOTCUE_DELETE, i0: index)
     }
 
@@ -1130,6 +1164,18 @@ public final class Deck {
             publishLoop(start: loopStartTime, end: loopEndTime, active: isLoopActive)
         }
     }
+    /// Scale the active loop by an arbitrary factor (CDJ3000 parity C6 — LOOP
+    /// CUT / ×4 and finer). `0.5` == `loopHalve`, `2` == `loopDouble`.
+    public func loopResize(_ factor: Double) {
+        guard factor.isFinite, factor > 0 else { return }
+        resizeLocalLoop(by: factor)
+        if let loopStartTime, let loopEndTime {
+            publishLoop(start: loopStartTime, end: loopEndTime, active: isLoopActive)
+        }
+    }
+    /// Emergency hold — instantly loop the last `beats` beats (CDJ3000 parity C6;
+    /// an app calls this off a stream-underrun signal to avoid silence).
+    public func emergencyHold(beats: Double = 4) { autoBeatLoop(beats: beats) }
     public func loopMove(beats: Double) {
         guard trackBPM > 0 else { return }
         if let start = loopStartTime, let end = loopEndTime {
@@ -1281,10 +1327,33 @@ public final class Deck {
     public var autoCue: Bool = false {
         didSet {
             if autoCue, buffer != nil {
-                cueTime = 0
-                post(PE_CMD_SET_CUE)
+                applyAutoCue()
             }
         }
+    }
+    /// Level (dBFS) the first sample must exceed for Auto Cue to place the first
+    /// cue there — the CDJ AUTO CUE LEVEL. Analysis onsets take precedence.
+    public var autoCueThresholdDB: Double = -60
+
+    private func applyAutoCue() {
+        // Prefer the analysed first onset / beat; fall back to a threshold scan.
+        if let first = trackAnalysis?.tempo.beatPositions.first, first > 0 {
+            cueTime = first
+            post(PE_CMD_SET_CUE, f0: Float(first))
+            return
+        }
+        guard let buffer else { cueTime = 0; post(PE_CMD_SET_CUE); return }
+        let threshold = Float(pow(10.0, max(-96, min(0, autoCueThresholdDB)) / 20))
+        let channelCount = min(buffer.channelCount, 2)
+        var cueSample = 0
+        scan: for f in 0..<buffer.frameCount {
+            for c in 0..<channelCount where abs(buffer.channel(c)[f]) > threshold {
+                cueSample = f
+                break scan
+            }
+        }
+        cueTime = Double(cueSample) / buffer.format.sampleRate
+        post(PE_CMD_SET_CUE, i1: cueSample, i2: 1)   // integer-sample cue
     }
     public var slip: Bool = false {
         didSet { post(PE_CMD_SET_SLIP, f0: slip ? 1 : 0) }

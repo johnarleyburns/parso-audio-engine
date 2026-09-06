@@ -1465,3 +1465,100 @@ struct MicStripTests {
         #expect(e.mixer.master.peakHold < held)          // it actually decayed
     }
 }
+
+// MARK: - CDJ-3000 parity C6: hot-cue banks, fade cues, auto-cue level, loop cut
+
+@Suite("CDJ3000 C6 — player extras")
+@MainActor
+struct PlayerExtrasTests {
+    private func loaded(bpm: Double = 120, beats: [TimeInterval] = [], amp: Float = 0.6,
+                        leadInSilence: Int = 0) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: 220, seconds: 8, sampleRate: 48_000, channels: 2)
+        for i in 0..<pcm.frameCount {
+            let g: Float = i < leadInSilence ? 0 : amp
+            pcm.channel(0)[i] *= g; pcm.channel(1)[i] *= g
+        }
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 8,
+            tempo: .init(bpm: bpm, confidence: 1, beatPositions: beats, downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm)
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func hotCueBanksHoldIndependentCues() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)          // ~0.5 s
+        e.deckA.setHotCue(0)                   // bank 0, slot 0 near 0.5 s
+        e.deckA.hotCueBank = 1
+        _ = e.render(frames: 48_000)          // ~1.5 s
+        e.deckA.setHotCue(0)                   // bank 1, slot 0 near 1.5 s
+        // Back to bank 0: jumping slot 0 lands near 0.5 s, not 1.5 s.
+        e.deckA.hotCueBank = 0
+        e.deckA.jumpHotCue(0)
+        _ = e.render(frames: 64)
+        #expect(abs(e.deckA.playhead - 0.5) < 0.1)
+        e.deckA.hotCueBank = 1
+        e.deckA.jumpHotCue(0)
+        _ = e.render(frames: 64)
+        #expect(abs(e.deckA.playhead - 1.5) < 0.15)
+    }
+
+    @Test func fadeInCueRampsUpFromSilence() {
+        let e = loaded()
+        e.deckA.setHotCue(0, fadeIn: 0.5)
+        e.deckA.play()
+        e.deckA.jumpHotCue(0)
+        let early = rms(e.render(frames: 4096).left)     // first ~85 ms of the fade
+        _ = e.render(frames: 40_000)                      // past the 0.5 s fade
+        let full = rms(e.render(frames: 4096).left)
+        #expect(early < full * 0.5)
+        #expect(full > 0.05)
+    }
+
+    @Test func autoCueUsesTheFirstOnsetWhenAvailable() {
+        let e = loaded(beats: [1.25, 1.75, 2.25])
+        e.deckA.autoCue = true
+        e.deckA.jumpToCue()
+        _ = e.render(frames: 64)
+        #expect(abs(e.deckA.playhead - 1.25) < 0.05)
+    }
+
+    @Test func autoCueThresholdSkipsLeadInSilence() {
+        // ~0.4 s of digital silence, then tone. Auto Cue lands at the tone.
+        let e = loaded(beats: [], leadInSilence: 19_200)
+        e.deckA.autoCueThresholdDB = -40
+        e.deckA.autoCue = true
+        e.deckA.jumpToCue()
+        _ = e.render(frames: 64)
+        #expect(e.deckA.playhead > 0.35)
+        #expect(e.deckA.playhead < 0.6)
+    }
+
+    @Test func loopResizeMatchesHalveAndDouble() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 4096)
+        e.deckA.autoBeatLoop(beats: 4)
+        let base = (e.deckA.loopEnd ?? 0) - (e.deckA.loopStart ?? 0)
+        e.deckA.loopResize(0.25)
+        let quartered = (e.deckA.loopEnd ?? 0) - (e.deckA.loopStart ?? 0)
+        #expect(abs(quartered / base - 0.25) < 0.05)
+    }
+
+    @Test func emergencyHoldLoopsImmediately() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 4096)
+        e.deckA.emergencyHold(beats: 2)
+        #expect(e.deckA.isLoopActive)
+    }
+}

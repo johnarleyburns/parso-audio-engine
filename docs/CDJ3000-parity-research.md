@@ -335,6 +335,15 @@ algorithms and so should PAE.
   `MicInput.eqLow/eqHigh/talkover/talkoverDepthDB/talkoverThreshold/routeToFX`.
   `Monitoring.splitCue` convenience over `.splitOutput`. `Channel` / `MasterOut`
   `peakHold` (instant attack, ×0.92/event decay). 5 tests; full suite 287/287.
+- **C6 — done.** `Deck.hotCueBank` (0…3) over a `[[TimeInterval?]]` store,
+  re-points the engine's 8 slots on switch (rekordbox A/B/C/D). Fade-in cues:
+  `setHotCue(_:fadeIn:)` + `PE_CMD_HOTCUE_JUMP` f0 drives a `DeckState.cueFade`
+  one-shot ramp 0→1. `Deck.autoCueThresholdDB` — Auto Cue prefers the first
+  analysed onset, else scans the buffer for the first sample over threshold and
+  places an integer-sample cue. `Deck.loopResize(_:)` (arbitrary scale factor).
+  `Deck.emergencyHold(beats:)` — app-callable instant beat-loop for a stream
+  underrun (PAE's resident-buffer engine has no starvation of its own). 6 tests;
+  full suite 293/293.
 
 ### Table
 
