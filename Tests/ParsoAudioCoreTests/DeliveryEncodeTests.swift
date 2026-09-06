@@ -122,6 +122,29 @@ struct DeliveryEncodeTests {
         // 6 s @ 128 kbps ≈ 96 KB; allow generous slack for the tag/padding.
         #expect(data.count < 120_000)
     }
+
+    /// Proves `AudioFileWriter` calls through to a caller-supplied
+    /// `MP3Encoding` instead of Glint when one is given — the seam apps use
+    /// to bring their own encoder (e.g. LAME) without PAE depending on it.
+    /// See docs/BYO-CODEC.md.
+    @Test func mp3EncoderOverrideIsUsedInsteadOfGlint() throws {
+        struct FakeMP3Encoder: MP3Encoding {
+            let marker: Data
+            func encode(_ buffer: PCMBuffer, bitrateKbps: Int) throws -> Data { marker }
+        }
+        let marker = Data("not-actually-mp3-\(UUID().uuidString)".utf8)
+        let src = SignalGenerators.sine(frequency: 440, seconds: 0.2)
+        let url = tempURL("mp3")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let w = try AudioFileWriter(
+            url: url, format: src.format, codec: .mp3(bitrate: 128),
+            mp3Encoder: FakeMP3Encoder(marker: marker)
+        )
+        try w.write(src); try w.finish()
+
+        #expect(try Data(contentsOf: url) == marker)
+    }
 }
 
 /// Minimal MPEG-1 Audio Layer III frame-header walker — enough to prove CBR.

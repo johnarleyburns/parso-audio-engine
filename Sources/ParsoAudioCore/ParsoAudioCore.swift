@@ -558,18 +558,41 @@ private func withArrayOfCStrings<R>(
     return recurse(0, [])
 }
 
+/// The seam a host app uses to supply its own MP3 encoder — see
+/// `docs/BYO-CODEC.md` for the full pattern and a worked LAME example.
+///
+/// PAE ships Glint as the zero-setup default (`.mp3` with no `mp3Encoder`
+/// given) precisely so it never has to vendor a GPL/LGPL codec itself: an
+/// app that wants a different encoder (LAME, or any other) implements this
+/// protocol *in its own source* and passes an instance in, the same way
+/// `StemModelProviding`/`NeuralModelProviding` let an app supply its own
+/// model without PAE ever importing it (`Sources/ParsoAudioNeural/`).
+public protocol MP3Encoding: Sendable {
+    /// Encode `buffer` to a complete MP3 stream (including any headers/ID3
+    /// the encoder writes) at `bitrateKbps`. Conformances own their own
+    /// quality/VBR-vs-CBR choices; PAE only asks for a bitrate and bytes back.
+    func encode(_ buffer: PCMBuffer, bitrateKbps: Int) throws -> Data
+}
+
 public struct AudioFileWriter {
     private let url: URL
     private let format: AudioFormat
     private let codec: ExportCodec
+    private let mp3Encoder: (any MP3Encoding)?
 
-    public init(url: URL, format: AudioFormat, codec: ExportCodec) throws {
+    /// - Parameter mp3Encoder: overrides Glint for `.mp3` codecs with a
+    ///   caller-supplied `MP3Encoding` conformance (e.g. an app-side LAME
+    ///   wrapper). `nil` (the default) keeps the built-in Glint encoder —
+    ///   PAE's own MP3 support never depends on this parameter being set.
+    public init(url: URL, format: AudioFormat, codec: ExportCodec,
+                mp3Encoder: (any MP3Encoding)? = nil) throws {
         guard format.sampleRate.isFinite, format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioFileError.formatMismatch
         }
         self.url = url
         self.format = format
         self.codec = codec
+        self.mp3Encoder = mp3Encoder
     }
 
     public func write(_ buffer: PCMBuffer) throws {
@@ -585,7 +608,13 @@ public struct AudioFileWriter {
         case .alac:
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
         case .mp3(let bitrate):
-            try writeGlint(buffer, bitrate: bitrate)
+            if let mp3Encoder {
+                let data = try mp3Encoder.encode(buffer, bitrateKbps: bitrate)
+                do { try data.write(to: url) }
+                catch { throw AudioFileError.writeFailed(error.localizedDescription) }
+            } else {
+                try writeGlint(buffer, bitrate: bitrate)
+            }
         case .flacDelivery(let bitDepth, let compression, let tags):
             try writeFLACDelivery(buffer, bitDepth: bitDepth, compression: compression, tags: tags)
         }

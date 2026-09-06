@@ -30,7 +30,10 @@ source of truth and the test suite remains the executable specification.
 - **Codecs:** the native containers (WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A) go through
   AVFoundation / AudioToolbox. FLAC, Ogg Vorbis and Opus use vendored permissive C
   (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
-  uses `CGlint`, because AudioToolbox has no MP3 encoder.
+  uses `CGlint` by default, because AudioToolbox has no MP3 encoder — an app under a
+  compatible license can supply its own encoder (e.g. LAME) instead via
+  `AudioFileWriter`'s `mp3Encoder: (any MP3Encoding)?` parameter, with PAE never
+  depending on that encoder itself. See `docs/BYO-CODEC.md`.
 - **Analysis:** tempo / beatgrid / key / structure / waveform run through an
   Accelerate-backed pipeline ported from `parso-tonearm` (audio-engine unification, Phase 5).
   The strict `expected` key/BPM values in `Tests/Fixtures/fixtures.json` are still being
