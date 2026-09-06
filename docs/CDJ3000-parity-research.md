@@ -292,6 +292,20 @@ algorithms and so should PAE.
   follow-up; the existing per-deck `sync()` / `setAsMaster()` already works for
   any of the 4. 5 new tests (`FourDeckTests`); full suite 252/252 green
   (`swift test -c release`).
+- **C2 — done.**
+  - *C2a Key Sync:* `KeyResult.transposed(by:)` / `.shortestShift(to:)`;
+    `Deck.detectedKey` / `soundingKey` / `keySync(to:)` / `keyReset()` /
+    `keySyncRange`; `DJEngine.masterKey`. 7 tests.
+  - *C2b Reverse:* `PE_CMD_SET_REVERSE`; negative-rate transport in
+    `renderChunk` (forward-advancing slip shadow, reverse loop wrap, stop at
+    frame 0); `Deck.reverse`, `slipReversePress()/Release()`. Key-lock is
+    bypassed while reversed. 4 tests.
+  - *C2c Vinyl Speed Adjust:* `PE_CMD_VINYL_SPEED`; per-deck `motorLevel`
+    easing to `motorTarget` at brake / spin-up rates, scaling the transport
+    increment; pause/vinyl-touch brake to a coast-stop, play/release spin up;
+    key-lock bypassed mid-ramp (the turntable pitch drop). `Deck.brakeTime` /
+    `spinUpTime`. 3 tests.
+  Full suite 266/266 green.
 
 ### Table
 

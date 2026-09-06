@@ -882,6 +882,21 @@ public final class Deck {
         bridge.setDeckPlayback(index: index, tempoRatio: playbackRatio * nudgeRatio, pitchSemitones: pitchSemitones)
     }
 
+    // MARK: Vinyl Speed Adjust (CDJ3000 parity C2)
+
+    /// Seconds for playback to brake to a stop on pause / vinyl-touch (0 = the
+    /// classic instant stop). The CDJ-3000 TOUCH/BRAKE knob.
+    public var brakeTime: TimeInterval = 0 { didSet { publishVinylSpeed() } }
+    /// Seconds for playback to spin back up to speed on play / release (0 =
+    /// instant). The CDJ-3000 RELEASE/START knob.
+    public var spinUpTime: TimeInterval = 0 { didSet { publishVinylSpeed() } }
+
+    private func publishVinylSpeed() {
+        post(PE_CMD_VINYL_SPEED,
+             f0: Float(max(0, min(10, brakeTime))),
+             f1: Float(max(0, min(10, spinUpTime))))
+    }
+
     // Jog / scratch (engages varispeed transiently)
     public var vinylMode: Bool = true
     public func jogTouchBegan() {

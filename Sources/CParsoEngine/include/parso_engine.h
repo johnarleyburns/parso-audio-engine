@@ -60,6 +60,7 @@ typedef enum {
     PE_CMD_JOG_TOUCH, PE_CMD_JOG_MOVE, PE_CMD_JOG_RELEASE, PE_CMD_SEEK,
     PE_CMD_UNSYNC, PE_CMD_STEM_ARM, PE_CMD_STEM_GAIN, PE_CMD_STEM_MUTE, PE_CMD_STEM_SOLO,
     PE_CMD_SET_REVERSE,  /* i0 = reverse on/off (CDJ3000 parity C2 — REV / Slip Reverse) */
+    PE_CMD_VINYL_SPEED,  /* f0 = brake seconds, f1 = spin-up seconds (CDJ3000 Vinyl Speed Adjust) */
     PE_CMD_ECHO_SET,  /* per-deck beat echo: i0=on, f0=beats, f1=depth, i1=feedback*1000 */
     PE_CMD_COLORFX_KIND, PE_CMD_BEATFX_KIND, PE_CMD_BEATFX_ONOFF, PE_CMD_BEATFX_RELEASE,
     PE_CMD_SAMPLER_TRIGGER, PE_CMD_SAMPLER_STOP,

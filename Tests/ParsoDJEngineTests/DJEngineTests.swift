@@ -952,3 +952,65 @@ struct ReverseTests {
         #expect(e.deckA.playhead > 0.5)
     }
 }
+
+// MARK: - CDJ-3000 parity C2c: Vinyl Speed Adjust
+
+@Suite("CDJ3000 C2 — Vinyl Speed Adjust")
+@MainActor
+struct VinylSpeedTests {
+    private func loaded() -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: 220, seconds: 10, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 10,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm)
+        return e
+    }
+
+    @Test func pauseIsInstantByDefault() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        let atPause = e.deckA.playhead
+        e.deckA.pause()
+        _ = e.render(frames: 12_000)
+        #expect(abs(e.deckA.playhead - atPause) < 0.001)   // frozen immediately
+    }
+
+    @Test func brakeTimeLetsPlaybackCoastToAStop() {
+        let e = loaded()
+        e.deckA.brakeTime = 0.5
+        e.deckA.play()
+        _ = e.render(frames: 24_000)            // 0.5 s
+        let atPause = e.deckA.playhead
+        e.deckA.pause()
+        _ = e.render(frames: 6_000)             // 0.125 s of coast
+        let afterCoast = e.deckA.playhead
+        #expect(afterCoast > atPause + 0.01)              // still moving
+        #expect(afterCoast - atPause < 0.125)             // but decelerating
+        _ = e.render(frames: 48_000)            // 1 s — well past the 0.5 s brake
+        let stopped = e.deckA.playhead
+        _ = e.render(frames: 24_000)
+        #expect(abs(e.deckA.playhead - stopped) < 0.001)  // fully stopped, frozen
+    }
+
+    @Test func spinUpTimeRampsPlaybackUpToSpeed() {
+        let e = loaded()
+        e.deckA.spinUpTime = 0.5
+        e.deckA.play()
+        _ = e.render(frames: 6_000)             // 0.125 s of spin-up
+        let early = e.deckA.playhead
+        #expect(early < 0.125 * 0.6)                      // moving slower than full speed
+        #expect(early > 0)                                // but moving
+        _ = e.render(frames: 48_000)            // 1 s — past the ramp
+        _ = e.render(frames: 24_000)
+        let a = e.deckA.playhead
+        _ = e.render(frames: 24_000)            // 0.5 s at (now) full speed
+        #expect(abs((e.deckA.playhead - a) - 0.5) < 0.02) // back to nominal rate
+    }
+}

@@ -41,6 +41,13 @@ struct DeckState {
     bool playing = false;
     bool slip = false;
     bool reverse = false;   // CDJ3000 parity C2 — REV / Slip Reverse
+    // Vinyl Speed Adjust (CDJ3000 parity C2): motorLevel eases toward motorTarget
+    // (0 = stopped, 1 = full speed) at brake / spin-up rates. Zero seconds == the
+    // classic instant start/stop.
+    float motorLevel = 1.0f;
+    float motorTarget = 1.0f;
+    float brakeSeconds = 0.0f;
+    float spinupSeconds = 0.0f;
     // Stems (item 1).
     StemVoice stems[4];
     bool stemsArmed = false;
@@ -374,12 +381,20 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
     switch (command.type) {
         case PE_CMD_PLAY:
             deck.playing = true;
+            deck.motorTarget = 1.0f;
+            if (deck.spinupSeconds <= 0.0001f) deck.motorLevel = 1.0f;  // instant start
             deck.shadowPosition = deck.position;
             pushStateEvent(engine, command.deck);
             break;
         case PE_CMD_PAUSE:
             deck.playing = false;
+            deck.motorTarget = 0.0f;
+            if (deck.brakeSeconds <= 0.0001f) deck.motorLevel = 0.0f;   // instant stop
             pushStateEvent(engine, command.deck);
+            break;
+        case PE_CMD_VINYL_SPEED:
+            if (std::isfinite(command.f0)) deck.brakeSeconds = std::max(0.0f, std::min(10.0f, command.f0));
+            if (std::isfinite(command.f1)) deck.spinupSeconds = std::max(0.0f, std::min(10.0f, command.f1));
             break;
         case PE_CMD_SET_CUE:
             if (deck.frames > 0) {
@@ -429,6 +444,8 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             // the pre-touch play state in i1 for the matching release command.
             if (command.i0 != 0 && deck.playing) {
                 deck.playing = false;
+                deck.motorTarget = 0.0f;   // brake to a stop (Vinyl Speed Adjust)
+                if (deck.brakeSeconds <= 0.0001f) deck.motorLevel = 0.0f;
                 pushStateEvent(engine, command.deck);
             }
             break;
@@ -446,6 +463,8 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_JOG_RELEASE:
             if (command.i0 != 0 && command.i1 != 0 && deck.position < static_cast<double>(deck.frames)) {
                 deck.playing = true;
+                deck.motorTarget = 1.0f;   // spin back up (Vinyl Speed Adjust)
+                if (deck.spinupSeconds <= 0.0001f) deck.motorLevel = 1.0f;
                 pushStateEvent(engine, command.deck);
             }
             break;
@@ -766,8 +785,19 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
              deck.stems[2].soloed || deck.stems[3].soloed);
         // One-pole smoothing coefficient for stem gains: ~10 ms.
         const float stemAlpha = 1.0f - std::exp(-1.0f / (static_cast<float>(engine->sampleRate) * 0.010f));
+        // Vinyl Speed Adjust: per-frame linear brake / spin-up rates.
+        const float sr = static_cast<float>(engine->sampleRate);
+        const float brakeRate = deck.brakeSeconds > 0.0001f ? 1.0f / (deck.brakeSeconds * sr) : 1.0f;
+        const float spinRate = deck.spinupSeconds > 0.0001f ? 1.0f / (deck.spinupSeconds * sr) : 1.0f;
         for (int frame = 0; frame < frames; ++frame) {
-            if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) {
+            // Ease the motor toward its target (0 stopped .. 1 full speed).
+            if (deck.motorLevel < deck.motorTarget) {
+                deck.motorLevel = std::min(deck.motorTarget, deck.motorLevel + spinRate);
+            } else if (deck.motorLevel > deck.motorTarget) {
+                deck.motorLevel = std::max(deck.motorTarget, deck.motorLevel - brakeRate);
+            }
+            const bool coasting = !deck.playing && deck.motorLevel > 0.0001f;
+            if ((!deck.playing && !coasting) || deck.frames <= 0 || deck.sampleRate <= 0.0) {
                 dry[deckIndex][frame] = 0.0f;
                 continue;
             }
@@ -800,9 +830,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             const double forwardIncrement = deck.sampleRate / engine->sampleRate *
                 (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
             // Slip shadow always advances at the forward nominal rate — it is the
-            // "where you would be if you hadn't scratched / reversed" playhead.
+            // "where you would be if you hadn't scratched / reversed / braked" playhead.
             if (deck.slip) deck.shadowPosition += forwardIncrement;
-            const double positionIncrement = deck.reverse ? -forwardIncrement : forwardIncrement;
+            const double motor = static_cast<double>(deck.motorLevel);
+            const double positionIncrement = (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
             deck.position += positionIncrement;
             const double loopLength = deck.loopEnd - deck.loopStart;
             if (deck.loopActive && loopLength > 0.0 && deck.position >= deck.loopEnd) {
@@ -815,11 +846,15 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 deck.playing = false;
                 pushEvent(engine, pe_event{PE_EVT_END_OF_TRACK, deckIndex, deck.frames, 0.0f, 0.0f});
                 pushStateEvent(engine, deckIndex);
-            } else if (deck.position <= 0.0) {
+            } else if (deck.reverse && deck.position <= 0.0) {
                 // Reversed to the start of the track: stop at zero.
                 deck.position = 0.0;
                 deck.playing = false;
+                deck.motorTarget = 0.0f;
+                deck.motorLevel = 0.0f;
                 pushStateEvent(engine, deckIndex);
+            } else if (deck.position < 0.0) {
+                deck.position = 0.0;
             }
         }
     }
@@ -838,10 +873,12 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         const float safeRatio = std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f;
         const float safeSemis = std::isfinite(semis) ? semis : 0.0f;
         const bool offNominal = std::fabs(safeRatio - 1.0f) > 0.001f || std::fabs(safeSemis) > 0.01f;
-        // Reverse playback is varispeed-only (signalsmith-stretch can't run
-        // backwards); the pitch inversion is the expected REV sound.
+        // Reverse playback and an in-progress vinyl brake / spin-up are
+        // varispeed-only (signalsmith-stretch can't run backwards, and the
+        // pitch drop *is* the turntable sound).
         if (!keylock || !offNominal || !engine->decks[deckIndex].playing ||
-            engine->decks[deckIndex].reverse) continue;
+            engine->decks[deckIndex].reverse ||
+            std::fabs(engine->decks[deckIndex].motorLevel - 1.0f) > 0.001f) continue;
         pd_timepitch* tp = engine->deckTimePitch[deckIndex];
         if (!tp) continue;
         const float transpose = std::max(-12.0f, std::min(12.0f,
@@ -1326,6 +1363,8 @@ void pe_deck_set_buffer(
     state.playing = false;
     state.slip = false;
     state.reverse = false;
+    state.motorLevel = 0.0f;   // a paused platter is stopped; PLAY spins it up
+    state.motorTarget = 0.0f;
     state.cueFrame = 0;
     state.cueSet = false;
     state.eqLowGain = 1.0f;
