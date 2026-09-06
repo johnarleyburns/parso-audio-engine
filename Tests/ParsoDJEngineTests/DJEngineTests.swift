@@ -885,3 +885,70 @@ struct KeySyncTests {
         #expect(e.deckB.keySync(to: e.deckA) == nil)  // deck B has no track
     }
 }
+
+// MARK: - CDJ-3000 parity C2b: Reverse / Slip Reverse
+
+@Suite("CDJ3000 C2 — Reverse")
+@MainActor
+struct ReverseTests {
+    private func loaded() -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: 220, seconds: 10, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 10,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm)
+        return e
+    }
+
+    @Test func reversePlaysBackwards() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 48_000)          // 1.0 s forward
+        let forward = e.deckA.playhead
+        #expect(forward > 0.9)
+        e.deckA.reverse = true
+        _ = e.render(frames: 24_000)          // 0.5 s reversed
+        #expect(e.deckA.playhead < forward - 0.4)
+    }
+
+    @Test func slipReverseJumpsForwardOnRelease() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 48_000)          // at ~1.0 s
+        e.deckA.slipReversePress()
+        _ = e.render(frames: 24_000)          // reversed 0.5 s -> playhead ~0.5 s
+        #expect(e.deckA.playhead < 0.7)
+        e.deckA.slipReverseRelease()
+        _ = e.render(frames: 64)              // apply the snap
+        // Shadow advanced forward the whole time: ~1.0 + 0.5 = ~1.5 s.
+        #expect(e.deckA.playhead > 1.3)
+        #expect(!e.deckA.reverse)
+        #expect(!e.deckA.slip)
+    }
+
+    @Test func reversingToTheStartStops() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 12_000)          // 0.25 s in
+        e.deckA.reverse = true
+        _ = e.render(frames: 48_000)          // more than enough to hit zero
+        #expect(e.deckA.playhead == 0)
+        #expect(!e.deckA.isPlaying)
+    }
+
+    @Test func reverseInsideALoopWrapsToTheLoopEnd() {
+        let e = loaded()
+        e.deckA.play()
+        _ = e.render(frames: 96_000)          // 2 s in
+        e.deckA.autoBeatLoop(beats: 4)        // ~2 s loop at 120 BPM
+        e.deckA.reverse = true
+        _ = e.render(frames: 240_000)         // 5 s reversed — would run off the start without wrap
+        #expect(e.deckA.isPlaying)            // still looping, never hit zero
+        #expect(e.deckA.playhead > 0.5)
+    }
+}

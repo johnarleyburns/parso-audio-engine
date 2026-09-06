@@ -641,6 +641,7 @@ public final class Deck {
         cueTime = nil
         nudgeRatio = 1
         isPlaying = false
+        reverse = false
         loopStartTime = nil
         loopEndTime = nil
         loopRollActive = false
@@ -1211,6 +1212,33 @@ public final class Deck {
     }
     public var slip: Bool = false {
         didSet { post(PE_CMD_SET_SLIP, f0: slip ? 1 : 0) }
+    }
+
+    // MARK: Reverse / Slip Reverse (CDJ3000 parity C2)
+
+    /// Latching reverse playback (the CDJ-3000 REV button). Varispeed only —
+    /// pitch inverts with the direction, as on hardware.
+    public var reverse: Bool = false {
+        didSet {
+            guard reverse != oldValue else { return }
+            post(PE_CMD_SET_REVERSE, i0: reverse ? 1 : 0)
+        }
+    }
+
+    private var slipReverseRestoreSlip = false
+
+    /// Momentary Slip Reverse: play backwards while held with the slip shadow
+    /// advancing underneath; `slipReverseRelease()` jumps forward to where the
+    /// track would have been.
+    public func slipReversePress() {
+        slipReverseRestoreSlip = slip
+        if !slip { slip = true }
+        reverse = true
+    }
+
+    public func slipReverseRelease() {
+        reverse = false
+        if !slipReverseRestoreSlip { slip = false }
     }
 
     // Performance pads

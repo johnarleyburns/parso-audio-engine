@@ -40,6 +40,7 @@ struct DeckState {
     double shadowPosition = 0.0;
     bool playing = false;
     bool slip = false;
+    bool reverse = false;   // CDJ3000 parity C2 — REV / Slip Reverse
     // Stems (item 1).
     StemVoice stems[4];
     bool stemsArmed = false;
@@ -523,6 +524,21 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             deck.slip = command.f0 > 0.5f;
             if (deck.slip) deck.shadowPosition = deck.position;
             break;
+        case PE_CMD_SET_REVERSE: {
+            const bool wantReverse = command.i0 != 0;
+            if (deck.reverse && !wantReverse && deck.slip) {
+                // Slip Reverse release: jump forward to the shadow playhead.
+                deck.position = deck.shadowPosition;
+                if (deck.position >= static_cast<double>(deck.frames)) {
+                    deck.position = static_cast<double>(deck.frames);
+                    deck.playing = false;
+                }
+                pushPlayheadEvent(engine, command.deck);
+            }
+            if (wantReverse && deck.slip) deck.shadowPosition = deck.position;
+            deck.reverse = wantReverse;
+            break;
+        }
         case PE_CMD_LOOP_IN:
             deck.loopIn = std::isfinite(command.f0)
                 ? static_cast<double>(command.f0) * deck.sampleRate
@@ -781,18 +797,28 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 );
             }
             const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
-            const double positionIncrement = deck.sampleRate / engine->sampleRate *
+            const double forwardIncrement = deck.sampleRate / engine->sampleRate *
                 (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? tempoRatio : 1.0f);
-            if (deck.slip) deck.shadowPosition += positionIncrement;
+            // Slip shadow always advances at the forward nominal rate — it is the
+            // "where you would be if you hadn't scratched / reversed" playhead.
+            if (deck.slip) deck.shadowPosition += forwardIncrement;
+            const double positionIncrement = deck.reverse ? -forwardIncrement : forwardIncrement;
             deck.position += positionIncrement;
-            if (deck.loopActive && deck.loopEnd > deck.loopStart && deck.position >= deck.loopEnd) {
-                const double loopLength = deck.loopEnd - deck.loopStart;
+            const double loopLength = deck.loopEnd - deck.loopStart;
+            if (deck.loopActive && loopLength > 0.0 && deck.position >= deck.loopEnd) {
                 while (deck.position >= deck.loopEnd) deck.position -= loopLength;
+            } else if (deck.loopActive && loopLength > 0.0 && deck.position < deck.loopStart) {
+                while (deck.position < deck.loopStart) deck.position += loopLength;   // reverse loop wrap
             } else if (deck.position >= static_cast<double>(deck.frames)) {
                 deck.position = static_cast<double>(deck.frames);
                 deck.shadowPosition = deck.position;
                 deck.playing = false;
                 pushEvent(engine, pe_event{PE_EVT_END_OF_TRACK, deckIndex, deck.frames, 0.0f, 0.0f});
+                pushStateEvent(engine, deckIndex);
+            } else if (deck.position <= 0.0) {
+                // Reversed to the start of the track: stop at zero.
+                deck.position = 0.0;
+                deck.playing = false;
                 pushStateEvent(engine, deckIndex);
             }
         }
@@ -812,7 +838,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         const float safeRatio = std::isfinite(ratio) && ratio > 0.0f ? ratio : 1.0f;
         const float safeSemis = std::isfinite(semis) ? semis : 0.0f;
         const bool offNominal = std::fabs(safeRatio - 1.0f) > 0.001f || std::fabs(safeSemis) > 0.01f;
-        if (!keylock || !offNominal || !engine->decks[deckIndex].playing) continue;
+        // Reverse playback is varispeed-only (signalsmith-stretch can't run
+        // backwards); the pitch inversion is the expected REV sound.
+        if (!keylock || !offNominal || !engine->decks[deckIndex].playing ||
+            engine->decks[deckIndex].reverse) continue;
         pd_timepitch* tp = engine->deckTimePitch[deckIndex];
         if (!tp) continue;
         const float transpose = std::max(-12.0f, std::min(12.0f,
@@ -1296,6 +1325,7 @@ void pe_deck_set_buffer(
     state.shadowPosition = 0.0;
     state.playing = false;
     state.slip = false;
+    state.reverse = false;
     state.cueFrame = 0;
     state.cueSet = false;
     state.eqLowGain = 1.0f;
