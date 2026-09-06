@@ -1636,3 +1636,82 @@ struct ReverbSendTests {
         }
     }
 }
+
+// MARK: - CDJ-3000 parity C1b: MasterClock + grid-quantized jumps
+
+@Suite("CDJ3000 C1b — master clock & quantized jumps")
+@MainActor
+struct MasterClockTests {
+    private func loaded(bpm: Double, freq: Double, beats: [TimeInterval]) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 10, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 10,
+            tempo: .init(bpm: bpm, confidence: 1, beatPositions: beats, downbeatPositions: [beats.first ?? 0],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm)
+        return e
+    }
+    private func grid(bpm: Double, count: Int) -> [TimeInterval] {
+        (0..<count).map { Double($0) * 60 / bpm }
+    }
+
+    @Test func masterClockReflectsTheMasterDeck() {
+        let e = loaded(bpm: 128, freq: 220, beats: grid(bpm: 128, count: 40))
+        e.deckA.setAsMaster()
+        _ = e.render(frames: 4096)
+        let clock = e.masterClock
+        #expect(abs(clock.bpm - 128) < 1)
+        #expect(clock.sourceDeck == 0)
+        #expect(!clock.isExternal)
+        #expect(clock.isRunning)
+        #expect(clock.framesPerBeat(sampleRate: 48_000) > 0)
+    }
+
+    @Test func externalClockDrivesSyncedDecks() {
+        let e = loaded(bpm: 120, freq: 330, beats: grid(bpm: 120, count: 40))
+        e.setExternalClock(bpm: 126, barPhase: 0)
+        e.deckA.sync()
+        _ = e.render(frames: 4096)
+        #expect(e.deckA.isSynced)
+        #expect(e.masterClock.isExternal)
+        #expect(abs(e.masterClock.bpm - 126) < 0.001)
+        // 120 BPM track dragged to 126 -> +5% tempo (within range).
+        #expect(abs(e.telemetry().deckEffectiveBPMAll[0] - 126) < 1.0)
+        e.clearExternalClock()
+        #expect(!e.masterClock.isExternal)
+    }
+
+    @Test func quantizedHotCueJumpFiresOnTheGridNotImmediately() {
+        let bpm = 120.0
+        let e = loaded(bpm: bpm, freq: 220, beats: grid(bpm: bpm, count: 40))
+        e.deckA.setAsMaster()
+        e.deckA.play()
+        _ = e.render(frames: 6_000)              // ~0.125 s in (mid-beat: beat period is 0.5 s)
+        e.deckA.setHotCue(0)                     // cue at ~0.125 s
+        _ = e.render(frames: 60_000)             // move well past a few beats (~1.25 s)
+        e.deckA.quantizeJumps = true
+        e.deckA.quantizeResolution = .beat
+        let before = e.deckA.playhead
+        e.deckA.jumpHotCue(0)
+        _ = e.render(frames: 64)                 // ~1.3 ms — far less than the wait to the next beat
+        #expect(abs(e.deckA.playhead - before) < 0.05)   // has NOT jumped yet
+        _ = e.render(frames: 30_000)             // 0.625 s — definitely crossed a beat line
+        #expect(e.deckA.playhead < 0.5)          // jumped back to the ~0.125 s cue
+    }
+
+    @Test func unquantizedJumpIsStillImmediate() {
+        let bpm = 120.0
+        let e = loaded(bpm: bpm, freq: 220, beats: grid(bpm: bpm, count: 40))
+        e.deckA.setAsMaster(); e.deckA.play()
+        _ = e.render(frames: 6_000)
+        e.deckA.setHotCue(0)
+        _ = e.render(frames: 60_000)
+        e.deckA.jumpHotCue(0)                    // quantizeJumps defaults to false
+        _ = e.render(frames: 64)
+        #expect(e.deckA.playhead < 0.5)          // jumped right away
+    }
+}

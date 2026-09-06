@@ -37,6 +37,30 @@ public struct EngineStats: Sendable {
     public var starvedFrames: Int64
 }
 
+/// The shared master timeline all synced decks phase-lock to (CDJ3000 parity
+/// C1b — the software analogue of PRO DJ LINK's tempo master, minus the wire
+/// protocol). Drive it from a deck (`Deck.setAsMaster()`) or from an app-supplied
+/// external clock (`DJEngine.setExternalClock` — e.g. an Ableton Link bridge).
+public struct MasterClock: Sendable {
+    /// Master tempo in BPM (0 when nothing is driving the clock).
+    public var bpm: Double
+    /// Phase within the current bar, 0…1 (0 == downbeat).
+    public var barPhase: Double
+    /// Phase within the current beat, 0…1.
+    public var beatPhase: Double { (barPhase * 4).truncatingRemainder(dividingBy: 1) }
+    /// Monotonic engine frame counter.
+    public var frame: Int64
+    /// The deck driving the clock, or nil (external clock or no master).
+    public var sourceDeck: Int?
+    /// True when an app-supplied external clock is driving.
+    public var isExternal: Bool
+    public var isRunning: Bool { bpm > 0 }
+    /// Frames per beat at the current tempo and engine sample rate, 0 if stopped.
+    public func framesPerBeat(sampleRate: Double) -> Double {
+        bpm > 0 ? sampleRate * 60 / bpm : 0
+    }
+}
+
 // MARK: - Top-level engine
 
 /// The complete two-deck software DJ engine. Owns two `Deck`s, a `Mixer`, a
@@ -181,6 +205,17 @@ public final class DJEngine {
         guard let idx = bridge.masterDeckIndex, decks.indices.contains(idx) else { return nil }
         return decks[idx].soundingKey
     }
+
+    /// The shared master timeline synced decks phase-lock to (CDJ3000 parity C1b).
+    public var masterClock: MasterClock { bridge.masterClock() }
+
+    /// Drive the master clock from an app-supplied external source (e.g. a bridge
+    /// to Ableton Link). Synced decks lock to this instead of a master deck.
+    public func setExternalClock(bpm: Double, barPhase: Double = 0) {
+        bridge.setExternalClock(bpm: bpm, barPhase: barPhase)
+    }
+    /// Stop using the external clock (revert to a master deck / none).
+    public func clearExternalClock() { bridge.clearExternalClock() }
 
     // MARK: Recording (Phase 6b item 4)
     private var recordingPump: Task<Void, Never>?
@@ -377,8 +412,47 @@ fileprivate final class EngineBridge {
 
     func setMaster(index: Int) {
         guard (0..<deckCount).contains(index) else { return }
+        externalClock = nil          // a deck master supersedes an external clock
         masterDeckIndex = index
         forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
+    }
+
+    // MARK: External master clock (CDJ3000 parity C1b)
+
+    private(set) var externalClock: (bpm: Double, barPhase: Double)?
+
+    func setExternalClock(bpm: Double, barPhase: Double) {
+        guard bpm.isFinite, bpm > 0 else { return }
+        let phase = barPhase.isFinite ? barPhase - floor(barPhase) : 0
+        externalClock = (bpm, phase)
+        masterDeckIndex = nil
+        pe_set_master_clock(handle, -2, bpm, phase)
+        forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
+    }
+
+    func clearExternalClock() {
+        externalClock = nil
+        pe_set_master_clock(handle, -1, 0, 0)
+    }
+
+    /// The master BPM / bar-phase currently driving the clock (deck or external),
+    /// or nil when nothing is.
+    var masterClockSource: (bpm: Double, barPhase: Double, deck: Int?)? {
+        if let externalClock { return (externalClock.bpm, externalClock.barPhase, nil) }
+        if let idx = masterDeckIndex, let deck = deck(at: idx), deck.effectiveBPM > 0 {
+            return (deck.effectiveBPM, deck.beatPhase, idx)
+        }
+        return nil
+    }
+
+    func masterClock() -> MasterClock {
+        let s = engineStats()
+        let src = masterClockSource
+        return MasterClock(bpm: src?.bpm ?? s.masterBPM,
+                           barPhase: src?.barPhase ?? s.downbeatPhase,
+                           frame: s.masterSample,
+                           sourceDeck: src?.deck,
+                           isExternal: externalClock != nil)
     }
 
     private var isRefreshingSync = false
@@ -412,7 +486,10 @@ fileprivate final class EngineBridge {
         guard let deck = deck(at: index) else { return }
         pe_set_deck_sync(handle, Int32(index), deck.isSynced ? 1 : 0,
                          deck.effectiveBPM, deck.beatPhase)
-        if masterDeckIndex == index {
+        if let externalClock {
+            // The external clock owns the master timeline; a deck can't overwrite it.
+            pe_set_master_clock(handle, -2, externalClock.bpm, externalClock.barPhase)
+        } else if masterDeckIndex == index {
             pe_set_master_clock(handle, Int32(index), deck.effectiveBPM, deck.beatPhase)
         } else if masterDeckIndex == nil {
             pe_set_master_clock(handle, -1, 0, 0)
@@ -574,6 +651,17 @@ public final class HeadlessDJEngine {
         guard let idx = bridge.masterDeckIndex, decks.indices.contains(idx) else { return nil }
         return decks[idx].soundingKey
     }
+
+    /// The shared master timeline synced decks phase-lock to (CDJ3000 parity C1b).
+    public var masterClock: MasterClock { bridge.masterClock() }
+
+    /// Drive the master clock from an app-supplied external source (e.g. a bridge
+    /// to Ableton Link). Synced decks lock to this instead of a master deck.
+    public func setExternalClock(bpm: Double, barPhase: Double = 0) {
+        bridge.setExternalClock(bpm: bpm, barPhase: barPhase)
+    }
+    /// Stop using the external clock (revert to a master deck / none).
+    public func clearExternalClock() { bridge.clearExternalClock() }
 
     // MARK: Recording (Phase 6b item 4)
     public func startRecording(_ recorder: MixRecorder) { bridge.startRecording(recorder) }
@@ -790,9 +878,9 @@ public final class Deck {
     }
     public func jumpToCue() {
         guard let cueTime else { return }
-        currentPlayhead = cueTime
-        shadowPlayhead = cueTime
-        post(PE_CMD_JUMP_CUE)
+        let q = jumpQuantizeArgs
+        if q.i2 == 0 { currentPlayhead = cueTime; shadowPlayhead = cueTime }
+        post(PE_CMD_JUMP_CUE, i2: q.i2, f1: q.f1)
     }
     public func cuePlayPress() {
         if cueTime == nil { setCue() }
@@ -1040,8 +1128,9 @@ public final class Deck {
     }
     public func jumpHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index), let time = hotCueTimes[index] else { return }
-        currentPlayhead = time
-        post(PE_CMD_HOTCUE_JUMP, i0: index, f0: Float(hotCueFadeIn[index]))
+        let q = jumpQuantizeArgs
+        if q.i2 == 0 { currentPlayhead = time }
+        post(PE_CMD_HOTCUE_JUMP, i0: index, i2: q.i2, f0: Float(hotCueFadeIn[index]), f1: q.f1)
     }
     public func deleteHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index) else { return }
@@ -1254,6 +1343,13 @@ public final class Deck {
 
     // Sync
     public func sync() {
+        // Lock to an app-supplied external clock if one is running…
+        if bridge.externalClock != nil {
+            isSynced = true
+            refreshSyncFromMasterIfNeeded()
+            return
+        }
+        // …otherwise to the master deck (electing one if none is set).
         let masterIndex = bridge.masterDeckIndex ?? (index == 0 ? 1 : 0)
         guard masterIndex != index else { return }
         if bridge.masterDeckIndex == nil { bridge.setMaster(index: masterIndex) }
@@ -1269,9 +1365,17 @@ public final class Deck {
     }
 
     fileprivate func refreshSyncFromMasterIfNeeded() {
-        guard isSynced, let masterIndex = bridge.masterDeckIndex, masterIndex != index else { return }
-        let master = bridge.deck(at: masterIndex)
-        let masterBPM = master?.effectiveBPM ?? bridge.bpm(for: masterIndex)
+        guard isSynced else { return }
+        let master: Deck?
+        let masterBPM: Double
+        if let ext = bridge.externalClock {
+            master = nil
+            masterBPM = ext.bpm
+        } else {
+            guard let masterIndex = bridge.masterDeckIndex, masterIndex != index else { return }
+            master = bridge.deck(at: masterIndex)
+            masterBPM = master?.effectiveBPM ?? bridge.bpm(for: masterIndex)
+        }
         guard masterBPM.isFinite, masterBPM > 0, trackBPM > 0 else { return }
 
         let ratio = masterBPM / trackBPM
@@ -1310,7 +1414,17 @@ public final class Deck {
     private var barSync = false
 
     private func syncTargetPosition(master: Deck?, masterBPM: Double) -> TimeInterval {
-        guard let master else { return 0 }
+        guard let master else {
+            // External clock: align this deck's grid to the clock's bar phase.
+            guard let ext = bridge.externalClock, let firstBeat = beatPositions.first else { return 0 }
+            let beatPeriod = 60 / trackBPM
+            let phaseBeats = ext.barPhase * 4                       // beats into the bar
+            let now = currentPlayhead
+            let cyclesBack = ((now - firstBeat) / beatPeriod - phaseBeats).rounded(.down)
+            let target = firstBeat + (cyclesBack + phaseBeats) * beatPeriod
+            let dur = trackDuration
+            return max(0, min(dur > 0 ? dur : .greatestFiniteMagnitude, target))
+        }
         let masterPeriod = 60 / masterBPM
         let targetPeriod = 60 / trackBPM
         let trackDuration = buffer.map { Double($0.frameCount) / $0.format.sampleRate } ?? .greatestFiniteMagnitude
@@ -1328,6 +1442,18 @@ public final class Deck {
         return max(0, min(trackDuration, target))
     }
     public var quantize: Bool = true
+    /// When on, cue / hot-cue / beat-jump *actions* are deferred to the next grid
+    /// line (grain = `quantizeResolution`) rather than firing immediately — the
+    /// CDJ-3000 "quantize snaps triggers to the beat" behaviour, and, for a
+    /// synced deck, quantized relative to the master grid (CDJ3000 parity C1b).
+    /// `quantize` (above) still governs where stored cue/loop points land.
+    public var quantizeJumps: Bool = false
+
+    /// i2 / f1 command args for a jump: (2, grainBeats) when `quantizeJumps`, else (0, 0).
+    private var jumpQuantizeArgs: (i2: Int, f1: Float) {
+        quantizeJumps ? (2, Float(quantizeResolution.beatFraction)) : (0, 0)
+    }
+
     public var autoCue: Bool = false {
         didSet {
             if autoCue, buffer != nil {
@@ -1503,9 +1629,9 @@ public final class Deck {
         let rawTarget = currentPlayhead + beats * 60 / trackBPM
         let target = quantizedTime(rawTarget)
         let seconds = target - currentPlayhead
-        currentPlayhead = target
-        shadowPlayhead = target
-        post(PE_CMD_BEATJUMP, f0: Float(seconds))
+        let q = jumpQuantizeArgs
+        if q.i2 == 0 { currentPlayhead = target; shadowPlayhead = target }
+        post(PE_CMD_BEATJUMP, i2: q.i2, f0: Float(seconds), f1: q.f1)
     }
 
 }

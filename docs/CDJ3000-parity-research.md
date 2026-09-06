@@ -361,12 +361,21 @@ algorithms and so should PAE.
     kinds through `pd_fdnverb` / the convolver instead of the delay-line
     approximation. Left as a follow-up — the FDN already delivers the audible
     improvement; convolution is the enhancement on top.
+- **C1b — done.** `MasterClock` value type (`bpm`, `barPhase`, `beatPhase`,
+  `frame`, `sourceDeck`, `isExternal`); `DJEngine.masterClock` /
+  `HeadlessDJEngine.masterClock`. `setExternalClock(bpm:barPhase:)` /
+  `clearExternalClock()` — an app bridges Ableton Link etc.; synced decks and
+  the engine master-clock atomics lock to it instead of a master deck. Deferred
+  grid-quantized jumps: `Deck.quantizeJumps` makes cue / hot-cue / beat-jump
+  *actions* fire on the next grid line (`PE_CMD_*` `i2 == 2` + grain; the engine
+  counts frames to the next line from the deck's beat phase — master-locked for
+  a synced deck). 4 tests.
 
 ### Table
 
 | Phase | Scope | Status |
 |---|---|---|
-| **C1** | `CParsoEngine` → 4 decks / 4 channels; `MasterClock`; inter-deck quantize | ✅ done (MasterClock type + grid-relative inter-deck quantize → C1b) |
+| **C1** | `CParsoEngine` → 4 decks / 4 channels; `MasterClock`; inter-deck quantize | ✅ done — 4-deck graph (C1) + `MasterClock` / external clock / grid-quantized jumps (C1b) |
 | **C2** | Key Sync / detected-key wiring / master key; reverse + Slip Reverse; Vinyl Speed Adjust | ✅ done |
 | **C3** | Mixer pro tier: booth bus, master isolator, channel fader curve, `MixerInsert` send/return seam | ✅ done |
 | **C4** | Beat FX expansion (Ping Pong / Mobius / Triplet* / Enigma / Shimmer) + X-Pad + FX band filter; Sound Color FX Center Lock + parameter knob | ✅ done (new kinds are approximations; DSP pass → C4b) |

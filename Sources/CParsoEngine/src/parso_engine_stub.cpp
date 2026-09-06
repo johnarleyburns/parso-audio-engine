@@ -66,6 +66,12 @@ struct DeckState {
     bool synced = false;
     double effectiveBpm = 0.0;
     double beatPhase = 0.0;
+    // Deferred grid-quantized jump (CDJ3000 parity C1b): when a jump command
+    // arrives with i2 == 2 the target is stashed and applied when the deck's
+    // playhead next crosses a grid line (grain in beats, default 1).
+    bool pendingJump = false;
+    double pendingJumpTarget = 0.0;
+    double pendingJumpCountdown = 0.0;   // frames until the jump fires
     int64_t cueFrame = 0;
     bool cueSet = false;
     int64_t hotCueFrames[8] = {};
@@ -398,6 +404,31 @@ static void setLoop(DeckState& deck, double start, double end) {
     deck.loopActive = true;
 }
 
+// Schedule a jump to `target` on the next grid line (CDJ3000 parity C1b).
+// `grainBeats` is the quantize grain; the deck's beatPhase / effectiveBpm come
+// from the control side and (for a synced deck) are locked to the master grid.
+// Falls back to an immediate jump when there is no usable tempo.
+static void scheduleQuantizedJump(pe_engine* engine, DeckState& deck, int deckIndex,
+                                  double target, double grainBeats) {
+    if (grainBeats <= 0.0) grainBeats = 1.0;
+    if (deck.effectiveBpm <= 0.0 || deck.sampleRate <= 0.0) {
+        deck.position = target;
+        deck.shadowPosition = target;
+        deck.pendingJump = false;
+        pushPlayheadEvent(engine, deckIndex);
+        return;
+    }
+    const double beatFrames = deck.sampleRate * 60.0 / deck.effectiveBpm;
+    const double grainFrames = beatFrames * grainBeats;
+    // Phase within the current grain: reuse the beat phase, scaled.
+    const double phaseInGrain = std::fmod(deck.beatPhase / grainBeats, 1.0);
+    double wait = (1.0 - phaseInGrain) * grainFrames;
+    if (wait < 1.0) wait += grainFrames;   // never fire "now"; next line
+    deck.pendingJump = true;
+    deck.pendingJumpTarget = target;
+    deck.pendingJumpCountdown = wait;
+}
+
 static void applyCommand(pe_engine* engine, const pe_command& command) {
     if (command.deck == -1) {
         if (command.type == PE_CMD_SAMPLER_TRIGGER && command.i0 >= 0 && command.i0 < 16) {
@@ -455,9 +486,16 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             break;
         case PE_CMD_JUMP_CUE:
             if (deck.cueSet) {
-                deck.position = static_cast<double>(deck.cueFrame);
-                deck.shadowPosition = deck.position;
-                pushPlayheadEvent(engine, command.deck);
+                if (command.i2 == 2) {
+                    scheduleQuantizedJump(engine, deck, command.deck,
+                                          static_cast<double>(deck.cueFrame),
+                                          static_cast<double>(command.f1));
+                } else {
+                    deck.position = static_cast<double>(deck.cueFrame);
+                    deck.shadowPosition = deck.position;
+                    deck.pendingJump = false;
+                    pushPlayheadEvent(engine, command.deck);
+                }
             }
             break;
         case PE_CMD_SET_MASTER:
@@ -522,6 +560,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                         static_cast<double>(deck.frames), raw));
                     deck.position = target;
                     deck.shadowPosition = target;
+                    deck.pendingJump = false;   // an explicit seek cancels a pending quantized jump
                     if (engine->deckTimePitch[command.deck]) {
                         pd_tp_reset(engine->deckTimePitch[command.deck]);
                     }
@@ -562,13 +601,20 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             break;
         case PE_CMD_BEATJUMP:
             if (std::isfinite(command.f0)) {
-                deck.position += static_cast<double>(command.f0) * deck.sampleRate;
-                if (deck.position < 0.0) deck.position = 0.0;
-                if (deck.position >= static_cast<double>(deck.frames)) {
-                    deck.position = static_cast<double>(deck.frames > 0 ? deck.frames - 1 : 0);
+                double dest = deck.position + static_cast<double>(command.f0) * deck.sampleRate;
+                if (dest < 0.0) dest = 0.0;
+                if (dest >= static_cast<double>(deck.frames)) {
+                    dest = static_cast<double>(deck.frames > 0 ? deck.frames - 1 : 0);
                 }
-                deck.shadowPosition = deck.position;
-                pushPlayheadEvent(engine, command.deck);
+                if (command.i2 == 2) {   // grid-quantized (C1b), grain = f1 beats
+                    scheduleQuantizedJump(engine, deck, command.deck, dest,
+                                          static_cast<double>(command.f1));
+                } else {
+                    deck.position = dest;
+                    deck.shadowPosition = dest;
+                    deck.pendingJump = false;
+                    pushPlayheadEvent(engine, command.deck);
+                }
             }
             break;
         case PE_CMD_SYNC:
@@ -696,8 +742,6 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             break;
         case PE_CMD_HOTCUE_JUMP:
             if (command.i0 >= 0 && command.i0 < 8 && deck.hotCueSet[command.i0]) {
-                deck.position = static_cast<double>(deck.hotCueFrames[command.i0]);
-                deck.shadowPosition = deck.position;
                 // Fade-in cue (CDJ3000 parity C6): f0 > 0 ramps the deck up from
                 // silence over f0 seconds.
                 if (std::isfinite(command.f0) && command.f0 > 0.0f) {
@@ -707,7 +751,16 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                     deck.cueFadeGain = 1.0f;
                     deck.cueFadeRate = 0.0f;
                 }
-                pushPlayheadEvent(engine, command.deck);
+                const double target = static_cast<double>(deck.hotCueFrames[command.i0]);
+                if (command.i2 == 2) {   // grid-quantized jump (C1b), grain = f1 beats
+                    scheduleQuantizedJump(engine, deck, command.deck, target,
+                                          static_cast<double>(command.f1));
+                } else {
+                    deck.position = target;
+                    deck.shadowPosition = target;
+                    deck.pendingJump = false;
+                    pushPlayheadEvent(engine, command.deck);
+                }
             }
             break;
         case PE_CMD_HOTCUE_DELETE:
@@ -873,6 +926,17 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         const float brakeRate = deck.brakeSeconds > 0.0001f ? 1.0f / (deck.brakeSeconds * sr) : 1.0f;
         const float spinRate = deck.spinupSeconds > 0.0001f ? 1.0f / (deck.spinupSeconds * sr) : 1.0f;
         for (int frame = 0; frame < frames; ++frame) {
+            // Deferred grid-quantized jump (CDJ3000 parity C1b): fire when the
+            // countdown (frames until the next grid line) runs out.
+            if (deck.pendingJump) {
+                deck.pendingJumpCountdown -= 1.0;
+                if (deck.pendingJumpCountdown <= 0.0) {
+                    deck.position = deck.pendingJumpTarget;
+                    deck.shadowPosition = deck.pendingJumpTarget;
+                    deck.pendingJump = false;
+                    pushPlayheadEvent(engine, deckIndex);
+                }
+            }
             // Ease the motor toward its target (0 stopped .. 1 full speed).
             if (deck.motorLevel < deck.motorTarget) {
                 deck.motorLevel = std::min(deck.motorTarget, deck.motorLevel + spinRate);
@@ -1613,6 +1677,7 @@ void pe_deck_set_buffer(
     state.motorTarget = 0.0f;
     state.cueFadeGain = 1.0f;
     state.cueFadeRate = 0.0f;
+    state.pendingJump = false;
     state.cueFrame = 0;
     state.cueSet = false;
     state.eqLowGain = 1.0f;
