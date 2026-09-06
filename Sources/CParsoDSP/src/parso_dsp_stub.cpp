@@ -258,6 +258,48 @@ struct pd_reverb {
     }
 };
 
+// Feedback Delay Network reverb (CDJ3000 parity C7) — an 8-line FDN with an
+// orthonormal Hadamard feedback matrix (lossless mixing), per-line one-pole
+// damping and slow delay modulation. A materially lusher / less metallic tail
+// than the Freeverb topology, RT-safe and allocation-free once constructed.
+struct pd_fdnverb {
+    static constexpr int kLines = 8;
+    static constexpr int kMaxDelay = 4800;          // 100 ms at 48 kHz
+    double sampleRate;
+    float lineBuf[kLines][kMaxDelay] = {};
+    int writePos = 0;
+    int baseLen[kLines] = {};
+    float dampState[kLines] = {};
+    float lfoPhase[kLines] = {};
+    float size = 0.6f, decay = 0.6f, damp = 0.5f, mix = 0.3f;
+
+    explicit pd_fdnverb(double sr) : sampleRate(sr) {
+        // Mutually-prime-ish base lengths, scaled to ~20..90 ms by `size`.
+        static constexpr int seed[kLines] = {1153, 1327, 1523, 1721, 1949, 2113, 2333, 2521};
+        const double scale = sr / 48'000.0;
+        for (int i = 0; i < kLines; ++i) {
+            baseLen[i] = std::max(1, std::min(kMaxDelay - 2,
+                static_cast<int>(std::lround(seed[i] * scale))));
+            lfoPhase[i] = static_cast<float>(i) * 0.37f;
+        }
+    }
+
+    static void hadamard8(float* v) {
+        // In-place fast Walsh–Hadamard transform, then 1/sqrt(8) normalise.
+        for (int step = 1; step < 8; step <<= 1) {
+            for (int i = 0; i < 8; i += step << 1) {
+                for (int j = i; j < i + step; ++j) {
+                    const float a = v[j], b = v[j + step];
+                    v[j] = a + b;
+                    v[j + step] = a - b;
+                }
+            }
+        }
+        const float n = 0.35355339059f;  // 1/sqrt(8)
+        for (int i = 0; i < 8; ++i) v[i] *= n;
+    }
+};
+
 struct pd_limiter {
     double sampleRate;
     float ceiling;
@@ -689,6 +731,76 @@ void pd_reverb_process(pd_reverb* reverb, const float* in_left, const float* in_
 }
 
 void pd_reverb_destroy(pd_reverb* reverb) { delete reverb; }
+
+pd_fdnverb* pd_fdnverb_create(double sample_rate) {
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;
+    return new (std::nothrow) pd_fdnverb(sample_rate);
+}
+
+void pd_fdnverb_set(pd_fdnverb* r, float size, float decay, float damp, float mix) {
+    if (!r) return;
+    auto clamp01 = [](float x) { return std::isfinite(x) ? std::max(0.0f, std::min(1.0f, x)) : 0.0f; };
+    r->size = clamp01(size);
+    r->decay = clamp01(decay);
+    r->damp = clamp01(damp);
+    r->mix = clamp01(mix);
+}
+
+void pd_fdnverb_process(pd_fdnverb* r, const float* in_l, const float* in_r,
+                        float* out_l, float* out_r, int frames) {
+    if (!r || frames <= 0) return;
+    const int L = pd_fdnverb::kLines;
+    const int maxD = pd_fdnverb::kMaxDelay;
+    // Feedback gain from `decay`: 0 -> short, 1 -> ~6 s RT60-ish.
+    const float g = 0.55f + 0.44f * r->decay;
+    const float dampCoef = 0.05f + 0.9f * r->damp;   // one-pole lowpass amount
+    const float sizeScale = 0.35f + 0.65f * r->size;
+    const float lfoInc = 0.6f / static_cast<float>(r->sampleRate);
+    for (int n = 0; n < frames; ++n) {
+        const float dryL = in_l ? in_l[n] : 0.0f;
+        const float dryR = in_r ? in_r[n] : (in_l ? in_l[n] : 0.0f);
+        const float inMono = 0.5f * (dryL + dryR);
+
+        float taps[8];
+        for (int i = 0; i < L; ++i) {
+            r->lfoPhase[i] += lfoInc;
+            if (r->lfoPhase[i] > 1.0f) r->lfoPhase[i] -= 1.0f;
+            const float mod = 12.0f * std::sin(6.2831853f * r->lfoPhase[i]);
+            int d = static_cast<int>(std::lround(r->baseLen[i] * sizeScale + mod));
+            d = std::max(1, std::min(maxD - 1, d));
+            int rp = r->writePos - d;
+            if (rp < 0) rp += maxD;
+            taps[i] = r->lineBuf[i][rp];
+        }
+
+        float mixed[8];
+        for (int i = 0; i < L; ++i) mixed[i] = taps[i];
+        pd_fdnverb::hadamard8(mixed);
+
+        for (int i = 0; i < L; ++i) {
+            float v = inMono + g * mixed[i];
+            // per-line damping (one-pole lowpass in the feedback path)
+            r->dampState[i] += dampCoef * (v - r->dampState[i]);
+            v = r->dampState[i];
+            if (!std::isfinite(v)) v = 0.0f;
+            r->lineBuf[i][r->writePos] = v;
+        }
+        r->writePos = (r->writePos + 1) % maxD;
+
+        // Even lines -> left, odd -> right; light cross-feed for width.
+        float wetL = 0.0f, wetR = 0.0f;
+        for (int i = 0; i < L; ++i) {
+            if (i & 1) wetR += taps[i]; else wetL += taps[i];
+        }
+        wetL *= 0.5f; wetR *= 0.5f;
+        const float outL = dryL * (1.0f - r->mix) + wetL * r->mix;
+        const float outR = dryR * (1.0f - r->mix) + wetR * r->mix;
+        if (out_l) out_l[n] = outL;
+        if (out_r) out_r[n] = outR;
+    }
+}
+
+void pd_fdnverb_destroy(pd_fdnverb* r) { delete r; }
 
 pd_limiter* pd_limiter_create(double sample_rate, float ceiling_db) {
     if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;

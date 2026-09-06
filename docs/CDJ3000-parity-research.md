@@ -344,18 +344,35 @@ algorithms and so should PAE.
   `Deck.emergencyHold(beats:)` — app-callable instant beat-loop for a stream
   underrun (PAE's resident-buffer engine has no starvation of its own). 6 tests;
   full suite 293/293.
+- **C7 — done (a + b); C7c is a follow-up.**
+  - *C7a:* `SampleLibrary/manifest.json` + `scripts/download-samples.sh` +
+    `SAMPLES-NOTICE.md` — the CC0/CC-BY pack list (VCSL, VSCO 2 CE, Virtuosity
+    Drums; OpenAIR / EchoThief / Voxengo IRs), fetched-not-committed, mirroring
+    the fixture-download pattern.
+  - *C7b:* `pd_fdnverb` — an 8-line feedback-delay-network reverb (orthonormal
+    Hadamard feedback, per-line one-pole damping, slow delay modulation), a
+    real quality step above the Freeverb topology, RT-safe and allocation-free.
+    Wired as a **master reverb send** (`pe_control.master_reverb_*`,
+    post-isolator / pre-limiter, stereo tail); `MasterOut.reverbSend/reverbSize/
+    reverbDecay/reverbDamp`, `send 0` bit-transparent. This is the "synthetic
+    fallback" path — it needs no bundled audio.
+  - *C7c (not done):* a partitioned-FFT **convolution** kernel that runs the
+    real OpenAIR / EchoThief IRs, and routing the DJM Reverb / SHIMMER Beat FX
+    kinds through `pd_fdnverb` / the convolver instead of the delay-line
+    approximation. Left as a follow-up — the FDN already delivers the audible
+    improvement; convolution is the enhancement on top.
 
 ### Table
 
-| Phase | Scope | Size |
+| Phase | Scope | Status |
 |---|---|---|
-| **C1** | `CParsoEngine` → 4 decks / 4 channels; `MasterClock`; inter-deck quantize | large — touches the RT graph contract |
-| **C2** | Key Sync / detected-key wiring / master key; reverse + Slip Reverse; Vinyl Speed Adjust | medium — DSP + `Deck` API |
-| **C3** | Mixer pro tier: booth bus, master isolator, channel fader curve, `MixerInsert` send/return seam | medium |
-| **C4** | Beat FX expansion (Ping Pong / Mobius / Triplet* / Enigma / Shimmer) + X-Pad + FX band filter; Sound Color FX Center Lock + parameter knob | medium — mostly `CParsoDSP` kernels |
-| **C5** | Mic section (EQ / talkover / FX send); Split Cue; peak-hold / true-peak metering | small |
-| **C6** | Small player items: hot-cue banks, fade-in/out cues, auto-cue threshold, loop cut/×4, emergency/starvation loop | small |
-| **C7** | Convolution Reverb kernel + curated CC0/CC-BY IR manifest; Sampler default-content manifest + downloader (`SAMPLES-NOTICE.md`) | medium — new content pipeline |
+| **C1** | `CParsoEngine` → 4 decks / 4 channels; `MasterClock`; inter-deck quantize | ✅ done (MasterClock type + grid-relative inter-deck quantize → C1b) |
+| **C2** | Key Sync / detected-key wiring / master key; reverse + Slip Reverse; Vinyl Speed Adjust | ✅ done |
+| **C3** | Mixer pro tier: booth bus, master isolator, channel fader curve, `MixerInsert` send/return seam | ✅ done |
+| **C4** | Beat FX expansion (Ping Pong / Mobius / Triplet* / Enigma / Shimmer) + X-Pad + FX band filter; Sound Color FX Center Lock + parameter knob | ✅ done (new kinds are approximations; DSP pass → C4b) |
+| **C5** | Mic section (EQ / talkover / FX send); Split Cue; peak-hold / true-peak metering | ✅ done |
+| **C6** | Small player items: hot-cue banks, fade-in/out cues, auto-cue threshold, loop cut/×4, emergency/starvation loop | ✅ done |
+| **C7** | Convolution Reverb kernel + curated CC0/CC-BY IR manifest; Sampler default-content manifest + downloader (`SAMPLES-NOTICE.md`) | ✅ C7a manifest + C7b FDN reverb done; partitioned-FFT convolution → C7c |
 
 Nothing here breaks the MIT / permissive-only / RT-safety constraints. The only genuinely new
 architectural piece is the **N-deck render graph + shared master clock** (C1); everything else

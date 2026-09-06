@@ -56,6 +56,14 @@ void       pd_reverb_process(pd_reverb*, const float* in_l, const float* in_r,
                              float* out_l, float* out_r, int frames);
 void       pd_reverb_destroy(pd_reverb*);
 
+typedef struct pd_fdnverb pd_fdnverb;  /* 8-line feedback delay network, CDJ3000 parity C7 */
+pd_fdnverb* pd_fdnverb_create(double sr);
+void        pd_fdnverb_set(pd_fdnverb*, float size /*0..1*/, float decay /*0..1*/,
+                           float damp /*0..1*/, float mix /*0..1*/);
+void        pd_fdnverb_process(pd_fdnverb*, const float* in_l, const float* in_r,
+                               float* out_l, float* out_r, int frames);
+void        pd_fdnverb_destroy(pd_fdnverb*);
+
 typedef struct pd_limiter pd_limiter;
 pd_limiter* pd_limiter_create(double sr, float ceiling_db /*~ -0.3*/);
 void        pd_limiter_set_ceiling(pd_limiter*, float ceiling_db); /* runtime ceiling change */

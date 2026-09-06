@@ -1562,3 +1562,77 @@ struct PlayerExtrasTests {
         #expect(e.deckA.isLoopActive)
     }
 }
+
+// MARK: - CDJ-3000 parity C7: master reverb send (8-line FDN)
+
+@Suite("CDJ3000 C7 — reverb send")
+@MainActor
+struct ReverbSendTests {
+    private func burst(seconds: Double, toneSeconds: Double, freq: Double = 220) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let sr = 48_000.0
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: seconds, sampleRate: sr, channels: 2)
+        let toneFrames = Int(toneSeconds * sr)
+        for i in toneFrames..<pcm.frameCount { pcm.channel(0)[i] = 0; pcm.channel(1)[i] = 0 }
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: seconds,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm); e.deckA.play()
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func sendZeroIsBitTransparent() {
+        let dry = burst(seconds: 3, toneSeconds: 3)
+        let a = dry.render(frames: 8192).left
+        let wet = burst(seconds: 3, toneSeconds: 3)
+        wet.mixer.master.reverbSend = 0
+        let b = wet.render(frames: 8192).left
+        var maxDiff: Float = 0
+        for i in a.indices { maxDiff = max(maxDiff, abs(a[i] - b[i])) }
+        #expect(maxDiff < 1e-6)
+    }
+
+    @Test func sendAddsAReverbTailAfterTheSourceStops() {
+        let e = burst(seconds: 4, toneSeconds: 1.0)   // 1 s of tone, then silence
+        e.mixer.master.reverbSend = 0.7
+        e.mixer.master.reverbDecay = 0.7
+        _ = e.render(frames: 48_000)                   // through the tone
+        let justAfter = rms(e.render(frames: 12_000).left)   // 0.25 s after the tone stops
+        #expect(justAfter > 0.002)                      // a tail is ringing
+
+        let ref = burst(seconds: 4, toneSeconds: 1.0)
+        _ = ref.render(frames: 48_000)
+        let dryAfter = rms(ref.render(frames: 12_000).left)
+        #expect(dryAfter < justAfter * 0.25)           // dry engine is ~silent there
+    }
+
+    @Test func longerDecayRingsLonger() {
+        func tailEnergy(decay: Double) -> Double {
+            let e = burst(seconds: 6, toneSeconds: 0.5)
+            e.mixer.master.reverbSend = 0.8
+            e.mixer.master.reverbDecay = decay
+            _ = e.render(frames: 24_000)          // 0.5 s tone + 0.5 s
+            _ = e.render(frames: 96_000)          // skip 2 s
+            return rms(e.render(frames: 24_000).left)
+        }
+        #expect(tailEnergy(decay: 0.9) > tailEnergy(decay: 0.2) * 1.5)
+    }
+
+    @Test func reverbStaysBoundedUnderSustainedInput() {
+        let e = burst(seconds: 6, toneSeconds: 6)
+        e.mixer.master.reverbSend = 1.0
+        e.mixer.master.reverbDecay = 1.0
+        for _ in 0..<20 {
+            let out = e.render(frames: 8192).left
+            #expect(out.allSatisfy { $0.isFinite })
+            #expect((out.map(abs).max() ?? 0) < 4.0)
+        }
+    }
+}

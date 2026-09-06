@@ -62,6 +62,10 @@ typedef struct {
     float master_eq_low, master_eq_mid, master_eq_high;
     /* Sound Color FX (CDJ3000 C4): per-channel parameter knob + center lock. */
     float color_param[PE_MAX_DECKS];   /* 0..1 depth / resonance, default 0.5 */
+    /* Master reverb send (CDJ3000 C7) — an 8-line FDN on the master bus,
+     * post-isolator / pre-limiter. send 0 == fully dry (default). */
+    float master_reverb_send;
+    float master_reverb_size, master_reverb_decay, master_reverb_damp;
     /* Booth output (CDJ3000 parity C3 — DJM BOOTH). Independent level + 3-band
      * EQ, fed from the final master. booth_level default 0.8; EQ 0 == flat. */
     float booth_level;

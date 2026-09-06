@@ -338,6 +338,10 @@ fileprivate final class EngineBridge {
         control.booth_eq_low = 0
         control.booth_eq_mid = 0
         control.booth_eq_high = 0
+        control.master_reverb_send = 0
+        control.master_reverb_size = 0.6
+        control.master_reverb_decay = 0.6
+        control.master_reverb_damp = 0.5
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -1750,6 +1754,15 @@ public final class MasterOut {
     public var boothEqMid: Double = 0 { didSet { publishControl() } }
     public var boothEqHigh: Double = 0 { didSet { publishControl() } }
 
+    // MARK: Master reverb send (CDJ3000 parity C7 — 8-line FDN reverb)
+    /// Wet amount of the master-bus reverb (0…1). 0 (default) is fully dry and
+    /// bit-transparent. Feed the DJM Reverb / SHIMMER Beat FX into this.
+    public var reverbSend: Double = 0 { didSet { publishControl() } }
+    /// Room size (0…1), tail length (0…1), high-frequency damping (0…1).
+    public var reverbSize: Double = 0.6 { didSet { publishControl() } }
+    public var reverbDecay: Double = 0.6 { didSet { publishControl() } }
+    public var reverbDamp: Double = 0.5 { didSet { publishControl() } }
+
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
     /// Peak-hold reading (0..1) — instant attack, slow decay (CDJ3000 C5).
@@ -1772,6 +1785,10 @@ public final class MasterOut {
         bridge.control.booth_eq_low = Float(boothEqLow.isNaN ? 0 : boothEqLow)
         bridge.control.booth_eq_mid = Float(boothEqMid.isNaN ? 0 : boothEqMid)
         bridge.control.booth_eq_high = Float(boothEqHigh.isNaN ? 0 : boothEqHigh)
+        bridge.control.master_reverb_send = Float(reverbSend.isFinite ? max(0, min(1, reverbSend)) : 0)
+        bridge.control.master_reverb_size = Float(reverbSize.isFinite ? max(0, min(1, reverbSize)) : 0.6)
+        bridge.control.master_reverb_decay = Float(reverbDecay.isFinite ? max(0, min(1, reverbDecay)) : 0.6)
+        bridge.control.master_reverb_damp = Float(reverbDamp.isFinite ? max(0, min(1, reverbDamp)) : 0.5)
         bridge.publishControl()
     }
 }

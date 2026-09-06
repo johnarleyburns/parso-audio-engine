@@ -157,6 +157,10 @@ struct ControlState {
     std::atomic<float> masterEqLow{0.0f};
     std::atomic<float> masterEqMid{0.0f};
     std::atomic<float> masterEqHigh{0.0f};
+    std::atomic<float> masterReverbSend{0.0f};
+    std::atomic<float> masterReverbSize{0.6f};
+    std::atomic<float> masterReverbDecay{0.6f};
+    std::atomic<float> masterReverbDamp{0.5f};
     std::atomic<float> boothLevel{0.8f};
     std::atomic<float> boothEqLow{0.0f};
     std::atomic<float> boothEqMid{0.0f};
@@ -200,6 +204,7 @@ struct pe_engine {
     pd_eq3* masterEq = nullptr;   // master isolator (CDJ3000 parity C3)
     pd_eq3* boothEq = nullptr;    // booth-output EQ (CDJ3000 parity C3)
     pd_eq3* micEq = nullptr;      // 2-band mic EQ (CDJ3000 parity C5)
+    pd_fdnverb* masterReverb = nullptr;  // master reverb send (CDJ3000 parity C7)
     float talkoverGain = 1.0f;    // smoothed music-duck under talkover
     float micBlock[512] = {};     // per-block EQ'd mono mic, filled in the mic pre-pass
     int micBlockFrames = 0;
@@ -1157,6 +1162,22 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         }
     }
 
+    // Pass 3.7 — master reverb send (CDJ3000 parity C7). The FDN produces a
+    // genuine stereo tail, so left/right diverge from here on. Fully dry at
+    // send 0 (the default), so a default engine is bit-transparent.
+    {
+        const float send = engine->control.masterReverbSend.load(std::memory_order_relaxed);
+        if (send > 0.0001f && left) {
+            pd_fdnverb_set(engine->masterReverb,
+                           engine->control.masterReverbSize.load(std::memory_order_relaxed),
+                           engine->control.masterReverbDecay.load(std::memory_order_relaxed),
+                           engine->control.masterReverbDamp.load(std::memory_order_relaxed),
+                           send);
+            float* r = right ? right : left;
+            pd_fdnverb_process(engine->masterReverb, left, r, left, r, frames);
+        }
+    }
+
     // Pass 4 — master look-ahead brickwall limiter (block, stereo, in-place).
     // Bypassable (Phase 6b item 8) so `WorkspaceEngine.limiterCeiling` can be nil.
     if (engine->control.limiterEnabled.load(std::memory_order_relaxed) > 0.5f) {
@@ -1394,7 +1415,9 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     engine->masterEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
     engine->boothEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
     engine->micEq = pd_eq3_create(sample_rate, 200.0, 3000.0);
-    ok = ok && engine->masterLimiter && engine->masterEq && engine->boothEq && engine->micEq;
+    engine->masterReverb = pd_fdnverb_create(sample_rate);
+    ok = ok && engine->masterLimiter && engine->masterEq && engine->boothEq &&
+         engine->micEq && engine->masterReverb;
     if (!ok) {
         pe_destroy(engine);
         return nullptr;
@@ -1414,6 +1437,7 @@ void pe_destroy(pe_engine* engine) {
     pd_eq3_destroy(engine->masterEq);
     pd_eq3_destroy(engine->boothEq);
     pd_eq3_destroy(engine->micEq);
+    pd_fdnverb_destroy(engine->masterReverb);
     delete engine;
 }
 
@@ -1444,6 +1468,11 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
             ? control->mic_talkover_threshold : 0.02f,
         std::memory_order_relaxed);
     engine->control.micFxOn.store(control->mic_fx_on > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
+    auto clamp01f = [](float x, float d) { return std::isfinite(x) ? std::max(0.0f, std::min(1.0f, x)) : d; };
+    engine->control.masterReverbSend.store(clamp01f(control->master_reverb_send, 0.0f), std::memory_order_relaxed);
+    engine->control.masterReverbSize.store(clamp01f(control->master_reverb_size, 0.6f), std::memory_order_relaxed);
+    engine->control.masterReverbDecay.store(clamp01f(control->master_reverb_decay, 0.6f), std::memory_order_relaxed);
+    engine->control.masterReverbDamp.store(clamp01f(control->master_reverb_damp, 0.5f), std::memory_order_relaxed);
     engine->control.cueMasterMix.store(
         std::isfinite(control->cue_master_mix) ?
             std::max(0.0f, std::min(1.0f, control->cue_master_mix)) : 0.5f,
