@@ -366,17 +366,91 @@ struct SlipTests {
 @Suite("Smart Fader")
 @MainActor
 struct SmartFaderTests {
-    @Test func transitionSyncsAndDucksOutgoingLows() {
+    @Test func transitionSyncsAndAutomatesTheBlend() {
         let e = makeLoadedHeadless(bpmA: 120, bpmB: 128)
-        e.deckA.play(); e.deckB.play()
+        e.deckA.play()
         e.mixer.smartFader.isEnabled = true
         e.mixer.smartFader.tail = .echo
-        e.mixer.smartFader.performTransition(from: e.deckA, to: e.deckB, over: 4)
-        _ = e.render(frames: 4096)
-        // Incoming deck tempo converged toward outgoing master.
+        e.mixer.smartFader.performTransition(from: e.deckA, to: e.deckB, over: 2)
+        _ = e.render(frames: 512)
+        // Incoming deck BPM-matched to the outgoing master.
         #expect(abs(e.deckB.tempoPercent - (120.0 / 128.0 - 1) * 100) < 2.0)
-        // Outgoing lows attenuated during the blend.
-        #expect(e.mixer.channelA.eqLow < 0)
+        #expect(e.deckB.isPlaying)
+        // Start of the blend: incoming bass killed, still on the outgoing side.
+        #expect(e.mixer.channelB.eqLow < -6)
+        #expect(e.mixer.crossfader < -0.4)
+        #expect(e.mixer.smartFader.progress != nil)
+
+        for _ in 0..<170 { _ = e.render(frames: 512) }   // ~1.8 s in
+        #expect(e.mixer.crossfader > 0)                   // crossed toward the incoming deck
+        #expect(e.mixer.channelA.eqLow < 0)               // outgoing bass now cutting
+
+        for _ in 0..<80 { _ = e.render(frames: 512) }     // finish the 2 s transition
+        #expect(e.mixer.smartFader.progress == nil)
+        #expect(e.mixer.channelB.eqLow == 0)              // EQ restored on completion
+        #expect(e.mixer.crossfader > 0.9)                 // fully on the incoming deck
+    }
+
+    @Test func disabledSmartFaderDoesNothing() {
+        let e = makeLoadedHeadless()
+        e.mixer.smartFader.isEnabled = false
+        e.mixer.smartFader.performTransition(from: e.deckA, to: e.deckB, over: 2)
+        _ = e.render(frames: 4096)
+        #expect(e.mixer.smartFader.progress == nil)
+        #expect(e.mixer.channelB.eqLow == 0)
+    }
+}
+
+@Suite("CDJ3000 — Smart CFX")
+@MainActor
+struct SmartCFXTests {
+    private func playing() -> HeadlessDJEngine {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func smartCFXIsInertUntilEnabled() {
+        let e = playing()
+        e.mixer.smartCFX.amount = 0.8     // no effect: not enabled
+        #expect(!e.mixer.beatFX.isOn)
+        #expect(e.mixer.master.reverbSend == 0)
+    }
+
+    @Test func washPresetEngagesEchoAndReverb() {
+        let e = playing()
+        let dry = rms(e.render(frames: 8192).left)
+        e.mixer.smartCFX.preset = 0
+        e.mixer.smartCFX.isEnabled = true
+        e.mixer.smartCFX.amount = 0.9
+        #expect(e.mixer.beatFX.isOn)
+        #expect(e.mixer.beatFX.kind == .echo)
+        #expect(e.mixer.master.reverbSend > 0.3)
+        _ = e.render(frames: 8192)
+        let wet = rms(e.render(frames: 8192).left)
+        #expect(abs(wet - dry) / max(wet, dry) > 0.05)
+    }
+
+    @Test func amountToZeroDisengages() {
+        let e = playing()
+        e.mixer.smartCFX.isEnabled = true
+        e.mixer.smartCFX.amount = 0.7
+        #expect(e.mixer.beatFX.isOn)
+        e.mixer.smartCFX.amount = 0
+        #expect(!e.mixer.beatFX.isOn)
+        #expect(e.mixer.master.reverbSend == 0)
+    }
+
+    @Test func filterPresetUsesTheSVFBeatFX() {
+        let e = playing()
+        e.mixer.smartCFX.preset = 1
+        e.mixer.smartCFX.isEnabled = true
+        e.mixer.smartCFX.amount = 0.8
+        #expect(e.mixer.beatFX.kind == .tripletFilter)
+        #expect(e.mixer.master.reverbSend == 0)
     }
 }
 

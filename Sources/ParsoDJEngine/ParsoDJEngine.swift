@@ -217,6 +217,10 @@ public final class DJEngine {
     /// Stop using the external clock (revert to a master deck / none).
     public func clearExternalClock() { bridge.clearExternalClock() }
 
+    /// Advance time-based mixer automation (the Smart Fader transition). Call
+    /// each frame from a display link with the real elapsed seconds.
+    public func tickAutomation(elapsed: TimeInterval) { mixer.advanceAutomation(elapsed: elapsed) }
+
     /// Load a real impulse response for the master `.convolution` reverb mode
     /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
     /// then set `mixer.master.reverbMode = .convolution` and raise `reverbSend`.
@@ -621,6 +625,7 @@ public final class HeadlessDJEngine {
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
         let count = max(0, frames)
+        if count > 0 { mixer.advanceAutomation(elapsed: Double(count) / bridge.engineSampleRate) }
         var left = [Float](repeating: 0, count: count)
         var right = [Float](repeating: 0, count: count)
         left.withUnsafeMutableBufferPointer { leftPointer in
@@ -681,6 +686,10 @@ public final class HeadlessDJEngine {
     }
     /// Stop using the external clock (revert to a master deck / none).
     public func clearExternalClock() { bridge.clearExternalClock() }
+
+    /// Advance time-based mixer automation (the Smart Fader transition). Call
+    /// each frame from a display link with the real elapsed seconds.
+    public func tickAutomation(elapsed: TimeInterval) { mixer.advanceAutomation(elapsed: elapsed) }
 
     /// Load a real impulse response for the master `.convolution` reverb mode
     /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
@@ -1697,7 +1706,15 @@ public final class Mixer {
         smartFader = SmartFader()
         smartCFX = SmartCFX()
         smartFader.attach(to: self)
+        smartCFX.attach(to: self)
         bridge.register(self)
+    }
+
+    /// Advance time-based mixer automation (currently the Smart Fader transition).
+    /// `HeadlessDJEngine.render` calls this itself; a `DJEngine` app calls it from
+    /// its display link with the real elapsed time.
+    public func advanceAutomation(elapsed: TimeInterval) {
+        smartFader.tick(elapsed: elapsed)
     }
 
     private func publishControl() {
@@ -1959,32 +1976,127 @@ public final class MasterOut {
 
 @MainActor
 public final class SmartFader {
-    public enum Tail: Sendable { case echo, reverb }
+    public enum Tail: Sendable { case echo, reverb, none }
     private weak var mixer: Mixer?
     public var isEnabled: Bool = false
     public var tail: Tail = .echo
-    /// Optional: call once to run an automated transition (§11.5). Normally the
-    /// engine reacts to fader movement while enabled.
+
+    /// 0…1 progress of an in-flight assisted transition, or nil when idle.
+    public private(set) var progress: Double?
+
+    private var fromChannel = 0
+    private var toChannel = 1
+    private var duration: TimeInterval = 0
+    private var elapsed: TimeInterval = 0
+    private var startXF = 0.0
+    private var endXF = 0.0
+    private var tailEngaged = false
+
     fileprivate func attach(to mixer: Mixer) { self.mixer = mixer }
 
+    /// Start an assisted transition: BPM-match `to` to `from`, then over
+    /// `seconds` automate the crossfader (cosine sweep), the incoming/outgoing
+    /// EQ lows (kill incoming bass, fade it in, then cut outgoing bass), and a
+    /// tail effect on the outgoing channel near the end. The app advances it by
+    /// calling `DJEngine.tickAutomation(elapsed:)` each frame; `HeadlessDJEngine`
+    /// advances it automatically inside `render`.
     public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) {
-        guard isEnabled, seconds > 0, from !== to else { return }
+        guard isEnabled, seconds > 0, from !== to, let mixer,
+              mixer.channels.indices.contains(from.channelIndex),
+              mixer.channels.indices.contains(to.channelIndex) else { return }
         from.setAsMaster()
         to.sync()
-        if from.channelIndex == 0 {
-            mixer?.channelA.eqLow = -6
-        } else if from.channelIndex == 1 {
-            mixer?.channelB.eqLow = -6
+        if !to.isPlaying { to.play() }
+        fromChannel = from.channelIndex
+        toChannel = to.channelIndex
+        duration = seconds
+        elapsed = 0
+        progress = 0
+        tailEngaged = false
+        startXF = fromChannel <= toChannel ? -1 : 1
+        endXF = -startXF
+        mixer.crossfader = startXF
+        mixer.channels[toChannel].eqLow = -.infinity      // incoming bass killed
+        mixer.channels[fromChannel].eqLow = 0
+    }
+
+    fileprivate func tick(elapsed dt: TimeInterval) {
+        guard let mixer, progress != nil, dt > 0, duration > 0 else { return }
+        elapsed += dt
+        let p = min(1, elapsed / duration)
+        progress = p
+
+        let s = 0.5 - 0.5 * cos(Double.pi * p)             // eased 0…1
+        mixer.crossfader = startXF + (endXF - startXF) * s
+
+        let inGain = min(1, p / 0.6)                       // incoming bass in over first 60%
+        mixer.channels[toChannel].eqLow = inGain >= 1 ? 0 : -24 * (1 - inGain)
+        let outCut = p > 0.6 ? (p - 0.6) / 0.4 : 0         // outgoing bass out over last 40%
+        mixer.channels[fromChannel].eqLow = -24 * outCut
+
+        if !tailEngaged, p >= 0.7, tail != .none {
+            let fx = mixer.beatFX
+            fx.kind = tail == .echo ? .echo : .reverb
+            fx.assign = fromChannel == 0 ? .chA : (fromChannel == 1 ? .chB : .master)
+            fx.beats = 0.5
+            fx.depth = 0.6
+            fx.isOn = true
+            tailEngaged = true
+        }
+
+        if p >= 1 {
+            mixer.channels[toChannel].eqLow = 0
+            mixer.channels[fromChannel].eqLow = 0
+            if tailEngaged { mixer.beatFX.releaseFX() }
+            progress = nil
         }
     }
+
     internal init() {}
 }
 
 @MainActor
 public final class SmartCFX {
-    public var isEnabled: Bool = false
-    public var amount: Double = 0                     // single control
-    public var preset: Int = 0                        // curated multi-FX chains
+    private weak var mixer: Mixer?
+    public var isEnabled: Bool = false { didSet { apply() } }
+    /// Single 0…1 control driving the curated chain.
+    public var amount: Double = 0 { didSet { apply() } }
+    /// Preset: 0 = Wash (tempo-synced echo + master reverb), 1 = Filter
+    /// (resonant low-pass sweep), 2 = Gate (trans + a touch of reverb).
+    public var preset: Int = 0 { didSet { apply() } }
+
+    private var active = false
+
+    fileprivate func attach(to mixer: Mixer) { self.mixer = mixer }
+
+    private func apply() {
+        guard let mixer else { return }
+        let fx = mixer.beatFX
+        guard isEnabled, amount > 0.001 else {
+            if active {
+                fx.isOn = false
+                mixer.master.reverbSend = 0
+                active = false
+            }
+            return
+        }
+        active = true
+        let a = min(1, max(0, amount))
+        fx.assign = .master
+        switch max(0, min(2, preset)) {
+        case 0:
+            fx.kind = .echo; fx.beats = 0.5; fx.depth = a * 0.85
+            mixer.master.reverbSend = a * 0.6
+        case 1:
+            fx.kind = .tripletFilter; fx.beats = 1; fx.depth = a
+            mixer.master.reverbSend = 0
+        default:
+            fx.kind = .trans; fx.beats = 0.5; fx.depth = a
+            mixer.master.reverbSend = a * 0.35
+        }
+        fx.isOn = true
+    }
+
     internal init() {}
 }
 

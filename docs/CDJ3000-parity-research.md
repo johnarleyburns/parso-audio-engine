@@ -390,6 +390,19 @@ algorithms and so should PAE.
   correlation > 0.99 — a real linear convolution, not an approximation),
   a room-IR tail test, and a determinism test. 4 tests.
   Full suite 306/306 green.
+- **Stub audit (author-requested).** Two pre-existing gaps found and closed:
+  `SmartCFX` was an inert data shell (`internal init() {}`, nothing wired) — now
+  a real one-knob multi-FX: `amount` + `preset` (Wash / Filter / Gate) drive the
+  master Beat FX + reverb send. `SmartFader.performTransition` only pulled one
+  channel's `eqLow` to −6 — now a full timed transition: BPM-match, cosine
+  crossfader sweep, incoming-bass-kill-then-fade-in, outgoing-bass-cut over the
+  last 40%, and an echo/reverb tail near the end, advanced by
+  `DJEngine.tickAutomation(elapsed:)` (auto-ticked inside `HeadlessDJEngine.
+  render`). `SmartFader.progress` exposes 0…1 / nil. 8 tests.
+  The RT `applyCommand` "reserved" no-ops (`PE_CMD_SET_MASTER` / `SET_KEYLOCK` /
+  `COLORFX_KIND` / `SAMPLER_*` / `LOAD`) were verified **not** stubs — each is
+  either redundant (the control-atom path in `pe_set_control` does the work) or
+  dead (buffers load via `pe_deck_set_buffer`, not a command).
 
 ### Table
 
