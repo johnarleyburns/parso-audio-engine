@@ -329,6 +329,12 @@ algorithms and so should PAE.
   intensity + filter resonance; `Channel.colorFXCenterLock` latches the knob to
   one side (DJM-A9 Center Lock), enforced Swift-side. 6 tests; full suite
   282/282 green.
+- **C5 — done.** Mic strip: `pe_control.mic_eq_low/high` (2-band, via a `pd_eq3`
+  in a mic pre-pass), `mic_talkover_*` (block-RMS gate → smoothed music duck),
+  `mic_fx_on` (mic rides in `channelSum` for the all/master Beat FX assigns).
+  `MicInput.eqLow/eqHigh/talkover/talkoverDepthDB/talkoverThreshold/routeToFX`.
+  `Monitoring.splitCue` convenience over `.splitOutput`. `Channel` / `MasterOut`
+  `peakHold` (instant attack, ×0.92/event decay). 5 tests; full suite 287/287.
 
 ### Table
 

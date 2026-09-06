@@ -119,6 +119,12 @@ struct ControlState {
     std::atomic<float> masterLevel{0.8f};
     std::atomic<float> limiterCeilingDB{-0.3f};
     std::atomic<float> micLevel{0.0f};
+    std::atomic<float> micEqLow{0.0f};
+    std::atomic<float> micEqHigh{0.0f};
+    std::atomic<float> micTalkoverOn{0.0f};
+    std::atomic<float> micTalkoverDepthDb{-14.0f};
+    std::atomic<float> micTalkoverThreshold{0.02f};
+    std::atomic<float> micFxOn{0.0f};
     std::atomic<float> cueMasterMix{0.5f};
     std::atomic<float> masterCue{0.0f};
     std::atomic<float> headphoneLevel{0.7f};
@@ -190,6 +196,10 @@ struct pe_engine {
     pd_limiter* masterLimiter = nullptr;
     pd_eq3* masterEq = nullptr;   // master isolator (CDJ3000 parity C3)
     pd_eq3* boothEq = nullptr;    // booth-output EQ (CDJ3000 parity C3)
+    pd_eq3* micEq = nullptr;      // 2-band mic EQ (CDJ3000 parity C5)
+    float talkoverGain = 1.0f;    // smoothed music-duck under talkover
+    float micBlock[512] = {};     // per-block EQ'd mono mic, filled in the mic pre-pass
+    int micBlockFrames = 0;
     // Insert seam (CDJ3000 parity C3). fn cleared first / set last so the RT
     // side never calls a live fn with a stale ctx.
     std::atomic<pe_insert_fn> insertFn[PE_INSERT_COUNT]{};
@@ -999,6 +1009,49 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         }
     }
 
+    // Mic pre-pass (CDJ3000 parity C5): resample the mic block to a mono buffer,
+    // run the 2-band mic EQ, and ease the talkover music-duck toward its target.
+    {
+        engine->micBlockFrames = 0;
+        const float micLvl = engine->control.micLevel.load(std::memory_order_relaxed);
+        const bool haveMic = engine->mic.frames > 0 && engine->mic.sampleRate > 0.0 &&
+                             engine->mic.position < static_cast<double>(engine->mic.frames);
+        float blockRms = 0.0f;
+        if (haveMic) {
+            const int rc = engine->mic.channelCount > 1 ? 1 : 0;
+            const int n = std::min(frames, 512);
+            for (int f = 0; f < n; ++f) {
+                if (engine->mic.position >= static_cast<double>(engine->mic.frames)) {
+                    engine->micBlock[f] = 0.0f;
+                    continue;
+                }
+                const float s = 0.5f * (sampleAt(engine->mic, 0, engine->mic.position) +
+                                        sampleAt(engine->mic, rc, engine->mic.position));
+                engine->micBlock[f] = s;
+                blockRms += s * s;
+                engine->mic.position += engine->mic.sampleRate / engine->sampleRate;
+            }
+            engine->micBlockFrames = n;
+            blockRms = std::sqrt(blockRms / static_cast<float>(std::max(1, n)));
+            pd_eq3_set(engine->micEq,
+                       engine->control.micEqLow.load(std::memory_order_relaxed),
+                       0.0f,   // 2-band mic EQ: mid stays flat
+                       engine->control.micEqHigh.load(std::memory_order_relaxed));
+            pd_eq3_process(engine->micEq, engine->micBlock, engine->micBlock, n);
+        }
+        // Talkover: duck the music while the mic signal is above threshold.
+        float duckTarget = 1.0f;
+        if (engine->control.micTalkoverOn.load(std::memory_order_relaxed) > 0.5f && micLvl > 0.0f &&
+            blockRms > engine->control.micTalkoverThreshold.load(std::memory_order_relaxed)) {
+            const float depthDb = engine->control.micTalkoverDepthDb.load(std::memory_order_relaxed);
+            duckTarget = std::pow(10.0f, std::min(0.0f, depthDb) / 20.0f);
+        }
+        // ~60 ms attack/release smoothing.
+        const float a = 1.0f - std::exp(-1.0f / (static_cast<float>(engine->sampleRate) * 0.060f) *
+                                        static_cast<float>(frames));
+        engine->talkoverGain += a * (duckTarget - engine->talkoverGain);
+    }
+
     // Pass 3 — per frame: non-filter Color-FX (still per-sample stateful),
     // crossfader/fader/trim gain, sum, mic, sampler, bus beat FX, master gain.
     for (int frame = 0; frame < frames; ++frame) {
@@ -1017,18 +1070,22 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         }
         float channelSum = 0.0f;
         for (int d = 0; d < engine->deckCount; ++d) channelSum += channelSignals[d];
-        float mixed = channelSum;
-        if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
-            engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
-            const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
-            mixed += micLevel * 0.5f * (
-                sampleAt(engine->mic, 0, engine->mic.position) +
-                sampleAt(engine->mic, rightChannel, engine->mic.position)
-            );
-            engine->mic.position += engine->mic.sampleRate / engine->sampleRate;
-            if (engine->mic.position >= static_cast<double>(engine->mic.frames)) {
-                engine->mic.position = static_cast<double>(engine->mic.frames);
-            }
+        // Talkover music-duck (CDJ3000 parity C5).
+        channelSum *= engine->talkoverGain;
+        // Mic (CDJ3000 parity C5): EQ'd block from the pre-pass. When mic-FX is
+        // on, the mic rides in channelSum so the "all channels" / "master" Beat
+        // FX assigns process it; otherwise it lands post-FX.
+        const float micFxOn = engine->control.micFxOn.load(std::memory_order_relaxed);
+        float micSample = 0.0f;
+        if (micLevel > 0.0f && frame < engine->micBlockFrames) {
+            micSample = micLevel * engine->micBlock[frame];
+        }
+        float mixed;
+        if (micSample != 0.0f && micFxOn > 0.5f) {
+            channelSum += micSample;
+            mixed = channelSum;
+        } else {
+            mixed = channelSum + micSample;
         }
         for (int slotIndex = 0; slotIndex < 16; ++slotIndex) {
             SamplerSlot& slot = engine->sampler[slotIndex];
@@ -1319,7 +1376,8 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     engine->masterLimiter = pd_limiter_create(sample_rate, -0.3f);
     engine->masterEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
     engine->boothEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
-    ok = ok && engine->masterLimiter && engine->masterEq && engine->boothEq;
+    engine->micEq = pd_eq3_create(sample_rate, 200.0, 3000.0);
+    ok = ok && engine->masterLimiter && engine->masterEq && engine->boothEq && engine->micEq;
     if (!ok) {
         pe_destroy(engine);
         return nullptr;
@@ -1338,6 +1396,7 @@ void pe_destroy(pe_engine* engine) {
     pd_limiter_destroy(engine->masterLimiter);
     pd_eq3_destroy(engine->masterEq);
     pd_eq3_destroy(engine->boothEq);
+    pd_eq3_destroy(engine->micEq);
     delete engine;
 }
 
@@ -1354,6 +1413,20 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
         std::isfinite(control->mic_level) && control->mic_level >= 0.0f ? control->mic_level : 0.0f,
         std::memory_order_relaxed
     );
+    engine->control.micEqLow.store(std::isnan(control->mic_eq_low) ? 0.0f : control->mic_eq_low,
+                                   std::memory_order_relaxed);
+    engine->control.micEqHigh.store(std::isnan(control->mic_eq_high) ? 0.0f : control->mic_eq_high,
+                                    std::memory_order_relaxed);
+    engine->control.micTalkoverOn.store(control->mic_talkover_on > 0.5f ? 1.0f : 0.0f,
+                                        std::memory_order_relaxed);
+    engine->control.micTalkoverDepthDb.store(
+        std::isfinite(control->mic_talkover_depth_db) ? control->mic_talkover_depth_db : -14.0f,
+        std::memory_order_relaxed);
+    engine->control.micTalkoverThreshold.store(
+        std::isfinite(control->mic_talkover_threshold) && control->mic_talkover_threshold >= 0.0f
+            ? control->mic_talkover_threshold : 0.02f,
+        std::memory_order_relaxed);
+    engine->control.micFxOn.store(control->mic_fx_on > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
     engine->control.cueMasterMix.store(
         std::isfinite(control->cue_master_mix) ?
             std::max(0.0f, std::min(1.0f, control->cue_master_mix)) : 0.5f,

@@ -302,6 +302,12 @@ fileprivate final class EngineBridge {
         control.cue_master_mix = 0.5
         control.master_cue = 0
         control.headphone_level = 0.7
+        control.mic_eq_low = 0
+        control.mic_eq_high = 0
+        control.mic_talkover_on = 0
+        control.mic_talkover_depth_db = -14
+        control.mic_talkover_threshold = 0.02
+        control.mic_fx_on = 0
         control.cue_pfl = peQuad(0)
         control.xfade_assign = peQuad(2)
         control.fader_start = peQuad(0)
@@ -1543,8 +1549,13 @@ public final class Channel {
     public var crossfaderAssign: XFAssign = .thru { didSet { publishControl() } }
     /// Latest peak meter (0..1), updated from the RT event stream.
     public private(set) var peakMeter: Float = 0
+    /// Peak-hold reading (0..1): follows `peakMeter` up instantly, decays slowly
+    /// (CDJ3000 parity C5 — the segmented meter's hold dot).
+    public private(set) var peakHold: Float = 0
     fileprivate func updatePeak(_ value: Float) {
-        peakMeter = value.isFinite ? max(0, min(1, value)) : 0
+        let v = value.isFinite ? max(0, min(1, value)) : 0
+        peakMeter = v
+        peakHold = v >= peakHold ? v : max(v, peakHold * 0.92)
     }
     fileprivate init(bridge: EngineBridge, index: Int) {
         self.bridge = bridge
@@ -1672,8 +1683,12 @@ public final class MasterOut {
 
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
+    /// Peak-hold reading (0..1) — instant attack, slow decay (CDJ3000 C5).
+    public private(set) var peakHold: Float = 0
     fileprivate func updatePeak(_ value: Float) {
-        peakMeter = value.isFinite ? max(0, min(1, value)) : 0
+        let v = value.isFinite ? max(0, min(1, value)) : 0
+        peakMeter = v
+        peakHold = v >= peakHold ? v : max(v, peakHold * 0.92)
     }
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -1795,6 +1810,21 @@ public final class MicInput {
     public var isMuted: Bool = true {
         didSet { publishLevel() }
     }
+
+    // MARK: Mic strip (CDJ3000 parity C5 — the DJM mic section)
+    /// 2-band mic EQ (dB; 0 = flat).
+    public var eqLow: Double = 0 { didSet { publishLevel() } }
+    public var eqHigh: Double = 0 { didSet { publishLevel() } }
+    /// Auto-duck the music while the mic is live (DJM TALKOVER).
+    public var talkover: Bool = false { didSet { publishLevel() } }
+    /// Attenuation applied to the music under talkover (dB, negative).
+    public var talkoverDepthDB: Double = -14 { didSet { publishLevel() } }
+    /// Mic block-RMS above which talkover engages.
+    public var talkoverThreshold: Double = 0.02 { didSet { publishLevel() } }
+    /// Route the mic through the Beat FX (takes effect for the "all channels" /
+    /// "master" FX assigns).
+    public var routeToFX: Bool = false { didSet { publishLevel() } }
+
     /// Push captured mic PCM (app supplies the capture path).
     public func submit(_ buffer: PCMBuffer) {
         self.buffer = buffer
@@ -1814,6 +1844,12 @@ public final class MicInput {
 
     private func publishLevel() {
         bridge.control.mic_level = Float(isMuted ? 0 : max(0, min(1, level)))
+        bridge.control.mic_eq_low = Float(eqLow.isNaN ? 0 : eqLow)
+        bridge.control.mic_eq_high = Float(eqHigh.isNaN ? 0 : eqHigh)
+        bridge.control.mic_talkover_on = talkover ? 1 : 0
+        bridge.control.mic_talkover_depth_db = Float(talkoverDepthDB.isFinite ? min(0, talkoverDepthDB) : -14)
+        bridge.control.mic_talkover_threshold = Float(talkoverThreshold.isFinite && talkoverThreshold >= 0 ? talkoverThreshold : 0.02)
+        bridge.control.mic_fx_on = routeToFX ? 1 : 0
         bridge.publishControl()
     }
 }
@@ -1840,6 +1876,12 @@ public final class Monitoring {
     /// `.splitOutput` sums master→mono-left, cue→mono-right in the monitor bus.
     /// `.off` keeps the monitor render path bit-exact (offline harness relies on it).
     public var cueMode: CueMode = .off { didSet { publishControl() } }
+    /// Split Cue (CDJ3000 parity C5): cue and master to separate ears. Convenience
+    /// over `cueMode` — setting it toggles `.splitOutput` / `.off`.
+    public var splitCue: Bool {
+        get { cueMode == .splitOutput }
+        set { cueMode = newValue ? .splitOutput : .off }
+    }
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
     private func publishControl() {

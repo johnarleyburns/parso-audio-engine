@@ -26,6 +26,12 @@ typedef struct {
     float master_level;      /* 0..1 */
     float limiter_ceiling_db;/* dBTP, normally -0.3 */
     float mic_level;         /* 0..1 */
+    /* Mic section (CDJ3000 parity C5 — the DJM mic strip). */
+    float mic_eq_low, mic_eq_high;   /* dB, 2-band mic EQ, 0 == flat */
+    float mic_talkover_on;           /* 0/1 auto-duck the music when the mic is live */
+    float mic_talkover_depth_db;     /* attenuation applied to the music, e.g. -14 */
+    float mic_talkover_threshold;    /* mic block-RMS above which talkover engages, ~0.02 */
+    float mic_fx_on;                 /* 0/1 route the mic through the Beat FX (all/master assign) */
     float cue_master_mix;    /* 0..1 (headphone blend) */
     float master_cue;        /* 0/1 */
     float headphone_level;   /* 0..1 */

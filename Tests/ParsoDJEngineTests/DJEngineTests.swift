@@ -1361,3 +1361,107 @@ struct BeatFXExpansionTests {
         #expect(ch.colorAmount == -0.8)
     }
 }
+
+// MARK: - CDJ-3000 parity C5: mic strip, split cue, peak-hold
+
+@Suite("CDJ3000 C5 — mic + monitoring")
+@MainActor
+struct MicStripTests {
+    private func engineWithDeck(_ freq: Double = 220) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm); e.deckA.play()
+        return e
+    }
+    private func micTone(_ freq: Double, amp: Float = 0.5) -> PCMBuffer {
+        let s = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 1)
+        for i in 0..<s.frameCount { s.channel(0)[i] *= amp }
+        return s
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+    private func mag(_ s: [Float], _ f: Double) -> Double {
+        let b = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: s.count)
+        for i in s.indices { b.channel(0)[i] = s[i] }
+        return Measure.goertzelMagnitude(b, frequency: f)
+    }
+
+    @Test func micEQKillsTheLowBand() {
+        let e = engineWithDeck(220)
+        e.deckA.pause()
+        e.mixer.crossfader = 0
+        e.mic.submit(micTone(90, amp: 0.6))
+        e.mic.isMuted = false
+        e.mic.level = 0.9
+        e.mic.eqLow = -.infinity
+        _ = e.render(frames: 8192)
+        let killed = mag(e.render(frames: 16_384).left, 90)
+
+        let ref = engineWithDeck(220); ref.deckA.pause()
+        ref.mic.submit(micTone(90, amp: 0.6)); ref.mic.isMuted = false; ref.mic.level = 0.9
+        _ = ref.render(frames: 8192)
+        let open = mag(ref.render(frames: 16_384).left, 90)
+        #expect(open > killed * 15)
+    }
+
+    @Test func talkoverDucksTheMusic() {
+        let plain = engineWithDeck(220)
+        plain.mic.submit(micTone(700, amp: 0.6)); plain.mic.isMuted = false; plain.mic.level = 0.8
+        _ = plain.render(frames: 12_000)
+        let musicPlain = mag(plain.render(frames: 16_384).left, 220)
+
+        let ducked = engineWithDeck(220)
+        ducked.mic.submit(micTone(700, amp: 0.6)); ducked.mic.isMuted = false; ducked.mic.level = 0.8
+        ducked.mic.talkover = true
+        ducked.mic.talkoverDepthDB = -18
+        _ = ducked.render(frames: 12_000)     // let the duck envelope settle
+        let musicDucked = mag(ducked.render(frames: 16_384).left, 220)
+        #expect(musicPlain > musicDucked * 3)   // music pulled well down while mic is live
+    }
+
+    @Test func micRouteToFXFeedsTheBeatFX() {
+        let e = engineWithDeck(220)
+        e.deckA.pause()                       // mic only
+        e.mic.submit(micTone(500, amp: 0.5)); e.mic.isMuted = false; e.mic.level = 0.8
+        e.mixer.beatFX.assign = .master
+        e.mixer.beatFX.kind = .echo
+        e.mixer.beatFX.depth = 1
+        e.mixer.beatFX.isOn = true
+        e.mic.routeToFX = false
+        _ = e.render(frames: 8192)
+        let noSend = rms(e.render(frames: 8192).left)
+        e.mic.routeToFX = true
+        _ = e.render(frames: 8192)
+        let withSend = rms(e.render(frames: 8192).left)
+        #expect(abs(withSend - noSend) / max(withSend, noSend) > 0.05)
+    }
+
+    @Test func splitCueTogglesTheCueMode() {
+        let e = HeadlessDJEngine()
+        #expect(!e.monitoring.splitCue)
+        e.monitoring.splitCue = true
+        #expect(e.monitoring.cueMode == .splitOutput)
+        e.monitoring.splitCue = false
+        #expect(e.monitoring.cueMode == .off)
+    }
+
+    @Test func peakHoldDecaysBelowTheLivePeak() {
+        let e = engineWithDeck(220)
+        for _ in 0..<20 { _ = e.render(frames: 512) }
+        let held = e.mixer.master.peakHold
+        #expect(held > 0)
+        e.deckA.pause()
+        for _ in 0..<40 { _ = e.render(frames: 512) }   // silence — live peak drops, hold decays
+        #expect(e.mixer.master.peakMeter < held)
+        #expect(e.mixer.master.peakHold <= held)
+        #expect(e.mixer.master.peakHold < held)          // it actually decayed
+    }
+}
