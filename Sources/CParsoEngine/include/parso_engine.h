@@ -1,6 +1,8 @@
 /*
  * parso_engine.h — C-clean public API for the real-time DJ render graph.
- * Two decks -> channel processing -> crossfader -> master chain -> limiter.
+ * Up to PE_MAX_DECKS decks -> channel processing -> crossfader -> master chain
+ * -> limiter. Deck count is fixed at pe_create time (2..PE_MAX_DECKS); the
+ * CDJ-3000 booth target is 4 (docs/CDJ3000-parity-research.md C1).
  * Driven from Swift's AVAudioSourceNode render block (pe_render) OR synchronously
  * for tests (pe_step). All RT-safe. See docs/SPEC.md §8, §11, §12.
  */
@@ -11,6 +13,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Maximum decks / mixer channels the render graph can be created with. */
+#define PE_MAX_DECKS 4
 
 typedef struct pe_engine pe_engine;
 
@@ -24,23 +29,23 @@ typedef struct {
     float cue_master_mix;    /* 0..1 (headphone blend) */
     float master_cue;        /* 0/1 */
     float headphone_level;   /* 0..1 */
-    float cue_pfl[2];        /* per-channel pre-listen 0/1 */
-    float xfade_assign[2];   /* 0=A side, 1=B side, 2=thru */
-    float fader_start[2];    /* 0/1 */
-    /* per channel [0]=A [1]=B */
-    float trim[2];
-    float eq_low[2], eq_mid[2], eq_high[2]; /* dB, -INFINITY == kill */
-    float color_amount[2];   /* -1..+1 */
-    float color_kind[2];     /* Color FX enum value */
+    float cue_pfl[PE_MAX_DECKS];        /* per-channel pre-listen 0/1 */
+    float xfade_assign[PE_MAX_DECKS];   /* 0=A side, 1=B side, 2=thru */
+    float fader_start[PE_MAX_DECKS];    /* 0/1 */
+    /* per channel [0..PE_MAX_DECKS-1]; 0/1 are the classic A/B */
+    float trim[PE_MAX_DECKS];
+    float eq_low[PE_MAX_DECKS], eq_mid[PE_MAX_DECKS], eq_high[PE_MAX_DECKS]; /* dB, -INFINITY == kill */
+    float color_amount[PE_MAX_DECKS];   /* -1..+1 */
+    float color_kind[PE_MAX_DECKS];     /* Color FX enum value */
     float beatfx_kind;       /* Beat FX enum value */
     float beatfx_beats;      /* beat division, expressed in quarter notes */
     float beatfx_depth;      /* 0..1 wet amount */
     float beatfx_assign;     /* 0=A, 1=B, 2=both, 3=master */
     float beatfx_on;         /* 0/1 */
-    float fader[2];          /* 0..1 */
-    float deck_time_ratio[2];
-    float deck_pitch[2];     /* semitones */
-    float deck_keylock[2];   /* 0/1 — per-deck key-lock (time-pitch) engage */
+    float fader[PE_MAX_DECKS];          /* 0..1 */
+    float deck_time_ratio[PE_MAX_DECKS];
+    float deck_pitch[PE_MAX_DECKS];     /* semitones */
+    float deck_keylock[PE_MAX_DECKS];   /* 0/1 — per-deck key-lock (time-pitch) engage */
     float limiter_enabled;   /* 0/1, default 1 — 0 bypasses the master brickwall limiter */
     float cue_mode;          /* 0 off, 1 splitOutput, 2 cueInPlace, 3 multichannel (§44.2a) */
 } pe_control;
@@ -89,9 +94,9 @@ typedef struct {
     int64_t master_frame;          /* monotonic, advances by `frames` per render */
     double  master_bpm;            /* effective BPM of the master deck, 0 if none */
     double  downbeat_phase;        /* 0..1 within the master bar, 0 if no grid */
-    double  deck_effective_bpm[2]; /* per-deck track BPM * time ratio */
-    double  deck_beat_phase[2];    /* 0..1 within the deck beat */
-    int32_t deck_synced[2];        /* 0/1 authoritative per-deck sync engage */
+    double  deck_effective_bpm[PE_MAX_DECKS]; /* per-deck track BPM * time ratio */
+    double  deck_beat_phase[PE_MAX_DECKS];    /* 0..1 within the deck beat */
+    int32_t deck_synced[PE_MAX_DECKS];        /* 0/1 authoritative per-deck sync engage */
     double  render_load;           /* last block: render time / buffer period, 0..~ */
     int64_t starved_frames;        /* frames output as silence because a deck underran */
 } pe_stats;
@@ -102,7 +107,8 @@ void pe_set_master_clock(pe_engine*, int32_t master_deck /*-1 none*/, double mas
 /* Publish a per-deck effective BPM + sync-engage state for telemetry. */
 void pe_set_deck_sync(pe_engine*, int deck, int synced, double effective_bpm, double beat_phase);
 
-pe_engine* pe_create(double sample_rate, int max_frames);
+/* deck_count is clamped to 2..PE_MAX_DECKS. */
+pe_engine* pe_create(double sample_rate, int max_frames, int deck_count);
 void       pe_destroy(pe_engine*);
 
 /* Atomically publish the latest control snapshot. */

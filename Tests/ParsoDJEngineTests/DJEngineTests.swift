@@ -727,3 +727,84 @@ struct DeckAcceptanceControlTests {
         #expect(e.deckA.beatPhase == 0)
     }
 }
+
+// MARK: - CDJ-3000 parity C1: N-deck render graph (docs/CDJ3000-parity-research.md)
+
+@Suite("CDJ3000 C1 — four decks")
+@MainActor
+struct FourDeckTests {
+    private func loadTone(_ deck: Deck, _ engine: HeadlessDJEngine, freq: Double, bpm: Double = 120) {
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: bpm, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        deck.load(analysis, buffer: pcm)
+    }
+
+    private func magnitude(_ samples: [Float], _ freq: Double) -> Double {
+        let buf = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: samples.count)
+        for i in samples.indices { buf.channel(0)[i] = samples[i] }
+        return Measure.goertzelMagnitude(buf, frequency: freq)
+    }
+
+    @Test func engineExposesFourDecksAndChannelsByDefault() {
+        let e = HeadlessDJEngine()
+        #expect(e.decks.count == 4)
+        #expect(e.mixer.channels.count == 4)
+        #expect(e.deckC === e.decks[2])
+        #expect(e.mixer.channelD === e.mixer.channels[3])
+    }
+
+    @Test func deckCountIsConfigurableDownToTwo() {
+        let two = HeadlessDJEngine(deckCount: 2)
+        #expect(two.decks.count == 2)
+        #expect(two.mixer.channels.count == 2)
+        let clampedHigh = HeadlessDJEngine(deckCount: 9)
+        #expect(clampedHigh.decks.count == 4)
+        let clampedLow = HeadlessDJEngine(deckCount: 1)
+        #expect(clampedLow.decks.count == 2)
+    }
+
+    @Test func allFourDecksSumIntoTheMaster() {
+        let e = HeadlessDJEngine()
+        let freqs = [220.0, 330.0, 495.0, 660.0]
+        for (i, f) in freqs.enumerated() { loadTone(e.decks[i], e, freq: f) }
+        for d in e.decks { d.play() }
+        e.mixer.crossfader = 0
+        let out = e.render(frames: 8192)
+        // Every deck's tone is audible in the master mix.
+        for f in freqs {
+            #expect(magnitude(out.left, f) > 0.02, "tone \(f) Hz missing from 4-deck master")
+        }
+    }
+
+    @Test func thirdAndFourthDecksRespondToTheirOwnChannelFaders() {
+        let e = HeadlessDJEngine()
+        loadTone(e.decks[2], e, freq: 495)
+        loadTone(e.decks[3], e, freq: 660)
+        e.decks[2].play(); e.decks[3].play()
+        e.mixer.channels[3].fader = 0        // kill channel D
+        let out = e.render(frames: 8192)
+        let cMag = magnitude(out.left, 495)
+        let dMag = magnitude(out.left, 660)
+        #expect(cMag > dMag * 8, "channel D fader at 0 should silence deck 4")
+    }
+
+    @Test func anyDeckCanBeTheSyncMaster() {
+        let e = HeadlessDJEngine()
+        loadTone(e.decks[2], e, freq: 300, bpm: 124)
+        loadTone(e.decks[3], e, freq: 400, bpm: 120)   // within the ±10% tempo range
+        e.decks[2].setAsMaster()
+        e.decks[3].sync()
+        #expect(e.decks[3].isSynced)
+        // Deck 4 (120 BPM track) is dragged to deck 3's 124 BPM.
+        let t = e.telemetry()
+        #expect(t.deckEffectiveBPMAll.count == 4)
+        #expect(abs(t.deckEffectiveBPMAll[3] - 124) < 1.0)
+        #expect(t.deckSyncedAll[3])
+    }
+}

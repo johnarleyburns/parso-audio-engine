@@ -277,6 +277,24 @@ algorithms and so should PAE.
 
 ## 6. Suggested phasing
 
+### Progress
+
+- **C1 — done.** `CParsoEngine` render graph is `PE_MAX_DECKS`-wide (4), deck
+  count fixed at `pe_create` time and clamped to 2…4. `pe_control` / `pe_stats`
+  per-deck arrays widened; `validDeck` is engine-aware; crossfader "thru" assign
+  generalised (even decks track the A side, odd the B side, preserving the
+  classic 2-deck default). Swift: `DJEngine` / `HeadlessDJEngine` expose
+  `decks: [Deck]` (+ `deckA…deckD` aliases), `Mixer` exposes `channels: [Channel]`
+  (+ `channelA…channelD`); both take `deckCount: Int = 4`. `EngineStats` gains
+  `deck{EffectiveBPM,BeatPhase,Synced}All` arrays covering every deck. Event
+  routing in `HeadlessDJEngine.drainEvents` is index-generic. `MasterClock` as a
+  standalone type + inter-deck grid-relative quantize is deferred to a C1b
+  follow-up; the existing per-deck `sync()` / `setAsMaster()` already works for
+  any of the 4. 5 new tests (`FourDeckTests`); full suite 252/252 green
+  (`swift test -c release`).
+
+### Table
+
 | Phase | Scope | Size |
 |---|---|---|
 | **C1** | `CParsoEngine` → 4 decks / 4 channels; `MasterClock`; inter-deck quantize | large — touches the RT graph contract |

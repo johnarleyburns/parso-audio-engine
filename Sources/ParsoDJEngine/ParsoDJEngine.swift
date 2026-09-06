@@ -24,9 +24,15 @@ public struct EngineStats: Sendable {
     public var masterSample: Int64
     public var masterBPM: Double
     public var downbeatPhase: Double
+    /// Decks 0/1 only — kept for source compatibility. Prefer the `*All` arrays,
+    /// which cover every deck the engine was created with (up to 4).
     public var deckEffectiveBPM: (Double, Double)
     public var deckBeatPhase: (Double, Double)
     public var deckSynced: (Bool, Bool)
+    /// Per-deck telemetry for all `deckCount` decks (CDJ3000 parity C1).
+    public var deckEffectiveBPMAll: [Double]
+    public var deckBeatPhaseAll: [Double]
+    public var deckSyncedAll: [Bool]
     public var renderLoad: Double
     public var starvedFrames: Int64
 }
@@ -37,8 +43,14 @@ public struct EngineStats: Sendable {
 /// `Sampler`, a `MicInput`, and `Monitoring`. Install with `start()`.
 @MainActor
 public final class DJEngine {
-    public let deckA: Deck
-    public let deckB: Deck
+    /// All decks (2…4). `deckA`/`deckB` alias `decks[0]`/`decks[1]`.
+    public let decks: [Deck]
+    public var deckA: Deck { decks[0] }
+    public var deckB: Deck { decks[1] }
+    /// Third / fourth decks — present when created with `deckCount >= 3` / `>= 4`
+    /// (the default is 4, the CDJ-3000 booth target). Trap on a 2-deck engine.
+    public var deckC: Deck { decks[2] }
+    public var deckD: Deck { decks[3] }
     public let mixer: Mixer
     public let sampler: Sampler
     public let mic: MicInput
@@ -55,13 +67,12 @@ public final class DJEngine {
     private var configChangeObserver: NSObjectProtocol?
     private var configChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
-        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender, deckCount: deckCount)
         self.bridge = bridge
         self.sampleRateValue = sampleRate
         self.maxFramesPerRender = maxFramesPerRender
-        deckA = Deck(bridge: bridge, index: 0)
-        deckB = Deck(bridge: bridge, index: 1)
+        decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
@@ -191,33 +202,61 @@ public final class DJEngine {
 
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
-        HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender)
+        HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender,
+                         deckCount: decks.count)
     }
+}
+
+/// Maximum decks / mixer channels — mirrors `PE_MAX_DECKS` in parso_engine.h.
+fileprivate let kPEMaxDecks = 4
+
+@inline(__always)
+fileprivate func peSet(_ t: inout (Float, Float, Float, Float), _ i: Int, _ v: Float) {
+    switch i {
+    case 0: t.0 = v
+    case 1: t.1 = v
+    case 2: t.2 = v
+    default: t.3 = v
+    }
+}
+@inline(__always) fileprivate func peQuad(_ v: Float) -> (Float, Float, Float, Float) { (v, v, v, v) }
+
+@MainActor
+fileprivate final class WeakDeck {
+    weak var deck: Deck?
+    init(_ deck: Deck?) { self.deck = deck }
 }
 
 @MainActor
 fileprivate final class EngineBridge {
     private let handleBits: UInt
     let engineSampleRate: Double
+    let deckCount: Int
     var control: pe_control
     private(set) var masterDeckIndex: Int?
-    private var trackBPM: [Double] = [120, 120]
-    weak var deckA: Deck?
-    weak var deckB: Deck?
+    private var trackBPM: [Double]
+    private var deckBoxes: [WeakDeck]
     weak var sampler: Sampler?
     weak var mixer: Mixer?
+
+    var deckA: Deck? { deckBoxes[0].deck }
+    var deckB: Deck? { deckBoxes[1].deck }
 
     var handle: OpaquePointer {
         // The C handle is owned and used exclusively on the main/control actor.
         OpaquePointer(bitPattern: handleBits)!
     }
 
-    init(sampleRate: Double, maxFrames: Int) {
-        guard let handle = pe_create(sampleRate, Int32(maxFrames)) else {
+    init(sampleRate: Double, maxFrames: Int, deckCount: Int) {
+        let clampedDecks = min(max(deckCount, 2), kPEMaxDecks)
+        guard let handle = pe_create(sampleRate, Int32(maxFrames), Int32(clampedDecks)) else {
             fatalError("CParsoEngine could not be created")
         }
         self.handleBits = UInt(bitPattern: handle)
         self.engineSampleRate = sampleRate
+        self.deckCount = clampedDecks
+        self.trackBPM = Array(repeating: 120, count: kPEMaxDecks)
+        self.deckBoxes = (0..<kPEMaxDecks).map { _ in WeakDeck(nil) }
         var control = pe_control()
         control.crossfader = 0
         control.xfade_curve = 0
@@ -226,24 +265,24 @@ fileprivate final class EngineBridge {
         control.cue_master_mix = 0.5
         control.master_cue = 0
         control.headphone_level = 0.7
-        control.cue_pfl = (0, 0)
-        control.xfade_assign = (2, 2)
-        control.fader_start = (0, 0)
-        control.eq_low = (0, 0)
-        control.eq_mid = (0, 0)
-        control.eq_high = (0, 0)
-        control.color_amount = (0, 0)
-        control.color_kind = (0, 0)
+        control.cue_pfl = peQuad(0)
+        control.xfade_assign = peQuad(2)
+        control.fader_start = peQuad(0)
+        control.eq_low = peQuad(0)
+        control.eq_mid = peQuad(0)
+        control.eq_high = peQuad(0)
+        control.color_amount = peQuad(0)
+        control.color_kind = peQuad(0)
         control.beatfx_kind = 0
         control.beatfx_beats = 0.5
         control.beatfx_depth = 0.5
         control.beatfx_assign = 0
         control.beatfx_on = 0
-        control.trim = (0.5, 0.5)
-        control.fader = (1, 1)
-        control.deck_time_ratio = (1, 1)
-        control.deck_pitch = (0, 0)
-        control.deck_keylock = (1, 1)  // Deck.keyLock defaults to true
+        control.trim = peQuad(0.5)
+        control.fader = peQuad(1)
+        control.deck_time_ratio = peQuad(1)
+        control.deck_pitch = peQuad(0)
+        control.deck_keylock = peQuad(1)  // Deck.keyLock defaults to true
         control.limiter_enabled = 1
         control.cue_mode = 0
         self.control = control
@@ -255,7 +294,11 @@ fileprivate final class EngineBridge {
     func publishControl() { pe_set_control(handle, &control) }
 
     func register(_ deck: Deck, index: Int) {
-        if index == 0 { deckA = deck } else if index == 1 { deckB = deck }
+        if deckBoxes.indices.contains(index) { deckBoxes[index] = WeakDeck(deck) }
+    }
+
+    private func forEachDeck(_ body: (Deck) -> Void) {
+        for box in deckBoxes { if let deck = box.deck { body(deck) } }
     }
 
     func register(_ sampler: Sampler) { self.sampler = sampler }
@@ -272,14 +315,13 @@ fileprivate final class EngineBridge {
     }
 
     func deck(at index: Int) -> Deck? {
-        index == 0 ? deckA : (index == 1 ? deckB : nil)
+        deckBoxes.indices.contains(index) ? deckBoxes[index].deck : nil
     }
 
     func setMaster(index: Int) {
-        guard index == 0 || index == 1 else { return }
+        guard (0..<deckCount).contains(index) else { return }
         masterDeckIndex = index
-        deckA?.refreshSyncFromMasterIfNeeded()
-        deckB?.refreshSyncFromMasterIfNeeded()
+        forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
     }
 
     private var isRefreshingSync = false
@@ -287,31 +329,23 @@ fileprivate final class EngineBridge {
     func setDeckPlayback(index: Int, tempoRatio: Double, pitchSemitones: Double) {
         let ratio = tempoRatio.isFinite && tempoRatio > 0 ? tempoRatio : 1
         let pitch = pitchSemitones.isFinite ? pitchSemitones : 0
-        if index == 0 {
-            control.deck_time_ratio.0 = Float(ratio)
-            control.deck_pitch.0 = Float(pitch)
-        } else if index == 1 {
-            control.deck_time_ratio.1 = Float(ratio)
-            control.deck_pitch.1 = Float(pitch)
-        } else {
-            return
-        }
+        guard (0..<deckCount).contains(index) else { return }
+        peSet(&control.deck_time_ratio, index, Float(ratio))
+        peSet(&control.deck_pitch, index, Float(pitch))
         publishControl()
         publishSyncState(index: index)
         // Phase 6b item 2: a master-deck rate change drags the synced deck.
         // Finding C4 — this re-derivation used to run only at engage time.
         if !isRefreshingSync, masterDeckIndex == index {
             isRefreshingSync = true
-            deckA?.refreshSyncFromMasterIfNeeded()
-            deckB?.refreshSyncFromMasterIfNeeded()
+            forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
             isRefreshingSync = false
         }
     }
 
     func setDeckKeylock(_ on: Bool, index: Int) {
-        if index == 0 { control.deck_keylock.0 = on ? 1 : 0 }
-        else if index == 1 { control.deck_keylock.1 = on ? 1 : 0 }
-        else { return }
+        guard (0..<deckCount).contains(index) else { return }
+        peSet(&control.deck_keylock, index, on ? 1 : 0)
         publishControl()
     }
 
@@ -381,6 +415,16 @@ fileprivate final class EngineBridge {
     func engineStats() -> EngineStats {
         var s = pe_stats()
         pe_get_stats(handle, &s)
+        let n = deckCount
+        let bpmAll = withUnsafeBytes(of: s.deck_effective_bpm) { raw -> [Double] in
+            let p = raw.bindMemory(to: Double.self); return (0..<n).map { p[$0] }
+        }
+        let phaseAll = withUnsafeBytes(of: s.deck_beat_phase) { raw -> [Double] in
+            let p = raw.bindMemory(to: Double.self); return (0..<n).map { p[$0] }
+        }
+        let syncedAll = withUnsafeBytes(of: s.deck_synced) { raw -> [Bool] in
+            let p = raw.bindMemory(to: Int32.self); return (0..<n).map { p[$0] != 0 }
+        }
         return EngineStats(
             masterSample: s.master_frame,
             masterBPM: s.master_bpm,
@@ -388,6 +432,9 @@ fileprivate final class EngineBridge {
             deckEffectiveBPM: (s.deck_effective_bpm.0, s.deck_effective_bpm.1),
             deckBeatPhase: (s.deck_beat_phase.0, s.deck_beat_phase.1),
             deckSynced: (s.deck_synced.0 != 0, s.deck_synced.1 != 0),
+            deckEffectiveBPMAll: bpmAll,
+            deckBeatPhaseAll: phaseAll,
+            deckSyncedAll: syncedAll,
             renderLoad: s.render_load,
             starvedFrames: s.starved_frames
         )
@@ -397,18 +444,22 @@ fileprivate final class EngineBridge {
 /// Synchronous render harness for tests. Same DSP as `DJEngine`, no audio device.
 @MainActor
 public final class HeadlessDJEngine {
-    public let deckA: Deck
-    public let deckB: Deck
+    /// All decks (2…4). `deckA`/`deckB` alias `decks[0]`/`decks[1]`.
+    public let decks: [Deck]
+    public var deckA: Deck { decks[0] }
+    public var deckB: Deck { decks[1] }
+    public var deckC: Deck { decks[2] }
+    public var deckD: Deck { decks[3] }
     public let mixer: Mixer
     public let sampler: Sampler
     public let mic: MicInput
     public let monitoring: Monitoring
     private let bridge: EngineBridge
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
-        bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
-        deckA = Deck(bridge: bridge, index: 0)
-        deckB = Deck(bridge: bridge, index: 1)
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender, deckCount: deckCount)
+        self.bridge = bridge
+        decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
@@ -462,15 +513,15 @@ public final class HeadlessDJEngine {
             for event in events.prefix(Int(count)) {
                 switch event.type {
                 case PE_EVT_PLAYHEAD, PE_EVT_STATE:
-                    if event.deck == 0 { deckA.apply(event) }
-                    if event.deck == 1 { deckB.apply(event) }
+                    let d = Int(event.deck)
+                    if decks.indices.contains(d) { decks[d].apply(event) }
                 case PE_EVT_PEAK:
-                    if event.deck == 0 { mixer.channelA.updatePeak(event.f0) }
-                    if event.deck == 1 { mixer.channelB.updatePeak(event.f0) }
-                    if event.deck == -1 { mixer.master.updatePeak(event.f0) }
+                    let d = Int(event.deck)
+                    if d == -1 { mixer.master.updatePeak(event.f0) }
+                    else if mixer.channels.indices.contains(d) { mixer.channels[d].updatePeak(event.f0) }
                 case PE_EVT_END_OF_TRACK:
-                    if event.deck == 0 { deckA.applyEndOfTrack(event) }
-                    if event.deck == 1 { deckB.applyEndOfTrack(event) }
+                    let d = Int(event.deck)
+                    if decks.indices.contains(d) { decks[d].applyEndOfTrack(event) }
                 default:
                     break
                 }
@@ -1239,8 +1290,15 @@ public final class Deck {
 
 @MainActor
 public final class Mixer {
-    public let channelA: Channel
-    public let channelB: Channel
+    /// All mixer channels (2…4). `channelA`/`channelB` alias `channels[0]`/`[1]`.
+    public let channels: [Channel]
+    public var channelA: Channel { channels[0] }
+    public var channelB: Channel { channels[1] }
+    /// Third / fourth channels — present when the engine was created with
+    /// `deckCount >= 3` / `>= 4` (the default). Accessing them on a 2-deck
+    /// engine traps.
+    public var channelC: Channel { channels[2] }
+    public var channelD: Channel { channels[3] }
     public let master: MasterOut
     public let beatFX: BeatFXUnit
     public let smartFader: SmartFader
@@ -1254,8 +1312,7 @@ public final class Mixer {
 
     fileprivate init(bridge: EngineBridge) {
         self.bridge = bridge
-        channelA = Channel(bridge: bridge, index: 0)
-        channelB = Channel(bridge: bridge, index: 1)
+        channels = (0..<bridge.deckCount).map { Channel(bridge: bridge, index: $0) }
         master = MasterOut(bridge: bridge)
         beatFX = BeatFXUnit(bridge: bridge)
         smartFader = SmartFader()
@@ -1314,29 +1371,16 @@ public final class Channel {
         let high = Float(eqHigh.isNaN ? 0 : eqHigh)
         let colorAmount = Float(self.colorAmount.isFinite ? max(-1, min(1, self.colorAmount)) : 0)
         let colorKind = Float(ColorFX.allCases.firstIndex(of: colorFX) ?? 0)
-        if index == 0 {
-            bridge.control.trim.0 = gain
-            bridge.control.fader.0 = channelFader
-            bridge.control.cue_pfl.0 = pfl
-            bridge.control.xfade_assign.0 = assignment
-            bridge.control.fader_start.0 = start
-            bridge.control.eq_low.0 = low
-            bridge.control.eq_mid.0 = mid
-            bridge.control.eq_high.0 = high
-            bridge.control.color_amount.0 = colorAmount
-            bridge.control.color_kind.0 = colorKind
-        } else {
-            bridge.control.trim.1 = gain
-            bridge.control.fader.1 = channelFader
-            bridge.control.cue_pfl.1 = pfl
-            bridge.control.xfade_assign.1 = assignment
-            bridge.control.fader_start.1 = start
-            bridge.control.eq_low.1 = low
-            bridge.control.eq_mid.1 = mid
-            bridge.control.eq_high.1 = high
-            bridge.control.color_amount.1 = colorAmount
-            bridge.control.color_kind.1 = colorKind
-        }
+        peSet(&bridge.control.trim, index, gain)
+        peSet(&bridge.control.fader, index, channelFader)
+        peSet(&bridge.control.cue_pfl, index, pfl)
+        peSet(&bridge.control.xfade_assign, index, assignment)
+        peSet(&bridge.control.fader_start, index, start)
+        peSet(&bridge.control.eq_low, index, low)
+        peSet(&bridge.control.eq_mid, index, mid)
+        peSet(&bridge.control.eq_high, index, high)
+        peSet(&bridge.control.color_amount, index, colorAmount)
+        peSet(&bridge.control.color_kind, index, colorKind)
         bridge.publishControl()
     }
 }

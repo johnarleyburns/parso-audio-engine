@@ -114,24 +114,24 @@ struct ControlState {
     std::atomic<float> cueMasterMix{0.5f};
     std::atomic<float> masterCue{0.0f};
     std::atomic<float> headphoneLevel{0.7f};
-    std::atomic<float> cuePFL[2]{{0.0f}, {0.0f}};
-    std::atomic<float> xfadeAssign[2]{{2.0f}, {2.0f}};
-    std::atomic<float> faderStart[2]{{0.0f}, {0.0f}};
-    std::atomic<float> eqLow[2]{{0.0f}, {0.0f}};
-    std::atomic<float> eqMid[2]{{0.0f}, {0.0f}};
-    std::atomic<float> eqHigh[2]{{0.0f}, {0.0f}};
-    std::atomic<float> colorAmount[2]{{0.0f}, {0.0f}};
-    std::atomic<float> colorKind[2]{{0.0f}, {0.0f}};
+    std::atomic<float> cuePFL[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> xfadeAssign[PE_MAX_DECKS]{{2.0f}, {2.0f}, {2.0f}, {2.0f}};
+    std::atomic<float> faderStart[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> eqLow[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> eqMid[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> eqHigh[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> colorAmount[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> colorKind[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
     std::atomic<float> beatFXKind{0.0f};
     std::atomic<float> beatFXBeats{0.5f};
     std::atomic<float> beatFXDepth{0.5f};
     std::atomic<float> beatFXAssign{0.0f};
     std::atomic<float> beatFXOn{0.0f};
-    std::atomic<float> fader[2]{{1.0f}, {1.0f}};
-    std::atomic<float> trim[2]{{0.5f}, {0.5f}};
-    std::atomic<float> deckTimeRatio[2]{{1.0f}, {1.0f}};
-    std::atomic<float> deckPitch[2]{{0.0f}, {0.0f}};
-    std::atomic<float> deckKeylock[2]{{0.0f}, {0.0f}};
+    std::atomic<float> fader[PE_MAX_DECKS]{{1.0f}, {1.0f}, {1.0f}, {1.0f}};
+    std::atomic<float> trim[PE_MAX_DECKS]{{0.5f}, {0.5f}, {0.5f}, {0.5f}};
+    std::atomic<float> deckTimeRatio[PE_MAX_DECKS]{{1.0f}, {1.0f}, {1.0f}, {1.0f}};
+    std::atomic<float> deckPitch[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
+    std::atomic<float> deckKeylock[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
     std::atomic<float> limiterEnabled{1.0f};
     std::atomic<float> cueMode{0.0f};
     // Master-clock inputs (Phase 6b item 2), published from the control actor.
@@ -145,7 +145,8 @@ struct ControlState {
 struct pe_engine {
     double sampleRate;
     int maxFrames;
-    DeckState decks[2];
+    int deckCount = 2;
+    DeckState decks[PE_MAX_DECKS];
     SamplerSlot sampler[16];
     MicState mic;
     ControlState control;
@@ -164,14 +165,14 @@ struct pe_engine {
     // CParsoDSP kernels — the shared, unit-tested DSP (docs/phase6-parity.md C1).
     // Owned by the engine: created in pe_create, freed in pe_destroy. All are
     // allocation-free once constructed, so the render path stays RT-safe.
-    pd_eq3* deckEq[2] = {nullptr, nullptr};
-    pd_filter* deckFilter[2] = {nullptr, nullptr};
+    pd_eq3* deckEq[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
+    pd_filter* deckFilter[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
     pd_limiter* masterLimiter = nullptr;
     // Per-deck beat-echo delay lines (Phase 6b item 3). Sized at pe_create for
     // the worst case (8 beats at 40 BPM ≈ 12 s) so the render path never allocs.
-    pd_delay* deckEcho[2] = {nullptr, nullptr};
+    pd_delay* deckEcho[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
     // Per-deck time-pitch (Phase 6b item 2a) — key-lock via signalsmith-stretch.
-    pd_timepitch* deckTimePitch[2] = {nullptr, nullptr};
+    pd_timepitch* deckTimePitch[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
     // Telemetry atomics (item 2).
     std::atomic<int64_t> masterFrame{0};
     std::atomic<double> renderLoad{0.0};
@@ -188,8 +189,8 @@ struct pe_engine {
 
 namespace {
 
-static bool validDeck(int deck) {
-    return deck >= 0 && deck < 2;
+static bool validDeck(const pe_engine* engine, int deck) {
+    return engine && deck >= 0 && deck < engine->deckCount;
 }
 
 static void clearOutput(float* left, float* right, int frames) {
@@ -367,7 +368,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         }
         return;
     }
-    if (!validDeck(command.deck)) return;
+    if (!validDeck(engine, command.deck)) return;
     DeckState& deck = engine->decks[command.deck];
     switch (command.type) {
         case PE_CMD_PLAY:
@@ -738,11 +739,11 @@ constexpr int kRenderBlock = 512;
 static void renderChunk(pe_engine* engine, float* left, float* right, int frames,
                         const float* channelGains, float master, float micLevel,
                         float* deckPeaks, float& masterPeak) {
-    float dry[2][kRenderBlock];
-    float wet[2][kRenderBlock];
+    float dry[PE_MAX_DECKS][kRenderBlock];
+    float wet[PE_MAX_DECKS][kRenderBlock];
 
     // Pass 1 — per deck: raw mono source + transport advance.
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         DeckState& deck = engine->decks[deckIndex];
         const bool anySolo = deck.stemsArmed &&
             (deck.stems[0].soloed || deck.stems[1].soloed ||
@@ -803,7 +804,7 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
     // length to *undo* the varispeed pitch shift, then apply the independent key
     // shift. Flat (ratio≈1, semis≈0) or key-lock off ⇒ the block is untouched,
     // so a nominal deck is bit-for-bit identical to before.
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         const bool keylock =
             engine->control.deckKeylock[deckIndex].load(std::memory_order_relaxed) > 0.5f;
         const float ratio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
@@ -829,7 +830,7 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
     // Pass 2 — per deck: 3-band RBJ isolator EQ, then the resonant sweep filter
     // (Color-FX "Filter", kind 0). Both kernels smooth their own control targets
     // and are unity/pass-through when flat, so an idle deck costs almost nothing.
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         pd_eq3_set(engine->deckEq[deckIndex],
                    engine->control.eqLow[deckIndex].load(std::memory_order_relaxed),
                    engine->control.eqMid[deckIndex].load(std::memory_order_relaxed),
@@ -872,8 +873,8 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
     // Pass 3 — per frame: non-filter Color-FX (still per-sample stateful),
     // crossfader/fader/trim gain, sum, mic, sampler, bus beat FX, master gain.
     for (int frame = 0; frame < frames; ++frame) {
-        float channelSignals[2];
-        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        float channelSignals[PE_MAX_DECKS] = {0.0f, 0.0f, 0.0f, 0.0f};
+        for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
             float sample = wet[deckIndex][frame];
             const int colorKind = std::max(0, std::min(6, static_cast<int>(std::lround(
                 engine->control.colorKind[deckIndex].load(std::memory_order_relaxed)))));
@@ -885,7 +886,9 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             const float channelPeak = std::fabs(channelSignals[deckIndex]);
             if (channelPeak > deckPeaks[deckIndex]) deckPeaks[deckIndex] = channelPeak;
         }
-        float mixed = channelSignals[0] + channelSignals[1];
+        float channelSum = 0.0f;
+        for (int d = 0; d < engine->deckCount; ++d) channelSum += channelSignals[d];
+        float mixed = channelSum;
         if (micLevel > 0.0f && engine->mic.position < static_cast<double>(engine->mic.frames) &&
             engine->mic.frames > 0 && engine->mic.sampleRate > 0.0) {
             const int rightChannel = engine->mic.channelCount > 1 ? 1 : 0;
@@ -909,16 +912,20 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             if (slot.position >= slot.frames) slot.playing = false;
         }
         if (engine->beatFXOn || engine->beatFXTail) {
-            const float extraSignal = mixed - channelSignals[0] - channelSignals[1];
-            if (engine->beatFXAssign == 0) {
-                channelSignals[0] = processBeatFX(engine, channelSignals[0]);
-                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
-            } else if (engine->beatFXAssign == 1) {
-                channelSignals[1] = processBeatFX(engine, channelSignals[1]);
-                mixed = channelSignals[0] + channelSignals[1] + extraSignal;
-            } else if (engine->beatFXAssign == 2) {
-                mixed = processBeatFX(engine, channelSignals[0] + channelSignals[1]) + extraSignal;
-            } else {
+            const float extraSignal = mixed - channelSum;  // mic + sampler contribution
+            const int assign = engine->beatFXAssign;
+            if (assign == 0 || assign == 1) {
+                // Per-channel: assign 0/1 target mixer channels A/B. C3/C4 widen
+                // this to any of the (up to 4) channels + MIC.
+                if (assign < engine->deckCount) {
+                    const float before = channelSignals[assign];
+                    channelSignals[assign] = processBeatFX(engine, before);
+                    channelSum += channelSignals[assign] - before;
+                }
+                mixed = channelSum + extraSignal;
+            } else if (assign == 2) {                       // all channels summed
+                mixed = processBeatFX(engine, channelSum) + extraSignal;
+            } else {                                        // master (whole mix)
                 mixed = processBeatFX(engine, mixed);
             }
         }
@@ -976,7 +983,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
         engine->previousCrossfader = crossfader;
         engine->crossfaderInitialized = true;
     } else if (std::fabs(crossfader - engine->previousCrossfader) > 0.0001f) {
-        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
             if (engine->control.faderStart[deckIndex].load(std::memory_order_relaxed) > 0.5f &&
                 !engine->decks[deckIndex].playing && engine->decks[deckIndex].frames > 0) {
                 engine->decks[deckIndex].playing = true;
@@ -987,16 +994,13 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
     }
     const float master = engine->control.masterLevel.load(std::memory_order_relaxed);
     const float micLevel = engine->control.micLevel.load(std::memory_order_relaxed);
-    float channelGains[2] = {
-        engine->control.trim[0].load(std::memory_order_relaxed) *
-            engine->control.fader[0].load(std::memory_order_relaxed) * gainA,
-        engine->control.trim[1].load(std::memory_order_relaxed) *
-            engine->control.fader[1].load(std::memory_order_relaxed) * gainB
-    };
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    float channelGains[PE_MAX_DECKS] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         const float assignment = engine->control.xfadeAssign[deckIndex].load(std::memory_order_relaxed);
+        // 0 = crossfader A side, 1 = B side, 2 = thru (even decks track A, odd
+        // track B — preserves the classic 2-deck default where A→gainA, B→gainB).
         const float assignedGain = assignment < 0.5f ? gainA :
-            (assignment < 1.5f ? gainB : (deckIndex == 0 ? gainA : gainB));
+            (assignment < 1.5f ? gainB : ((deckIndex % 2 == 0) ? gainA : gainB));
         channelGains[deckIndex] = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
             engine->control.fader[deckIndex].load(std::memory_order_relaxed) * assignedGain;
     }
@@ -1004,7 +1008,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
     pd_limiter_set_ceiling(engine->masterLimiter,
                            engine->control.limiterCeilingDB.load(std::memory_order_relaxed));
 
-    float deckPeaks[2] = {0.0f, 0.0f};
+    float deckPeaks[PE_MAX_DECKS] = {0.0f, 0.0f, 0.0f, 0.0f};
     float masterPeak = 0.0f;
     for (int base = 0; base < frames; base += kRenderBlock) {
         const int count = std::min(kRenderBlock, frames - base);
@@ -1033,7 +1037,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
         engine->recordWrite.store(write, std::memory_order_release);
     }
 
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         pushPlayheadEvent(engine, deckIndex);
         pushPeakEvent(engine, deckIndex, deckPeaks[deckIndex]);
     }
@@ -1073,30 +1077,22 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
     const float mix = engine->control.cueMasterMix.load(std::memory_order_relaxed);
     const float masterCue = engine->control.masterCue.load(std::memory_order_relaxed);
     const float headphoneLevel = engine->control.headphoneLevel.load(std::memory_order_relaxed);
-    float channelGains[2] = {
-        engine->control.trim[0].load(std::memory_order_relaxed) *
-            engine->control.fader[0].load(std::memory_order_relaxed) * gainA,
-        engine->control.trim[1].load(std::memory_order_relaxed) *
-            engine->control.fader[1].load(std::memory_order_relaxed) * gainB
-    };
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    float channelGains[PE_MAX_DECKS] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float cueGains[PE_MAX_DECKS] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         const float assignment = engine->control.xfadeAssign[deckIndex].load(std::memory_order_relaxed);
         const float assignedGain = assignment < 0.5f ? gainA :
-            (assignment < 1.5f ? gainB : (deckIndex == 0 ? gainA : gainB));
-        channelGains[deckIndex] = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
-            engine->control.fader[deckIndex].load(std::memory_order_relaxed) * assignedGain;
+            (assignment < 1.5f ? gainB : ((deckIndex % 2 == 0) ? gainA : gainB));
+        const float trimFader = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
+            engine->control.fader[deckIndex].load(std::memory_order_relaxed);
+        channelGains[deckIndex] = trimFader * assignedGain;
+        cueGains[deckIndex] = trimFader;
     }
-    const float cueGains[2] = {
-        engine->control.trim[0].load(std::memory_order_relaxed) *
-            engine->control.fader[0].load(std::memory_order_relaxed),
-        engine->control.trim[1].load(std::memory_order_relaxed) *
-            engine->control.fader[1].load(std::memory_order_relaxed)
-    };
 
     for (int frame = 0; frame < frames; ++frame) {
         float cueSignal = 0.0f;
         float masterSignal = 0.0f;
-        for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+        for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
             const DeckState& deck = engine->decks[deckIndex];
             if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) continue;
             const int rightChannel = deck.channelCount > 1 ? 1 : 0;
@@ -1140,14 +1136,15 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
 
 extern "C" {
 
-pe_engine* pe_create(double sample_rate, int max_frames) {
+pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     if (!(sample_rate > 0.0) || max_frames <= 0) return nullptr;
     pe_engine* engine = new (std::nothrow) pe_engine{sample_rate, max_frames};
     if (!engine) return nullptr;
+    engine->deckCount = deck_count < 2 ? 2 : (deck_count > PE_MAX_DECKS ? PE_MAX_DECKS : deck_count);
     // The SPEC §35.2 isolator: low/high shelf + mid peak, crossovers 200 Hz /
     // 2 kHz, −∞(kill)…+6 dB. Master: SPEC §35.5 look-ahead brickwall.
     bool ok = true;
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         engine->deckEq[deckIndex] = pd_eq3_create(sample_rate, 200.0, 2000.0);
         engine->deckFilter[deckIndex] = pd_filter_create(sample_rate);
         engine->deckEcho[deckIndex] = pd_delay_create(sample_rate, 13.0);
@@ -1166,7 +1163,7 @@ pe_engine* pe_create(double sample_rate, int max_frames) {
 
 void pe_destroy(pe_engine* engine) {
     if (!engine) return;
-    for (int deckIndex = 0; deckIndex < 2; ++deckIndex) {
+    for (int deckIndex = 0; deckIndex < PE_MAX_DECKS; ++deckIndex) {
         pd_eq3_destroy(engine->deckEq[deckIndex]);
         pd_filter_destroy(engine->deckFilter[deckIndex]);
         pd_delay_destroy(engine->deckEcho[deckIndex]);
@@ -1219,7 +1216,7 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
     engine->control.cueMode.store(
         std::isfinite(control->cue_mode) ? std::max(0.0f, std::min(3.0f, control->cue_mode)) : 0.0f,
         std::memory_order_relaxed);
-    for (int index = 0; index < 2; ++index) {
+    for (int index = 0; index < PE_MAX_DECKS; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
         engine->control.cuePFL[index].store(control->cue_pfl[index] > 0.5f ? 1.0f : 0.0f, std::memory_order_relaxed);
@@ -1288,7 +1285,7 @@ void pe_deck_set_buffer(
     int64_t frames,
     double sample_rate
 ) {
-    if (!engine || !validDeck(deck) || !channels || channel_count <= 0 || frames < 0 || !(sample_rate > 0.0)) return;
+    if (!engine || !validDeck(engine, deck) || !channels || channel_count <= 0 || frames < 0 || !(sample_rate > 0.0)) return;
     DeckState& state = engine->decks[deck];
     state.channels[0] = channels[0];
     state.channels[1] = channel_count > 1 ? channels[1] : channels[0];
@@ -1360,7 +1357,7 @@ void pe_deck_set_stem_buffer(
     pe_engine* engine, int deck, int voice, const float* const* channels,
     int channel_count, int64_t frames
 ) {
-    if (!engine || !validDeck(deck) || voice < 0 || voice >= 4) return;
+    if (!engine || !validDeck(engine, deck) || voice < 0 || voice >= 4) return;
     StemVoice& v = engine->decks[deck].stems[voice];
     if (!channels || channel_count <= 0 || frames <= 0) {
         v.present = false;
@@ -1382,7 +1379,7 @@ void pe_deck_set_stem_buffer(
 }
 
 void pe_deck_clear_stems(pe_engine* engine, int deck) {
-    if (!engine || !validDeck(deck)) return;
+    if (!engine || !validDeck(engine, deck)) return;
     DeckState& d = engine->decks[deck];
     d.stemsArmed = false;
     for (StemVoice& v : d.stems) {
@@ -1404,7 +1401,7 @@ void pe_get_stats(pe_engine* engine, pe_stats* out) {
     out->downbeat_phase = engine->control.downbeatPhase.load(std::memory_order_relaxed);
     out->render_load = engine->renderLoad.load(std::memory_order_relaxed);
     out->starved_frames = engine->starvedFrames.load(std::memory_order_relaxed);
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < PE_MAX_DECKS; ++i) {
         out->deck_effective_bpm[i] = engine->decks[i].effectiveBpm;
         out->deck_beat_phase[i] = engine->decks[i].beatPhase;
         out->deck_synced[i] = engine->decks[i].synced ? 1 : 0;
@@ -1424,7 +1421,7 @@ void pe_set_master_clock(pe_engine* engine, int32_t master_deck, double master_b
 
 void pe_set_deck_sync(pe_engine* engine, int deck, int synced, double effective_bpm,
                       double beat_phase) {
-    if (!engine || !validDeck(deck)) return;
+    if (!engine || !validDeck(engine, deck)) return;
     DeckState& d = engine->decks[deck];
     d.synced = synced != 0;
     d.effectiveBpm = std::isfinite(effective_bpm) && effective_bpm > 0 ? effective_bpm : 0.0;
