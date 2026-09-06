@@ -1152,3 +1152,81 @@ struct BoothOutputTests {
         #expect(mag(master) > mag(booth) * 20)   // booth low killed, master intact
     }
 }
+
+@Suite("CDJ3000 C3 — insert seam")
+@MainActor
+struct InsertSeamTests {
+    final class GainInsert: RealtimeInsert {
+        let gain: Float
+        init(_ g: Float) { gain = g }
+        func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int) {
+            for i in 0..<frames { left[i] *= gain; if right != left { right[i] *= gain } }
+        }
+    }
+    final class SilenceCounter: RealtimeInsert {
+        var calls = 0
+        func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int) {
+            calls += 1
+            for i in 0..<frames { left[i] = 0; if right != left { right[i] = 0 } }
+        }
+    }
+    private func playing(_ freq: Double = 220) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm); e.deckA.play()
+        return e
+    }
+    private func peak(_ s: [Float]) -> Float { s.map(abs).max() ?? 0 }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func masterInsertProcessesTheMixInPlace() {
+        let e = playing()
+        _ = e.render(frames: 8192)                       // settle
+        let dry = rms(e.render(frames: 8192).left)
+        e.mixer.setInsert(GainInsert(0.25), at: .master)
+        _ = e.render(frames: 8192)                       // flush the limiter look-ahead
+        let wet = rms(e.render(frames: 8192).left)
+        #expect(wet < dry * 0.4)
+        e.mixer.setInsert(nil, at: .master)
+        _ = e.render(frames: 8192)
+        let restored = rms(e.render(frames: 8192).left)
+        #expect(abs(restored - dry) / dry < 0.05)
+    }
+
+    @Test func channelInsertOnlyAffectsThatChannel() {
+        let e = playing(220)
+        // add a second deck on another channel
+        let pcm = SignalGenerators.sine(frequency: 660, seconds: 6, sampleRate: 48_000, channels: 2)
+        let a = TrackAnalysis(format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [], isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.decks[1].load(a, buffer: pcm); e.decks[1].play()
+        e.mixer.setInsert(SilenceCounter(), at: .channel(0))
+        _ = e.render(frames: 8192)
+        let out = e.render(frames: 16_384).left
+        let buf = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: out.count)
+        for i in out.indices { buf.channel(0)[i] = out[i] }
+        // Channel 0 (220 Hz) silenced by its insert; channel 1 (660 Hz) untouched.
+        #expect(Measure.goertzelMagnitude(buf, frequency: 660) > Measure.goertzelMagnitude(buf, frequency: 220) * 20)
+    }
+
+    @Test func insertIsCalledOncePerRenderBlock() {
+        let e = playing()
+        let counter = SilenceCounter()
+        e.mixer.setInsert(counter, at: .master)
+        _ = e.render(frames: 512)
+        _ = e.render(frames: 512)
+        #expect(counter.calls == 2)
+    }
+}

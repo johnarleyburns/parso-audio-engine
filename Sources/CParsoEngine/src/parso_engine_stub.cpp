@@ -185,6 +185,10 @@ struct pe_engine {
     pd_limiter* masterLimiter = nullptr;
     pd_eq3* masterEq = nullptr;   // master isolator (CDJ3000 parity C3)
     pd_eq3* boothEq = nullptr;    // booth-output EQ (CDJ3000 parity C3)
+    // Insert seam (CDJ3000 parity C3). fn cleared first / set last so the RT
+    // side never calls a live fn with a stale ctx.
+    std::atomic<pe_insert_fn> insertFn[PE_INSERT_COUNT]{};
+    std::atomic<void*> insertCtx[PE_INSERT_COUNT]{};
     // Snapshot of the last rendered master block, for pe_render_booth.
     static constexpr int kBoothCapacity = 8192;
     float boothLeft[kBoothCapacity] = {};
@@ -781,6 +785,16 @@ static float processBeatFX(pe_engine* engine, float input) {
 // scratch at 8 KB and matches the engine's typical device period.
 constexpr int kRenderBlock = 512;
 
+// App-supplied insert on a bus (CDJ3000 parity C3). RT-thread call; the app
+// guarantees the callback is RT-safe. fn is loaded before ctx and cleared
+// first by pe_set_insert, so a live fn never sees a stale ctx.
+static void applyInsert(pe_engine* engine, int point, float* l, float* r, int frames) {
+    pe_insert_fn fn = engine->insertFn[point].load(std::memory_order_acquire);
+    if (!fn) return;
+    void* ctx = engine->insertCtx[point].load(std::memory_order_relaxed);
+    fn(l, r ? r : l, frames, ctx);
+}
+
 // One block of the deck→EQ→ColorFX→crossfader→mic/sampler→beatFX→master→limiter
 // chain. `frames` is already clamped to kRenderBlock. `deckPeaks`/`masterPeak`
 // accumulate across blocks. Transport (position, loops, end-of-track) advances
@@ -948,6 +962,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 if (deck.echoTailFrames <= 0) { deck.echoTail = false; deck.echoTailFrames = 0; }
             }
         }
+        // Per-channel insert (CDJ3000 parity C3) — post-EQ, pre-gain. Mono bus.
+        if (deckIndex < PE_INSERT_MASTER) {
+            applyInsert(engine, PE_INSERT_CH0 + deckIndex, wet[deckIndex], nullptr, frames);
+        }
     }
 
     // Pass 3 — per frame: non-filter Color-FX (still per-sample stateful),
@@ -1013,6 +1031,9 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         if (left) left[frame] = out;
         if (right) right[frame] = out;
     }
+
+    // Master insert (CDJ3000 parity C3) — post master fader, pre isolator/limiter.
+    applyInsert(engine, PE_INSERT_MASTER, left, right, frames);
 
     // Pass 3.5 — master isolator (CDJ3000 parity C3). Post-fader, pre-limiter.
     // pd_eq3 is unity/pass-through at 0 dB so a flat isolator is bit-transparent.
@@ -1249,6 +1270,10 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     pe_engine* engine = new (std::nothrow) pe_engine{sample_rate, max_frames};
     if (!engine) return nullptr;
     engine->deckCount = deck_count < 2 ? 2 : (deck_count > PE_MAX_DECKS ? PE_MAX_DECKS : deck_count);
+    for (int i = 0; i < PE_INSERT_COUNT; ++i) {
+        engine->insertFn[i].store(nullptr, std::memory_order_relaxed);
+        engine->insertCtx[i].store(nullptr, std::memory_order_relaxed);
+    }
     // The SPEC §35.2 isolator: low/high shelf + mid peak, crossovers 200 Hz /
     // 2 kHz, −∞(kill)…+6 dB. Master: SPEC §35.5 look-ahead brickwall.
     bool ok = true;
@@ -1624,6 +1649,17 @@ void pe_render_booth(pe_engine* engine, float* left, float* right, int frames) {
 
 void pe_step(pe_engine* engine, float* left, float* right, int frames) {
     render(engine, left, right, frames);
+}
+
+void pe_set_insert(pe_engine* engine, int point, pe_insert_fn fn, void* ctx) {
+    if (!engine || point < 0 || point >= PE_INSERT_COUNT) return;
+    if (!fn) {
+        engine->insertFn[point].store(nullptr, std::memory_order_release);
+        engine->insertCtx[point].store(nullptr, std::memory_order_relaxed);
+        return;
+    }
+    engine->insertCtx[point].store(ctx, std::memory_order_relaxed);
+    engine->insertFn[point].store(fn, std::memory_order_release);
 }
 
 } // extern "C"

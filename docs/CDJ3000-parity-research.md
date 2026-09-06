@@ -306,6 +306,19 @@ algorithms and so should PAE.
     key-lock bypassed mid-ramp (the turntable pitch drop). `Deck.brakeTime` /
     `spinUpTime`. 3 tests.
   Full suite 266/266 green.
+- **C3 — done.**
+  - *C3a:* `FaderCurve` {linear, smooth, sharp} on `Channel.faderCurve`
+    (Swift-side taper, `.linear` byte-identical to pre-C3). Master isolator —
+    `pe_control.master_eq_*` + a `pd_eq3` on the master bus post-fader /
+    pre-limiter; `MasterOut.isolatorLow/Mid/High`. 4 tests.
+  - *C3b:* Booth output — `pe_render_booth` applies `MasterOut.boothLevel` +
+    `boothEq{Low,Mid,High}` to a snapshot of the last rendered master;
+    `HeadlessDJEngine.renderBooth(frames:)`. 3 tests.
+  - *C3c:* Insert / send-return seam — `pe_insert_fn` + `pe_set_insert` at
+    5 points (`PE_INSERT_CH0…CH3`, `PE_INSERT_MASTER`); Swift `RealtimeInsert`
+    protocol + `Mixer.setInsert(_:at:)` with an `InsertPoint`. RT-thread
+    callback, app owns RT-safety (BYO-effect, mirrors BYO-codec). 3 tests.
+  Full suite 276/276 green.
 
 ### Table
 

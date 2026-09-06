@@ -159,6 +159,19 @@ void pe_render_booth(pe_engine*, float* out_l, float* out_r, int frames);
 void pe_step(pe_engine*, float* out_l, float* out_r, int frames);
 
 /*
+ * Insert / send-return seam (CDJ3000 parity C3 — the DJM SEND/RETURN and an
+ * "bring your own effect" hook, mirroring the BYO-codec seam). The engine calls
+ * `fn(left, right, frames, ctx)` in place on the named bus, on the render thread.
+ * THE CALLBACK MUST BE REALTIME-SAFE: no locks, no allocation, no syscalls,
+ * bounded work. Set it once before audio starts; pass fn = NULL to remove it.
+ * For a channel insert the signal is mono (left == right). For an external
+ * hardware send/return loop, the app's callback does the round trip.
+ */
+typedef void (*pe_insert_fn)(float* left, float* right, int frames, void* ctx);
+enum { PE_INSERT_CH0 = 0, PE_INSERT_CH1, PE_INSERT_CH2, PE_INSERT_CH3, PE_INSERT_MASTER, PE_INSERT_COUNT };
+void pe_set_insert(pe_engine*, int point, pe_insert_fn fn, void* ctx);
+
+/*
  * Master-bus record tap (Phase 6b item 4). While active, every rendered master
  * block is copied into a bounded ring on the render thread. The control side
  * drains it at its own cadence into the file encoder. If the control side falls

@@ -228,6 +228,36 @@ fileprivate func peSet(_ t: inout (Float, Float, Float, Float), _ i: Int, _ v: F
 }
 @inline(__always) fileprivate func peQuad(_ v: Float) -> (Float, Float, Float, Float) { (v, v, v, v) }
 
+// MARK: - Insert / send-return seam (CDJ3000 parity C3)
+
+/// An app-supplied realtime effect insert. `process` runs on the audio render
+/// thread: it **must be realtime-safe** — no locks, no allocation, no syscalls,
+/// bounded work. For a channel insert the signal is mono (`left == right`). Use
+/// it to host an AUv3, a hand-written kernel, or an external hardware send/return
+/// loop (the DJM SEND/RETURN). Mirrors the BYO-codec / BYO-model pattern.
+public protocol RealtimeInsert: AnyObject {
+    func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int)
+}
+
+/// Where a `RealtimeInsert` sits in the signal path.
+public enum InsertPoint: Sendable, Hashable {
+    case channel(Int)   // 0…3, post-EQ / pre-gain
+    case master         // post master fader, pre isolator + limiter
+
+    fileprivate var raw: Int32 {
+        switch self {
+        case .channel(let i): return Int32(max(0, min(3, i)))   // PE_INSERT_CH0…CH3
+        case .master: return 4                                  // PE_INSERT_MASTER
+        }
+    }
+}
+
+fileprivate let peInsertTrampoline: pe_insert_fn = { left, right, frames, ctx in
+    guard let left, let ctx else { return }
+    let insert = Unmanaged<AnyObject>.fromOpaque(ctx).takeUnretainedValue()
+    (insert as? RealtimeInsert)?.process(left: left, right: right ?? left, frames: Int(frames))
+}
+
 @MainActor
 fileprivate final class WeakDeck {
     weak var deck: Deck?
@@ -1437,6 +1467,26 @@ public final class Mixer {
         bridge.control.crossfader = Float(max(-1, min(1, crossfader)))
         bridge.control.xfade_curve = crossfaderCurve == .smooth ? 0 : (crossfaderCurve == .linear ? 0.5 : 1)
         bridge.publishControl()
+    }
+
+    // MARK: Insert / send-return seam (CDJ3000 parity C3)
+
+    private var inserts: [InsertPoint: RealtimeInsert] = [:]
+
+    /// Installs (or, with `nil`, removes) a realtime effect insert at `point`.
+    /// The mixer keeps a strong reference while installed. Set inserts before
+    /// starting audio; the callback runs on the render thread and must be
+    /// realtime-safe (see `RealtimeInsert`).
+    public func setInsert(_ insert: RealtimeInsert?, at point: InsertPoint) {
+        inserts[point] = insert
+        if let insert {
+            // `inserts` holds the strong reference; the engine gets an
+            // unretained opaque pointer to the same object.
+            let ptr = Unmanaged.passUnretained(insert as AnyObject).toOpaque()
+            pe_set_insert(bridge.handle, point.raw, peInsertTrampoline, ptr)
+        } else {
+            pe_set_insert(bridge.handle, point.raw, nil, nil)
+        }
     }
 }
 
