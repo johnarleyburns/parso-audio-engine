@@ -1014,3 +1014,83 @@ struct VinylSpeedTests {
         #expect(abs((e.deckA.playhead - a) - 0.5) < 0.02) // back to nominal rate
     }
 }
+
+// MARK: - CDJ-3000 parity C3: mixer pro tier
+
+@Suite("CDJ3000 C3 — mixer pro tier")
+@MainActor
+struct MixerProTierTests {
+    private func toneEngine(_ freq: Double = 220) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm)
+        e.deckA.play()
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func faderCurveShapesTheTaper() {
+        // "sharp" reaches near-full level early in the throw; "smooth" is a
+        // symmetric S (below centre quieter, above centre louder).
+        #expect(FaderCurve.sharp.gain(0.25) > FaderCurve.linear.gain(0.25))
+        #expect(FaderCurve.smooth.gain(0.25) < FaderCurve.linear.gain(0.25))
+        #expect(FaderCurve.smooth.gain(0.75) > FaderCurve.linear.gain(0.75))
+        #expect(FaderCurve.linear.gain(0.5) == 0.5)
+        for c in FaderCurve.allCases {
+            #expect(abs(c.gain(0) - 0) < 1e-9)
+            #expect(abs(c.gain(1) - 1) < 1e-9)
+        }
+    }
+
+    @Test func channelFaderCurveChangesRenderedLevel() {
+        let linear = toneEngine()
+        linear.mixer.channelA.fader = 0.5
+        let lOut = linear.render(frames: 8192).left
+
+        let sharp = toneEngine()
+        sharp.mixer.channelA.faderCurve = .sharp
+        sharp.mixer.channelA.fader = 0.5
+        let sOut = sharp.render(frames: 8192).left
+        #expect(rms(sOut) > rms(lOut) * 1.3)   // sharp is hotter at half throw
+    }
+
+    @Test func masterIsolatorIsBitTransparentAtZero() {
+        let a = toneEngine()
+        let base = a.render(frames: 4096).left
+        let b = toneEngine()
+        b.mixer.master.isolatorLow = 0
+        b.mixer.master.isolatorMid = 0
+        b.mixer.master.isolatorHigh = 0
+        let flat = b.render(frames: 4096).left
+        var maxDiff: Float = 0
+        for i in base.indices { maxDiff = max(maxDiff, abs(base[i] - flat[i])) }
+        #expect(maxDiff < 1e-6)
+    }
+
+    @Test func masterIsolatorKillsTheLowBand() {
+        let e = toneEngine(80)          // 80 Hz — squarely in the low band
+        e.mixer.master.isolatorLow = -.infinity
+        _ = e.render(frames: 8192)      // let the filter settle
+        let out = e.render(frames: 16_384).left
+        let buf = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: out.count)
+        for i in out.indices { buf.channel(0)[i] = out[i] }
+        let killed = Measure.goertzelMagnitude(buf, frequency: 80)
+
+        let ref = toneEngine(80)
+        _ = ref.render(frames: 8192)
+        let rOut = ref.render(frames: 16_384).left
+        let rBuf = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: rOut.count)
+        for i in rOut.indices { rBuf.channel(0)[i] = rOut[i] }
+        let open = Measure.goertzelMagnitude(rBuf, frequency: 80)
+        #expect(open > killed * 30)
+    }
+}

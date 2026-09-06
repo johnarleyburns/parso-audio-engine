@@ -142,6 +142,9 @@ struct ControlState {
     std::atomic<float> deckKeylock[PE_MAX_DECKS]{{0.0f}, {0.0f}, {0.0f}, {0.0f}};
     std::atomic<float> limiterEnabled{1.0f};
     std::atomic<float> cueMode{0.0f};
+    std::atomic<float> masterEqLow{0.0f};
+    std::atomic<float> masterEqMid{0.0f};
+    std::atomic<float> masterEqHigh{0.0f};
     // Master-clock inputs (Phase 6b item 2), published from the control actor.
     std::atomic<int32_t> masterDeck{-1};
     std::atomic<double> masterBpm{0.0};
@@ -176,6 +179,7 @@ struct pe_engine {
     pd_eq3* deckEq[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
     pd_filter* deckFilter[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
     pd_limiter* masterLimiter = nullptr;
+    pd_eq3* masterEq = nullptr;   // master isolator (CDJ3000 parity C3)
     // Per-deck beat-echo delay lines (Phase 6b item 3). Sized at pe_create for
     // the worst case (8 beats at 40 BPM ≈ 12 s) so the render path never allocs.
     pd_delay* deckEcho[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
@@ -1000,6 +1004,23 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
         if (right) right[frame] = out;
     }
 
+    // Pass 3.5 — master isolator (CDJ3000 parity C3). Post-fader, pre-limiter.
+    // pd_eq3 is unity/pass-through at 0 dB so a flat isolator is bit-transparent.
+    // The engine master bus is mono (left == right), so run one channel and mirror.
+    {
+        const float lo = engine->control.masterEqLow.load(std::memory_order_relaxed);
+        const float mid = engine->control.masterEqMid.load(std::memory_order_relaxed);
+        const float hi = engine->control.masterEqHigh.load(std::memory_order_relaxed);
+        pd_eq3_set(engine->masterEq, lo, mid, hi);
+        float* bus = left ? left : right;
+        if (bus) {
+            pd_eq3_process(engine->masterEq, bus, bus, frames);
+            if (left && right && left != right) {
+                for (int f = 0; f < frames; ++f) right[f] = left[f];
+            }
+        }
+    }
+
     // Pass 4 — master look-ahead brickwall limiter (block, stereo, in-place).
     // Bypassable (Phase 6b item 8) so `WorkspaceEngine.limiterCeiling` can be nil.
     if (engine->control.limiterEnabled.load(std::memory_order_relaxed) > 0.5f) {
@@ -1219,7 +1240,8 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
              engine->deckEcho[deckIndex] && engine->deckTimePitch[deckIndex];
     }
     engine->masterLimiter = pd_limiter_create(sample_rate, -0.3f);
-    ok = ok && engine->masterLimiter;
+    engine->masterEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
+    ok = ok && engine->masterLimiter && engine->masterEq;
     if (!ok) {
         pe_destroy(engine);
         return nullptr;
@@ -1236,6 +1258,7 @@ void pe_destroy(pe_engine* engine) {
         pd_tp_destroy(engine->deckTimePitch[deckIndex]);
     }
     pd_limiter_destroy(engine->masterLimiter);
+    pd_eq3_destroy(engine->masterEq);
     delete engine;
 }
 
@@ -1282,6 +1305,12 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
     engine->control.cueMode.store(
         std::isfinite(control->cue_mode) ? std::max(0.0f, std::min(3.0f, control->cue_mode)) : 0.0f,
         std::memory_order_relaxed);
+    engine->control.masterEqLow.store(std::isnan(control->master_eq_low) ? 0.0f : control->master_eq_low,
+                                      std::memory_order_relaxed);
+    engine->control.masterEqMid.store(std::isnan(control->master_eq_mid) ? 0.0f : control->master_eq_mid,
+                                      std::memory_order_relaxed);
+    engine->control.masterEqHigh.store(std::isnan(control->master_eq_high) ? 0.0f : control->master_eq_high,
+                                       std::memory_order_relaxed);
     for (int index = 0; index < PE_MAX_DECKS; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);

@@ -48,6 +48,10 @@ typedef struct {
     float deck_keylock[PE_MAX_DECKS];   /* 0/1 — per-deck key-lock (time-pitch) engage */
     float limiter_enabled;   /* 0/1, default 1 — 0 bypasses the master brickwall limiter */
     float cue_mode;          /* 0 off, 1 splitOutput, 2 cueInPlace, 3 multichannel (§44.2a) */
+    /* Master isolator — 3-band EQ/kill on the master bus, post-fader / pre-limiter
+     * (CDJ3000 parity C3 — the DJM MASTER ISOLATOR). dB, -INFINITY == kill,
+     * 0 == flat (bit-transparent, the default). */
+    float master_eq_low, master_eq_mid, master_eq_high;
 } pe_control;
 
 /* Discrete commands (SPSC ring). One struct, tagged. */

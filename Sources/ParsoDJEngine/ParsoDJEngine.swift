@@ -292,6 +292,9 @@ fileprivate final class EngineBridge {
         control.deck_keylock = peQuad(1)  // Deck.keyLock defaults to true
         control.limiter_enabled = 1
         control.cue_mode = 0
+        control.master_eq_low = 0
+        control.master_eq_mid = 0
+        control.master_eq_high = 0
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -1422,11 +1425,32 @@ public enum ColorFX: Sendable, CaseIterable, Equatable { case filter, space, dub
 
 public enum XFAssign: Sendable { case a, b, thru }
 
+/// Channel / crossfader fader-taper shapes (CDJ3000 parity C3 — the DJM
+/// CH FADER CURVE and CROSSFADER CURVE switches).
+public enum FaderCurve: Sendable, CaseIterable {
+    case linear    // gain == position
+    case smooth    // gentle S — more travel near the top
+    case sharp     // fast onset — near full level early in the throw
+
+    /// Maps a 0…1 fader position to a 0…1 gain.
+    public func gain(_ position: Double) -> Double {
+        let p = max(0, min(1, position))
+        switch self {
+        case .linear: return p
+        case .smooth: return p * p * (3 - 2 * p)          // smoothstep
+        case .sharp:  return p <= 0 ? 0 : pow(p, 0.35)    // steep near the bottom
+        }
+    }
+}
+
 @MainActor
 public final class Channel {
     private let bridge: EngineBridge
     private let index: Int
     public var trim: Double = 0.5 { didSet { publishControl() } } // gain
+    /// Fader taper (CDJ3000 parity C3). `.linear` is the default and matches
+    /// pre-C3 behaviour exactly.
+    public var faderCurve: FaderCurve = .linear { didSet { publishControl() } }
     public var eqLow: Double = 0 { didSet { publishControl() } } // dB, -inf(kill)..+6
     public var eqMid: Double = 0 { didSet { publishControl() } }
     public var eqHigh: Double = 0 { didSet { publishControl() } }
@@ -1448,7 +1472,7 @@ public final class Channel {
 
     private func publishControl() {
         let gain = Float(max(0, trim))
-        let channelFader = Float(max(0, min(1, fader)))
+        let channelFader = Float(faderCurve.gain(max(0, min(1, fader))))
         let pfl = cuePFL ? Float(1) : Float(0)
         let assignment: Float = switch crossfaderAssign {
         case .a: 0
@@ -1524,6 +1548,14 @@ public final class MasterOut {
     /// `false` bypasses the master brickwall limiter entirely (Phase 6b item 8),
     /// so `WorkspaceEngine.limiterCeiling` can be represented as `nil`.
     public var limiterEnabled: Bool = true { didSet { publishControl() } }
+
+    // MARK: Master isolator (CDJ3000 parity C3 — the DJM MASTER ISOLATOR)
+    /// 3-band EQ/kill on the master bus, post-fader / pre-limiter. dB;
+    /// `-.infinity` kills the band; `0` (the default) is bit-transparent.
+    public var isolatorLow: Double = 0 { didSet { publishControl() } }
+    public var isolatorMid: Double = 0 { didSet { publishControl() } }
+    public var isolatorHigh: Double = 0 { didSet { publishControl() } }
+
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
     fileprivate func updatePeak(_ value: Float) {
@@ -1535,6 +1567,9 @@ public final class MasterOut {
         bridge.control.master_level = Float(max(0, min(1, level)))
         bridge.control.limiter_ceiling_db = Float(limiterCeilingDB.isFinite ? limiterCeilingDB : -0.3)
         bridge.control.limiter_enabled = limiterEnabled ? 1 : 0
+        bridge.control.master_eq_low = Float(isolatorLow.isNaN ? 0 : isolatorLow)
+        bridge.control.master_eq_mid = Float(isolatorMid.isNaN ? 0 : isolatorMid)
+        bridge.control.master_eq_high = Float(isolatorHigh.isNaN ? 0 : isolatorHigh)
         bridge.publishControl()
     }
 }
