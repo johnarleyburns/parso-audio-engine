@@ -1903,3 +1903,78 @@ struct ConvolutionReverbTests {
         #expect(a == b)
     }
 }
+
+@Suite("CDJ3000 — sampler modes & gain")
+@MainActor
+struct SamplerModeTests {
+    private func engineWithSlot(loopFrames: Int = 4800) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let s = SignalGenerators.sine(frequency: 300, seconds: Double(loopFrames) / 48_000,
+                                      sampleRate: 48_000, channels: 1)
+        e.sampler.load(0, buffer: s)
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func oneShotStopsAtTheEnd() {
+        let e = engineWithSlot(loopFrames: 4800)   // 0.1 s
+        e.sampler.setMode(0, .oneShot)
+        e.sampler.trigger(0)
+        _ = e.render(frames: 9600)                 // play well past 0.1 s
+        let after = rms(e.render(frames: 9600).left)
+        #expect(after < 0.001)                     // silent — one-shot ended
+    }
+
+    @Test func loopModeKeepsPlaying() {
+        let e = engineWithSlot(loopFrames: 4800)
+        e.sampler.setMode(0, .loop)
+        e.sampler.trigger(0)
+        _ = e.render(frames: 24_000)               // 0.5 s — many loop cycles
+        let still = rms(e.render(frames: 9600).left)
+        #expect(still > 0.05)                      // still going
+        e.sampler.stop(0)
+        _ = e.render(frames: 4800)
+        #expect(rms(e.render(frames: 4800).left) < 0.001)  // stop() halts the loop
+    }
+
+    @Test func perSlotAndMasterGainScaleTheOutput() {
+        let full = engineWithSlot()
+        full.sampler.setMode(0, .loop)
+        full.sampler.trigger(0)
+        _ = full.render(frames: 4800)
+        let loud = rms(full.render(frames: 4800).left)
+
+        let quiet = engineWithSlot()
+        quiet.sampler.setMode(0, .loop)
+        quiet.sampler.setGain(0, 0.25)
+        quiet.sampler.masterGain = 0.5
+        quiet.sampler.trigger(0)
+        _ = quiet.render(frames: 4800)
+        let soft = rms(quiet.render(frames: 4800).left)
+        // 0.25 * 0.5 / (1 * 0.8) = ~0.156
+        #expect(soft < loud * 0.3)
+        #expect(soft > loud * 0.05)
+    }
+}
+
+@Suite("CDJ3000 — keyboard pad mode")
+@MainActor
+struct KeyboardPadModeTests {
+    @Test func keyboardModeJumpsToTheSelectedCueAndTransposes() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 48_000)          // ~1 s in
+        e.deckA.setHotCue(2)                   // cue 2 near 1 s
+        _ = e.render(frames: 48_000)          // move on to ~2 s
+        e.deckA.padMode = .keyboard
+        e.deckA.keyboardCueIndex = 2
+        e.deckA.padPress(7)                    // +3 semitones, from cue 2
+        _ = e.render(frames: 64)
+        #expect(abs(e.deckA.playhead - 1.0) < 0.15)   // jumped back to the cue
+        #expect(e.deckA.pitchSemitones == 3)          // pad 7 -> +3
+        e.deckA.padPress(4)
+        #expect(e.deckA.pitchSemitones == 0)          // pad 4 -> native pitch
+    }
+}

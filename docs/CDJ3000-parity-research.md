@@ -399,10 +399,17 @@ algorithms and so should PAE.
   last 40%, and an echo/reverb tail near the end, advanced by
   `DJEngine.tickAutomation(elapsed:)` (auto-ticked inside `HeadlessDJEngine.
   render`). `SmartFader.progress` exposes 0…1 / nil. 8 tests.
+  A third gap: `Sampler.setMode` / `setGain` / `masterGain` stored values that
+  never reached the engine (always one-shot, hard-coded 0.8 gain). Now
+  `PE_CMD_SAMPLER_CONFIG` carries per-slot mode (one-shot / loop / gate) + gain
+  and the sampler master level; the mix loop honours loop-wrap and both gains.
+  Also cleaned two crude C4b kernels — Vinyl Brake is now a real decelerating
+  variable-rate read of the history buffer (pitch bends down), Low-Cut Echo a
+  real ~120 Hz-high-passed feedback path, each on dedicated state.
   The RT `applyCommand` "reserved" no-ops (`PE_CMD_SET_MASTER` / `SET_KEYLOCK` /
-  `COLORFX_KIND` / `SAMPLER_*` / `LOAD`) were verified **not** stubs — each is
-  either redundant (the control-atom path in `pe_set_control` does the work) or
-  dead (buffers load via `pe_deck_set_buffer`, not a command).
+  `COLORFX_KIND` / other `SAMPLER_*` / `LOAD`) were verified **not** stubs — each
+  is redundant (the control-atom path in `pe_set_control` does the work) or dead
+  (buffers load via `pe_deck_set_buffer`, not a command).
 
 ### Table
 

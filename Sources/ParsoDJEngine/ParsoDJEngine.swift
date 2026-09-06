@@ -1564,6 +1564,12 @@ public final class Deck {
         case .hotCue:
             jumpHotCue(index)
         case .keyboard:
+            // Pitch-play the selected hot cue chromatically: jump to it, then
+            // transpose (pad 4 == the cue's native pitch).
+            if hotCueTimes.indices.contains(keyboardCueIndex),
+               hotCueTimes[keyboardCueIndex] != nil {
+                jumpHotCue(keyboardCueIndex)
+            }
             pitchSemitones = Double(index - 4)
         case .padFX1, .padFX2:
             let bank = padMode == .padFX1 ? 0 : 1
@@ -2150,14 +2156,30 @@ public final class Sampler {
     public func setMode(_ slot: Int, _ mode: Play) {
         guard modes.indices.contains(slot) else { return }
         modes[slot] = mode
+        publishSlot(slot)
     }
 
     public func setGain(_ slot: Int, _ gain: Double) {
         guard gains.indices.contains(slot) else { return }
         gains[slot] = max(0, gain)
+        publishSlot(slot)
     }
 
-    public var masterGain: Double = 0.8
+    /// Overall sampler level (0…1); was a hardcoded 0.8 in the mix before C6.
+    public var masterGain: Double = 0.8 {
+        didSet {
+            var command = pe_command(type: PE_CMD_SAMPLER_CONFIG, deck: -1, i0: -1, i1: 0, i2: 0,
+                                     f0: Float(max(0, min(1, masterGain))), f1: 0)
+            _ = pe_post_command(bridge.handle, &command)
+        }
+    }
+
+    private func publishSlot(_ slot: Int) {
+        let modeIndex: Int32 = switch modes[slot] { case .oneShot: 0; case .loop: 1; case .gate: 2 }
+        var command = pe_command(type: PE_CMD_SAMPLER_CONFIG, deck: -1, i0: Int32(slot),
+                                 i1: modeIndex, i2: 0, f0: Float(gains[slot]), f1: 0)
+        _ = pe_post_command(bridge.handle, &command)
+    }
 }
 
 @MainActor

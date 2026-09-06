@@ -100,6 +100,8 @@ struct SamplerSlot {
     int64_t frames = 0;
     int64_t position = 0;
     bool playing = false;
+    int mode = 0;          // 0 one-shot, 1 loop, 2 gate
+    float gain = 1.0f;
 };
 
 struct MicState {
@@ -212,6 +214,9 @@ struct pe_engine {
     int bfxRollLen = 0;
     float bfxRollBuf[48000] = {};                 // dedicated roll capture buffer
     float bfxSpiralPhase = 0.0f;                  // fractional read offset for pitch kinds
+    float bfxBrakeRate = 1.0f;                    // vinyl-brake read rate (1 -> 0)
+    float bfxBrakeOffset = 0.0f;                  // vinyl-brake read-behind, in samples
+    float bfxLowCutState = 0.0f;                  // low-cut-echo feedback high-pass state
     // Compact Schroeder reverb for the Reverb / Shimmer kinds (sized for 96 kHz).
     static constexpr int kBfxCombLen = 4800;
     static constexpr int kBfxApLen = 1600;
@@ -221,6 +226,7 @@ struct pe_engine {
     float bfxAllpassBuf[2][kBfxApLen] = {};
     uint32_t bfxApIdx[2] = {};
     float limiterGain = 1.0f;
+    float samplerMasterGain = 0.8f;   // CDJ3000: was a hardcoded 0.8 in the mix loop
     // CParsoDSP kernels — the shared, unit-tested DSP (docs/phase6-parity.md C1).
     // Owned by the engine: created in pe_create, freed in pe_destroy. All are
     // allocation-free once constructed, so the render path stays RT-safe.
@@ -460,12 +466,20 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             }
         } else if (command.type == PE_CMD_SAMPLER_STOP && command.i0 >= 0 && command.i0 < 16) {
             engine->sampler[command.i0].playing = false;
+        } else if (command.type == PE_CMD_SAMPLER_CONFIG) {
+            if (command.i0 < 0) {
+                if (std::isfinite(command.f0)) engine->samplerMasterGain = std::max(0.0f, command.f0);
+            } else if (command.i0 < 16) {
+                SamplerSlot& slot = engine->sampler[command.i0];
+                slot.mode = std::max(0, std::min(2, command.i1));
+                if (std::isfinite(command.f0)) slot.gain = std::max(0.0f, command.f0);
+            }
         } else if (command.type == PE_CMD_BEATFX_KIND && std::isfinite(command.f0)) {
             engine->beatFXKind = std::max(0, std::min(19, static_cast<int>(std::lround(command.f0))));
         } else if (command.type == PE_CMD_BEATFX_ONOFF) {
             engine->beatFXOn = command.f0 > 0.5f;
             if (engine->beatFXOn) engine->beatFXTail = false;
-            if (engine->beatFXOn) { engine->bfxRollAnchor = -1; engine->bfxLfoPhase = 0.0f; }
+            if (engine->beatFXOn) { engine->bfxRollAnchor = -1; engine->bfxLfoPhase = 0.0f; engine->bfxBrakeRate = 1.0f; engine->bfxBrakeOffset = 0.0f; }
         } else if (command.type == PE_CMD_BEATFX_RELEASE) {
             engine->beatFXOn = false;
             engine->beatFXTail = true;
@@ -537,7 +551,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_BEATFX_ONOFF:
             engine->beatFXOn = command.f0 > 0.5f;
             if (engine->beatFXOn) engine->beatFXTail = false;
-            if (engine->beatFXOn) { engine->bfxRollAnchor = -1; engine->bfxLfoPhase = 0.0f; }
+            if (engine->beatFXOn) { engine->bfxRollAnchor = -1; engine->bfxLfoPhase = 0.0f; engine->bfxBrakeRate = 1.0f; engine->bfxBrakeOffset = 0.0f; }
             break;
         case PE_CMD_BEATFX_RELEASE:
             engine->beatFXOn = false;
@@ -1046,20 +1060,28 @@ static float processBeatFX(pe_engine* engine, float input) {
             }
             return out;
         }
-        case 12: { // Vinyl Brake — the echo tail decelerates to a stop.
-            // bfxSpiralPhase runs as the brake envelope: 1 at engage, ramps to 0.
-            if (engine->bfxLfoPhase < lfoInc * 2.0f) engine->bfxSpiralPhase = 1.0f;  // re-arm each cycle
-            engine->bfxSpiralPhase = std::max(0.0f, engine->bfxSpiralPhase - 1.0f / (sr * 1.5f));
-            const uint32_t bi = (index + 96000u -
-                static_cast<uint32_t>(delaySamples * (1.0f + (1.0f - engine->bfxSpiralPhase) * 3.0f))) % 48000u;
-            wet = engine->beatFXDelay[bi] * engine->bfxSpiralPhase;
+        case 12: { // Vinyl Brake — decelerating variable-rate read of the live
+            // history buffer: the read rate falls 1 -> 0 over ~0.8 s, so the
+            // read point drops behind the write head and the pitch bends down.
+            engine->bfxBrakeRate = std::max(0.0f, engine->bfxBrakeRate - 1.0f / (sr * 0.8f));
+            engine->bfxBrakeOffset = std::min(46000.0f,
+                engine->bfxBrakeOffset + (1.0f - engine->bfxBrakeRate));
+            const float rp = engine->bfxBrakeOffset;
+            const int r0 = static_cast<int>(rp);
+            const float frac = rp - static_cast<float>(r0);
+            const uint32_t i0 = (index + 96000u - static_cast<uint32_t>(r0 + 1)) % 48000u;
+            const uint32_t i1 = (i0 + 47999u) % 48000u;
+            wet = (engine->beatFXDelay[i0] * (1.0f - frac) + engine->beatFXDelay[i1] * frac)
+                  * engine->bfxBrakeRate;
             feed = fxIn; feedback = 0.0f;
             break;
         }
-        case 11:   // Low-Cut Echo — echo whose feedback path is high-passed.
+        case 11:   // Low-Cut Echo — echo whose feedback path is high-passed
+                   // (~120 Hz), so repeats thin out instead of building mud.
             wet = delayed;
-            feed = fxIn + (delayed - engine->bfxSvfLp) * 0.6f;
-            engine->bfxSvfLp += 0.02f * (delayed - engine->bfxSvfLp);   // reuse Lp as the HP state
+            engine->bfxLowCutState += (1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 120.0f / sr))
+                                      * (delayed - engine->bfxLowCutState);
+            feed = fxIn + (delayed - engine->bfxLowCutState) * 0.62f;
             feedback = 0.0f;
             break;
         case 4: {  // Multi-Tap Delay — three taps.
@@ -1379,9 +1401,12 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             const int rightChannel = slot.channelCount > 1 ? 1 : 0;
             mixed += 0.5f * (
                 sampleAt(slot, 0, slot.position) + sampleAt(slot, rightChannel, slot.position)
-            ) * 0.8f;
+            ) * slot.gain * engine->samplerMasterGain;
             ++slot.position;
-            if (slot.position >= slot.frames) slot.playing = false;
+            if (slot.position >= slot.frames) {
+                if (slot.mode == 1) slot.position = 0;   // loop
+                else slot.playing = false;               // one-shot / gate: play out then stop
+            }
         }
         if (engine->beatFXOn || engine->beatFXTail) {
             const float extraSignal = mixed - channelSum;  // mic + sampler contribution

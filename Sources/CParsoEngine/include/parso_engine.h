@@ -87,6 +87,7 @@ typedef enum {
     PE_CMD_ECHO_SET,  /* per-deck beat echo: i0=on, f0=beats, f1=depth, i1=feedback*1000 */
     PE_CMD_COLORFX_KIND, PE_CMD_BEATFX_KIND, PE_CMD_BEATFX_ONOFF, PE_CMD_BEATFX_RELEASE,
     PE_CMD_SAMPLER_TRIGGER, PE_CMD_SAMPLER_STOP,
+    PE_CMD_SAMPLER_CONFIG,  /* i0=slot (-1 = master), i1=mode (0 one-shot,1 loop,2 gate), f0=gain */
     PE_CMD_LOAD  /* buffer handle in i0(ptr low), i1(ptr high), f0=sampleRate, i2=frames */
 } pe_cmd_type;
 
