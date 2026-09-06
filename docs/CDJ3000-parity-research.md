@@ -279,6 +279,11 @@ algorithms and so should PAE.
 
 ### Progress
 
+**All phases C1–C7 landed, plus the C1b / C4b / C7c follow-ups and a stub
+audit.** `swift test -c release` 315/315; `xcodebuild -scheme
+parso-audio-engine-Package` builds clean for both the watchOS and iOS
+simulators. Work is on branch `cdj3000-parity` (17 commits); nothing pushed.
+
 - **C1 — done.** `CParsoEngine` render graph is `PE_MAX_DECKS`-wide (4), deck
   count fixed at `pe_create` time and clamped to 2…4. `pe_control` / `pe_stats`
   per-deck arrays widened; `validDeck` is engine-aware; crossfader "thru" assign
