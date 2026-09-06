@@ -52,6 +52,10 @@ typedef struct {
      * (CDJ3000 parity C3 — the DJM MASTER ISOLATOR). dB, -INFINITY == kill,
      * 0 == flat (bit-transparent, the default). */
     float master_eq_low, master_eq_mid, master_eq_high;
+    /* Booth output (CDJ3000 parity C3 — DJM BOOTH). Independent level + 3-band
+     * EQ, fed from the final master. booth_level default 0.8; EQ 0 == flat. */
+    float booth_level;
+    float booth_eq_low, booth_eq_mid, booth_eq_high;
 } pe_control;
 
 /* Discrete commands (SPSC ring). One struct, tagged. */
@@ -146,6 +150,10 @@ void pe_mic_set_buffer(pe_engine*, const float* const* channels, int channel_cou
 void pe_render(pe_engine*, float* out_l, float* out_r, int frames);
 /* Optional second bus: headphone/monitor mix (cue vs master). */
 void pe_render_monitor(pe_engine*, float* out_l, float* out_r, int frames);
+/* Optional third bus: booth output — the last rendered master through the booth
+ * level + booth EQ. Call once per cycle, right after pe_render, with the same
+ * frame count (CDJ3000 parity C3). */
+void pe_render_booth(pe_engine*, float* out_l, float* out_r, int frames);
 
 /* Synchronous, device-free advance for deterministic tests. Identical DSP to pe_render. */
 void pe_step(pe_engine*, float* out_l, float* out_r, int frames);

@@ -295,6 +295,10 @@ fileprivate final class EngineBridge {
         control.master_eq_low = 0
         control.master_eq_mid = 0
         control.master_eq_high = 0
+        control.booth_level = 0.8
+        control.booth_eq_low = 0
+        control.booth_eq_mid = 0
+        control.booth_eq_high = 0
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -500,6 +504,21 @@ public final class HeadlessDJEngine {
             }
         }
         drainEvents()
+        return (left, right)
+    }
+
+    /// The booth output for the block most recently produced by `render(frames:)`
+    /// — the master through the independent booth level + booth EQ (CDJ3000
+    /// parity C3). Call with the same frame count, right after `render`.
+    public func renderBooth(frames: Int) -> (left: [Float], right: [Float]) {
+        let count = max(0, frames)
+        var left = [Float](repeating: 0, count: count)
+        var right = [Float](repeating: 0, count: count)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                pe_render_booth(bridge.handle, l.baseAddress, r.baseAddress, Int32(count))
+            }
+        }
         return (left, right)
     }
 
@@ -1556,6 +1575,15 @@ public final class MasterOut {
     public var isolatorMid: Double = 0 { didSet { publishControl() } }
     public var isolatorHigh: Double = 0 { didSet { publishControl() } }
 
+    // MARK: Booth output (CDJ3000 parity C3 — the DJM BOOTH bus)
+    /// Independent booth-output level (0…1). Fed from the final master; render
+    /// it with `HeadlessDJEngine.renderBooth` / `pe_render_booth`.
+    public var boothLevel: Double = 0.8 { didSet { publishControl() } }
+    /// Booth 3-band EQ (dB; the A9 booth is 2-band — leave `boothEqMid` at 0).
+    public var boothEqLow: Double = 0 { didSet { publishControl() } }
+    public var boothEqMid: Double = 0 { didSet { publishControl() } }
+    public var boothEqHigh: Double = 0 { didSet { publishControl() } }
+
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
     fileprivate func updatePeak(_ value: Float) {
@@ -1570,6 +1598,10 @@ public final class MasterOut {
         bridge.control.master_eq_low = Float(isolatorLow.isNaN ? 0 : isolatorLow)
         bridge.control.master_eq_mid = Float(isolatorMid.isNaN ? 0 : isolatorMid)
         bridge.control.master_eq_high = Float(isolatorHigh.isNaN ? 0 : isolatorHigh)
+        bridge.control.booth_level = Float(boothLevel.isFinite ? max(0, min(1, boothLevel)) : 0.8)
+        bridge.control.booth_eq_low = Float(boothEqLow.isNaN ? 0 : boothEqLow)
+        bridge.control.booth_eq_mid = Float(boothEqMid.isNaN ? 0 : boothEqMid)
+        bridge.control.booth_eq_high = Float(boothEqHigh.isNaN ? 0 : boothEqHigh)
         bridge.publishControl()
     }
 }

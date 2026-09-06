@@ -1094,3 +1094,61 @@ struct MixerProTierTests {
         #expect(open > killed * 30)
     }
 }
+
+@Suite("CDJ3000 C3 — booth output")
+@MainActor
+struct BoothOutputTests {
+    private func playing(_ freq: Double = 220) -> HeadlessDJEngine {
+        let e = HeadlessDJEngine()
+        let pcm = SignalGenerators.sine(frequency: freq, seconds: 6, sampleRate: 48_000, channels: 2)
+        let analysis = TrackAnalysis(
+            format: pcm.format, duration: 6,
+            tempo: .init(bpm: 120, confidence: 1, beatPositions: [], downbeatPositions: [],
+                         isConstantTempo: true),
+            key: .init(tonic: 0, mode: .major, camelot: "8B", openKey: "1d", confidence: 1),
+            sections: [], waveform: .init(overviewMinMax: [], detailRMS: [], bandEnergy: []),
+            loudness: .init(integratedLUFS: -14, truePeakDBTP: -1, gainToTargetDB: 0))
+        e.deckA.load(analysis, buffer: pcm); e.deckA.play()
+        return e
+    }
+    private func rms(_ s: [Float]) -> Double {
+        s.isEmpty ? 0 : sqrt(s.reduce(0) { $0 + Double($1 * $1) } / Double(s.count))
+    }
+
+    @Test func boothLevelIsIndependentOfMaster() {
+        let e = playing()
+        let master = e.render(frames: 4096).left
+        let booth = e.renderBooth(frames: 4096).left
+        // Default booth level 0.8 -> booth is a scaled copy of the master.
+        #expect(rms(booth) > 0)
+        #expect(abs(rms(booth) / rms(master) - 0.8) < 0.05)
+
+        e.mixer.master.boothLevel = 0.4
+        _ = e.render(frames: 4096)
+        let quieter = e.renderBooth(frames: 4096).left
+        #expect(abs(rms(quieter) / rms(master) - 0.4) < 0.05)
+    }
+
+    @Test func boothEQIsFlatByDefault() {
+        let e = playing()
+        let master = e.render(frames: 4096).left
+        let booth = e.renderBooth(frames: 4096).left
+        for i in booth.indices {
+            #expect(abs(booth[i] - master[i] * 0.8) < 1e-5)
+        }
+    }
+
+    @Test func boothLowKillLeavesMasterUntouched() {
+        let e = playing(80)
+        e.mixer.master.boothEqLow = -.infinity
+        for _ in 0..<4 { _ = e.render(frames: 4096); _ = e.renderBooth(frames: 4096) }
+        let master = e.render(frames: 16_384).left
+        let booth = e.renderBooth(frames: 16_384).left
+        func mag(_ s: [Float]) -> Double {
+            let b = PCMBuffer(format: .init(sampleRate: 48_000, channelCount: 1), capacity: s.count)
+            for i in s.indices { b.channel(0)[i] = s[i] }
+            return Measure.goertzelMagnitude(b, frequency: 80)
+        }
+        #expect(mag(master) > mag(booth) * 20)   // booth low killed, master intact
+    }
+}

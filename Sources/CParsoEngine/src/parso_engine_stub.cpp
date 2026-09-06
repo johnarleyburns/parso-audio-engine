@@ -145,6 +145,10 @@ struct ControlState {
     std::atomic<float> masterEqLow{0.0f};
     std::atomic<float> masterEqMid{0.0f};
     std::atomic<float> masterEqHigh{0.0f};
+    std::atomic<float> boothLevel{0.8f};
+    std::atomic<float> boothEqLow{0.0f};
+    std::atomic<float> boothEqMid{0.0f};
+    std::atomic<float> boothEqHigh{0.0f};
     // Master-clock inputs (Phase 6b item 2), published from the control actor.
     std::atomic<int32_t> masterDeck{-1};
     std::atomic<double> masterBpm{0.0};
@@ -180,6 +184,12 @@ struct pe_engine {
     pd_filter* deckFilter[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
     pd_limiter* masterLimiter = nullptr;
     pd_eq3* masterEq = nullptr;   // master isolator (CDJ3000 parity C3)
+    pd_eq3* boothEq = nullptr;    // booth-output EQ (CDJ3000 parity C3)
+    // Snapshot of the last rendered master block, for pe_render_booth.
+    static constexpr int kBoothCapacity = 8192;
+    float boothLeft[kBoothCapacity] = {};
+    float boothRight[kBoothCapacity] = {};
+    int boothFrames = 0;
     // Per-deck beat-echo delay lines (Phase 6b item 3). Sized at pe_create for
     // the worst case (8 beats at 40 BPM ≈ 12 s) so the render path never allocs.
     pd_delay* deckEcho[PE_MAX_DECKS] = {nullptr, nullptr, nullptr, nullptr};
@@ -1124,6 +1134,17 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
         engine->recordWrite.store(write, std::memory_order_release);
     }
 
+    // Booth snapshot (CDJ3000 parity C3) — stash the final master block so the
+    // next pe_render_booth call can apply the independent booth level + EQ.
+    {
+        const int n = std::min(frames, pe_engine::kBoothCapacity);
+        for (int f = 0; f < n; ++f) {
+            engine->boothLeft[f] = left ? left[f] : 0.0f;
+            engine->boothRight[f] = right ? right[f] : engine->boothLeft[f];
+        }
+        engine->boothFrames = n;
+    }
+
     for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
         pushPlayheadEvent(engine, deckIndex);
         pushPeakEvent(engine, deckIndex, deckPeaks[deckIndex]);
@@ -1241,7 +1262,8 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     }
     engine->masterLimiter = pd_limiter_create(sample_rate, -0.3f);
     engine->masterEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
-    ok = ok && engine->masterLimiter && engine->masterEq;
+    engine->boothEq = pd_eq3_create(sample_rate, 200.0, 2000.0);
+    ok = ok && engine->masterLimiter && engine->masterEq && engine->boothEq;
     if (!ok) {
         pe_destroy(engine);
         return nullptr;
@@ -1259,6 +1281,7 @@ void pe_destroy(pe_engine* engine) {
     }
     pd_limiter_destroy(engine->masterLimiter);
     pd_eq3_destroy(engine->masterEq);
+    pd_eq3_destroy(engine->boothEq);
     delete engine;
 }
 
@@ -1311,6 +1334,15 @@ void pe_set_control(pe_engine* engine, const pe_control* control) {
                                       std::memory_order_relaxed);
     engine->control.masterEqHigh.store(std::isnan(control->master_eq_high) ? 0.0f : control->master_eq_high,
                                        std::memory_order_relaxed);
+    engine->control.boothLevel.store(
+        std::isfinite(control->booth_level) && control->booth_level >= 0.0f ? control->booth_level : 0.8f,
+        std::memory_order_relaxed);
+    engine->control.boothEqLow.store(std::isnan(control->booth_eq_low) ? 0.0f : control->booth_eq_low,
+                                     std::memory_order_relaxed);
+    engine->control.boothEqMid.store(std::isnan(control->booth_eq_mid) ? 0.0f : control->booth_eq_mid,
+                                     std::memory_order_relaxed);
+    engine->control.boothEqHigh.store(std::isnan(control->booth_eq_high) ? 0.0f : control->booth_eq_high,
+                                      std::memory_order_relaxed);
     for (int index = 0; index < PE_MAX_DECKS; ++index) {
         engine->control.trim[index].store(control->trim[index], std::memory_order_relaxed);
         engine->control.fader[index].store(control->fader[index], std::memory_order_relaxed);
@@ -1565,6 +1597,29 @@ void pe_render(pe_engine* engine, float* left, float* right, int frames) {
 
 void pe_render_monitor(pe_engine* engine, float* left, float* right, int frames) {
     renderMonitor(engine, left, right, frames);
+}
+
+void pe_render_booth(pe_engine* engine, float* left, float* right, int frames) {
+    if (!engine || frames <= 0) { clearOutput(left, right, frames); return; }
+    const float level = engine->control.boothLevel.load(std::memory_order_relaxed);
+    pd_eq3_set(engine->boothEq,
+               engine->control.boothEqLow.load(std::memory_order_relaxed),
+               engine->control.boothEqMid.load(std::memory_order_relaxed),
+               engine->control.boothEqHigh.load(std::memory_order_relaxed));
+    const int n = std::min({frames, engine->boothFrames, pe_engine::kBoothCapacity});
+    for (int f = 0; f < frames; ++f) {
+        const float l = f < n ? engine->boothLeft[f] * level : 0.0f;
+        const float r = f < n ? engine->boothRight[f] * level : 0.0f;
+        if (left) left[f] = l;
+        if (right) right[f] = r;
+    }
+    // Booth EQ on the (mono) booth bus: filter left, mirror to right.
+    if (left) {
+        pd_eq3_process(engine->boothEq, left, left, frames);
+        if (right && right != left) for (int f = 0; f < frames; ++f) right[f] = left[f];
+    } else if (right) {
+        pd_eq3_process(engine->boothEq, right, right, frames);
+    }
 }
 
 void pe_step(pe_engine* engine, float* left, float* right, int frames) {
