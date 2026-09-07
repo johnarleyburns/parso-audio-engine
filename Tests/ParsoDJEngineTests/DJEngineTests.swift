@@ -1902,6 +1902,22 @@ struct ConvolutionReverbTests {
         let a = run(), b = run()
         #expect(a == b)
     }
+
+    @Test func swappingTheIRMidStreamStaysStableAndDeterministic() {
+        func run() -> [Float] {
+            let e = playing(220, toneSeconds: 6)
+            e.loadReverbImpulseResponse(samples: syntheticIR(seconds: 0.8, rt60: 0.6))
+            e.mixer.master.reverbMode = .convolution
+            e.mixer.master.reverbSend = 0.6
+            _ = e.render(frames: 12_000)
+            e.loadReverbImpulseResponse(samples: syntheticIR(seconds: 1.4, rt60: 1.1))  // swap live
+            let out = e.render(frames: 24_000).left
+            #expect(out.allSatisfy { $0.isFinite })
+            #expect((out.map(abs).max() ?? 0) < 4.0)
+            return out
+        }
+        #expect(run() == run())
+    }
 }
 
 @Suite("CDJ3000 — sampler modes & gain")
