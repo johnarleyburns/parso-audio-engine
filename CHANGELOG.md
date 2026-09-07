@@ -37,6 +37,16 @@ The public API is **unstable (0.x)** until it has been validated by a first real
   - CC0/CC-BY built-in sample & IR sourcing: `SampleLibrary/manifest.json`,
     `scripts/download-samples.sh`, `SAMPLES-NOTICE.md` (fetched, not committed).
 - Initial repository scaffold: three SPM library products (ParsoAudioCore, ParsoAudioAnalysis, ParsoDJEngine).
+
+### Changed (cdj3000-parity, 0.x source-compat notes)
+- `DJEngine.init` / `HeadlessDJEngine.init` gain `deckCount: Int = 4` (defaulted).
+  `deckA`/`deckB`/`channelA`/`channelB` are now computed aliases over
+  `decks`/`channels` — same instances, source-compatible.
+- `EngineStats` gains `deck{EffectiveBPM,BeatPhase,Synced}All: [T]` fields; a
+  caller using its memberwise initializer directly must add them (the struct is
+  normally engine-produced).
+- `BeatFXUnit.Kind` and `SmartFader.Tail` gain cases (additive); the reverb send
+  is fully dry / bit-transparent by default.
 - Full engineering specification (docs/SPEC.md), FLX4 feature target (docs/FLX4-feature-inventory.md), sourcing map (docs/audio-library-sourcing.md).
 - Extensive test suite (synthetic + real Creative Commons fixtures) as executable specification.
 - Decode support scope: FLAC (libFLAC), Ogg Vorbis (stb_vorbis), Opus (libopus/libopusfile), plus Apple-native MP3/AAC/ALAC/WAV/AIFF/CAF.
