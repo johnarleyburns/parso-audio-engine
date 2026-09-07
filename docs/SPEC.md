@@ -186,6 +186,20 @@ Physical-only **[HW]** items are **N/A**. Each row has a test suite in `Tests/` 
 | Decode FLAC/OggVorbis/Opus/MP3/AAC/ALAC/WAV/AIFF | `AudioFileReader` | `RealFixture decode` |
 | Library / streaming | **Out of scope** (app concern) | — |
 
+### 15.1 Beyond the FLX4 — CDJ-3000 / DJM-A9 tier
+
+`docs/CDJ3000-parity-research.md` is the spec + status for the pro-booth tier
+above the FLX4 (branch `cdj3000-parity`, phases C1–C7 + C1b/C4b/C7c). Landed:
+4 decks / 4 channels (`DJEngine(deckCount:)`, `decks`/`channels` arrays),
+`MasterClock` + external clock + grid-quantized triggers, Key Sync, reverse /
+Slip Reverse, Vinyl Speed Adjust, per-channel fader curve, master isolator,
+booth output, an RT insert seam (`RealtimeInsert`), the DJM mic strip
+(EQ / talkover / FX send), Split Cue, peak-hold metering, 20 Beat FX kinds with
+real per-sample DSP + X-Pad + FX-send band limit, Sound Color FX parameter +
+Center Lock, hot-cue banks, fade-in cues, Auto Cue level, `pd_fdnverb` +
+`pd_conv` (FFT convolution) reverbs, and a real `SmartCFX` / timed `SmartFader`.
+The FLX4 rows above remain the byte-for-byte 2-deck baseline.
+
 ---
 
 ## 16–17. Build / versioning

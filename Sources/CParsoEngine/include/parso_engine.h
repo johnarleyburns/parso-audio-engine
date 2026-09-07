@@ -1,6 +1,8 @@
 /*
  * parso_engine.h — C-clean public API for the real-time DJ render graph.
- * Two decks -> channel processing -> crossfader -> master chain -> limiter.
+ * Up to PE_MAX_DECKS decks -> channel processing -> crossfader -> master chain
+ * -> limiter. Deck count is fixed at pe_create time (2..PE_MAX_DECKS); the
+ * CDJ-3000 booth target is 4 (docs/CDJ3000-parity-research.md C1).
  * Driven from Swift's AVAudioSourceNode render block (pe_render) OR synchronously
  * for tests (pe_step). All RT-safe. See docs/SPEC.md §8, §11, §12.
  */
@@ -12,6 +14,9 @@
 extern "C" {
 #endif
 
+/* Maximum decks / mixer channels the render graph can be created with. */
+#define PE_MAX_DECKS 4
+
 typedef struct pe_engine pe_engine;
 
 /* Continuous, latest-wins parameters (atomics inside). Swift writes; RT reads+smooths. */
@@ -21,28 +26,51 @@ typedef struct {
     float master_level;      /* 0..1 */
     float limiter_ceiling_db;/* dBTP, normally -0.3 */
     float mic_level;         /* 0..1 */
+    /* Mic section (CDJ3000 parity C5 — the DJM mic strip). */
+    float mic_eq_low, mic_eq_high;   /* dB, 2-band mic EQ, 0 == flat */
+    float mic_talkover_on;           /* 0/1 auto-duck the music when the mic is live */
+    float mic_talkover_depth_db;     /* attenuation applied to the music, e.g. -14 */
+    float mic_talkover_threshold;    /* mic block-RMS above which talkover engages, ~0.02 */
+    float mic_fx_on;                 /* 0/1 route the mic through the Beat FX (all/master assign) */
     float cue_master_mix;    /* 0..1 (headphone blend) */
     float master_cue;        /* 0/1 */
     float headphone_level;   /* 0..1 */
-    float cue_pfl[2];        /* per-channel pre-listen 0/1 */
-    float xfade_assign[2];   /* 0=A side, 1=B side, 2=thru */
-    float fader_start[2];    /* 0/1 */
-    /* per channel [0]=A [1]=B */
-    float trim[2];
-    float eq_low[2], eq_mid[2], eq_high[2]; /* dB, -INFINITY == kill */
-    float color_amount[2];   /* -1..+1 */
-    float color_kind[2];     /* Color FX enum value */
-    float beatfx_kind;       /* Beat FX enum value */
+    float cue_pfl[PE_MAX_DECKS];        /* per-channel pre-listen 0/1 */
+    float xfade_assign[PE_MAX_DECKS];   /* 0=A side, 1=B side, 2=thru */
+    float fader_start[PE_MAX_DECKS];    /* 0/1 */
+    /* per channel [0..PE_MAX_DECKS-1]; 0/1 are the classic A/B */
+    float trim[PE_MAX_DECKS];
+    float eq_low[PE_MAX_DECKS], eq_mid[PE_MAX_DECKS], eq_high[PE_MAX_DECKS]; /* dB, -INFINITY == kill */
+    float color_amount[PE_MAX_DECKS];   /* -1..+1 */
+    float color_kind[PE_MAX_DECKS];     /* Color FX enum value */
+    float beatfx_kind;       /* Beat FX enum value (0..19) */
     float beatfx_beats;      /* beat division, expressed in quarter notes */
     float beatfx_depth;      /* 0..1 wet amount */
     float beatfx_assign;     /* 0=A, 1=B, 2=both, 3=master */
     float beatfx_on;         /* 0/1 */
-    float fader[2];          /* 0..1 */
-    float deck_time_ratio[2];
-    float deck_pitch[2];     /* semitones */
-    float deck_keylock[2];   /* 0/1 — per-deck key-lock (time-pitch) engage */
+    float beatfx_xpad;       /* 0..1 X-Pad sweep of the primary param; <0 == not touched (CDJ3000 C4) */
+    float beatfx_band;       /* FX-input band limit: 0 all, 1 low, 2 mid, 3 high (CDJ3000 C4) */
+    float fader[PE_MAX_DECKS];          /* 0..1 */
+    float deck_time_ratio[PE_MAX_DECKS];
+    float deck_pitch[PE_MAX_DECKS];     /* semitones */
+    float deck_keylock[PE_MAX_DECKS];   /* 0/1 — per-deck key-lock (time-pitch) engage */
     float limiter_enabled;   /* 0/1, default 1 — 0 bypasses the master brickwall limiter */
     float cue_mode;          /* 0 off, 1 splitOutput, 2 cueInPlace, 3 multichannel (§44.2a) */
+    /* Master isolator — 3-band EQ/kill on the master bus, post-fader / pre-limiter
+     * (CDJ3000 parity C3 — the DJM MASTER ISOLATOR). dB, -INFINITY == kill,
+     * 0 == flat (bit-transparent, the default). */
+    float master_eq_low, master_eq_mid, master_eq_high;
+    /* Sound Color FX (CDJ3000 C4): per-channel parameter knob + center lock. */
+    float color_param[PE_MAX_DECKS];   /* 0..1 depth / resonance, default 0.5 */
+    /* Master reverb send (CDJ3000 C7) — an 8-line FDN on the master bus,
+     * post-isolator / pre-limiter. send 0 == fully dry (default). */
+    float master_reverb_send;
+    float master_reverb_size, master_reverb_decay, master_reverb_damp;
+    float master_reverb_mode;   /* 0 = FDN (default), 1 = convolution (needs an IR, C7c) */
+    /* Booth output (CDJ3000 parity C3 — DJM BOOTH). Independent level + 3-band
+     * EQ, fed from the final master. booth_level default 0.8; EQ 0 == flat. */
+    float booth_level;
+    float booth_eq_low, booth_eq_mid, booth_eq_high;
 } pe_control;
 
 /* Discrete commands (SPSC ring). One struct, tagged. */
@@ -54,9 +82,12 @@ typedef enum {
     PE_CMD_BEATJUMP, PE_CMD_SYNC, PE_CMD_SET_MASTER, PE_CMD_SET_KEYLOCK, PE_CMD_SET_SLIP,
     PE_CMD_JOG_TOUCH, PE_CMD_JOG_MOVE, PE_CMD_JOG_RELEASE, PE_CMD_SEEK,
     PE_CMD_UNSYNC, PE_CMD_STEM_ARM, PE_CMD_STEM_GAIN, PE_CMD_STEM_MUTE, PE_CMD_STEM_SOLO,
+    PE_CMD_SET_REVERSE,  /* i0 = reverse on/off (CDJ3000 parity C2 — REV / Slip Reverse) */
+    PE_CMD_VINYL_SPEED,  /* f0 = brake seconds, f1 = spin-up seconds (CDJ3000 Vinyl Speed Adjust) */
     PE_CMD_ECHO_SET,  /* per-deck beat echo: i0=on, f0=beats, f1=depth, i1=feedback*1000 */
     PE_CMD_COLORFX_KIND, PE_CMD_BEATFX_KIND, PE_CMD_BEATFX_ONOFF, PE_CMD_BEATFX_RELEASE,
     PE_CMD_SAMPLER_TRIGGER, PE_CMD_SAMPLER_STOP,
+    PE_CMD_SAMPLER_CONFIG,  /* i0=slot (-1 = master), i1=mode (0 one-shot,1 loop,2 gate), f0=gain */
     PE_CMD_LOAD  /* buffer handle in i0(ptr low), i1(ptr high), f0=sampleRate, i2=frames */
 } pe_cmd_type;
 
@@ -89,9 +120,9 @@ typedef struct {
     int64_t master_frame;          /* monotonic, advances by `frames` per render */
     double  master_bpm;            /* effective BPM of the master deck, 0 if none */
     double  downbeat_phase;        /* 0..1 within the master bar, 0 if no grid */
-    double  deck_effective_bpm[2]; /* per-deck track BPM * time ratio */
-    double  deck_beat_phase[2];    /* 0..1 within the deck beat */
-    int32_t deck_synced[2];        /* 0/1 authoritative per-deck sync engage */
+    double  deck_effective_bpm[PE_MAX_DECKS]; /* per-deck track BPM * time ratio */
+    double  deck_beat_phase[PE_MAX_DECKS];    /* 0..1 within the deck beat */
+    int32_t deck_synced[PE_MAX_DECKS];        /* 0/1 authoritative per-deck sync engage */
     double  render_load;           /* last block: render time / buffer period, 0..~ */
     int64_t starved_frames;        /* frames output as silence because a deck underran */
 } pe_stats;
@@ -102,7 +133,8 @@ void pe_set_master_clock(pe_engine*, int32_t master_deck /*-1 none*/, double mas
 /* Publish a per-deck effective BPM + sync-engage state for telemetry. */
 void pe_set_deck_sync(pe_engine*, int deck, int synced, double effective_bpm, double beat_phase);
 
-pe_engine* pe_create(double sample_rate, int max_frames);
+/* deck_count is clamped to 2..PE_MAX_DECKS. */
+pe_engine* pe_create(double sample_rate, int max_frames, int deck_count);
 void       pe_destroy(pe_engine*);
 
 /* Atomically publish the latest control snapshot. */
@@ -134,9 +166,30 @@ void pe_mic_set_buffer(pe_engine*, const float* const* channels, int channel_cou
 void pe_render(pe_engine*, float* out_l, float* out_r, int frames);
 /* Optional second bus: headphone/monitor mix (cue vs master). */
 void pe_render_monitor(pe_engine*, float* out_l, float* out_r, int frames);
+/* Optional third bus: booth output — the last rendered master through the booth
+ * level + booth EQ. Call once per cycle, right after pe_render, with the same
+ * frame count (CDJ3000 parity C3). */
+void pe_render_booth(pe_engine*, float* out_l, float* out_r, int frames);
+/* Load a real impulse response for the master convolution reverb (CDJ3000 C7c).
+ * Copies the samples; call from the control thread. Set master_reverb_mode = 1
+ * to route the reverb send through it. */
+void pe_master_convolution_ir(pe_engine*, const float* ir, int ir_len);
 
 /* Synchronous, device-free advance for deterministic tests. Identical DSP to pe_render. */
 void pe_step(pe_engine*, float* out_l, float* out_r, int frames);
+
+/*
+ * Insert / send-return seam (CDJ3000 parity C3 — the DJM SEND/RETURN and an
+ * "bring your own effect" hook, mirroring the BYO-codec seam). The engine calls
+ * `fn(left, right, frames, ctx)` in place on the named bus, on the render thread.
+ * THE CALLBACK MUST BE REALTIME-SAFE: no locks, no allocation, no syscalls,
+ * bounded work. Set it once before audio starts; pass fn = NULL to remove it.
+ * For a channel insert the signal is mono (left == right). For an external
+ * hardware send/return loop, the app's callback does the round trip.
+ */
+typedef void (*pe_insert_fn)(float* left, float* right, int frames, void* ctx);
+enum { PE_INSERT_CH0 = 0, PE_INSERT_CH1, PE_INSERT_CH2, PE_INSERT_CH3, PE_INSERT_MASTER, PE_INSERT_COUNT };
+void pe_set_insert(pe_engine*, int point, pe_insert_fn fn, void* ctx);
 
 /*
  * Master-bus record tap (Phase 6b item 4). While active, every rendered master

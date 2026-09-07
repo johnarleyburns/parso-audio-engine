@@ -258,6 +258,48 @@ struct pd_reverb {
     }
 };
 
+// Feedback Delay Network reverb (CDJ3000 parity C7) — an 8-line FDN with an
+// orthonormal Hadamard feedback matrix (lossless mixing), per-line one-pole
+// damping and slow delay modulation. A materially lusher / less metallic tail
+// than the Freeverb topology, RT-safe and allocation-free once constructed.
+struct pd_fdnverb {
+    static constexpr int kLines = 8;
+    static constexpr int kMaxDelay = 4800;          // 100 ms at 48 kHz
+    double sampleRate;
+    float lineBuf[kLines][kMaxDelay] = {};
+    int writePos = 0;
+    int baseLen[kLines] = {};
+    float dampState[kLines] = {};
+    float lfoPhase[kLines] = {};
+    float size = 0.6f, decay = 0.6f, damp = 0.5f, mix = 0.3f;
+
+    explicit pd_fdnverb(double sr) : sampleRate(sr) {
+        // Mutually-prime-ish base lengths, scaled to ~20..90 ms by `size`.
+        static constexpr int seed[kLines] = {1153, 1327, 1523, 1721, 1949, 2113, 2333, 2521};
+        const double scale = sr / 48'000.0;
+        for (int i = 0; i < kLines; ++i) {
+            baseLen[i] = std::max(1, std::min(kMaxDelay - 2,
+                static_cast<int>(std::lround(seed[i] * scale))));
+            lfoPhase[i] = static_cast<float>(i) * 0.37f;
+        }
+    }
+
+    static void hadamard8(float* v) {
+        // In-place fast Walsh–Hadamard transform, then 1/sqrt(8) normalise.
+        for (int step = 1; step < 8; step <<= 1) {
+            for (int i = 0; i < 8; i += step << 1) {
+                for (int j = i; j < i + step; ++j) {
+                    const float a = v[j], b = v[j + step];
+                    v[j] = a + b;
+                    v[j + step] = a - b;
+                }
+            }
+        }
+        const float n = 0.35355339059f;  // 1/sqrt(8)
+        for (int i = 0; i < 8; ++i) v[i] *= n;
+    }
+};
+
 struct pd_limiter {
     double sampleRate;
     float ceiling;
@@ -689,6 +731,214 @@ void pd_reverb_process(pd_reverb* reverb, const float* in_left, const float* in_
 }
 
 void pd_reverb_destroy(pd_reverb* reverb) { delete reverb; }
+
+pd_fdnverb* pd_fdnverb_create(double sample_rate) {
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;
+    return new (std::nothrow) pd_fdnverb(sample_rate);
+}
+
+void pd_fdnverb_set(pd_fdnverb* r, float size, float decay, float damp, float mix) {
+    if (!r) return;
+    auto clamp01 = [](float x) { return std::isfinite(x) ? std::max(0.0f, std::min(1.0f, x)) : 0.0f; };
+    r->size = clamp01(size);
+    r->decay = clamp01(decay);
+    r->damp = clamp01(damp);
+    r->mix = clamp01(mix);
+}
+
+void pd_fdnverb_process(pd_fdnverb* r, const float* in_l, const float* in_r,
+                        float* out_l, float* out_r, int frames) {
+    if (!r || frames <= 0) return;
+    const int L = pd_fdnverb::kLines;
+    const int maxD = pd_fdnverb::kMaxDelay;
+    // Feedback gain from `decay`: 0 -> short, 1 -> ~6 s RT60-ish.
+    const float g = 0.55f + 0.44f * r->decay;
+    const float dampCoef = 0.05f + 0.9f * r->damp;   // one-pole lowpass amount
+    const float sizeScale = 0.35f + 0.65f * r->size;
+    const float lfoInc = 0.6f / static_cast<float>(r->sampleRate);
+    for (int n = 0; n < frames; ++n) {
+        const float dryL = in_l ? in_l[n] : 0.0f;
+        const float dryR = in_r ? in_r[n] : (in_l ? in_l[n] : 0.0f);
+        const float inMono = 0.5f * (dryL + dryR);
+
+        float taps[8];
+        for (int i = 0; i < L; ++i) {
+            r->lfoPhase[i] += lfoInc;
+            if (r->lfoPhase[i] > 1.0f) r->lfoPhase[i] -= 1.0f;
+            const float mod = 12.0f * std::sin(6.2831853f * r->lfoPhase[i]);
+            int d = static_cast<int>(std::lround(r->baseLen[i] * sizeScale + mod));
+            d = std::max(1, std::min(maxD - 1, d));
+            int rp = r->writePos - d;
+            if (rp < 0) rp += maxD;
+            taps[i] = r->lineBuf[i][rp];
+        }
+
+        float mixed[8];
+        for (int i = 0; i < L; ++i) mixed[i] = taps[i];
+        pd_fdnverb::hadamard8(mixed);
+
+        for (int i = 0; i < L; ++i) {
+            float v = inMono + g * mixed[i];
+            // per-line damping (one-pole lowpass in the feedback path)
+            r->dampState[i] += dampCoef * (v - r->dampState[i]);
+            v = r->dampState[i];
+            if (!std::isfinite(v)) v = 0.0f;
+            r->lineBuf[i][r->writePos] = v;
+        }
+        r->writePos = (r->writePos + 1) % maxD;
+
+        // Even lines -> left, odd -> right; light cross-feed for width.
+        float wetL = 0.0f, wetR = 0.0f;
+        for (int i = 0; i < L; ++i) {
+            if (i & 1) wetR += taps[i]; else wetL += taps[i];
+        }
+        wetL *= 0.5f; wetR *= 0.5f;
+        const float outL = dryL * (1.0f - r->mix) + wetL * r->mix;
+        const float outR = dryR * (1.0f - r->mix) + wetR * r->mix;
+        if (out_l) out_l[n] = outL;
+        if (out_r) out_r[n] = outR;
+    }
+}
+
+void pd_fdnverb_destroy(pd_fdnverb* r) { delete r; }
+
+// ── Uniformly-partitioned FFT convolution (CDJ3000 parity C7c) ──
+// Overlap-save, B-sample partitions, N = 2B FFT. Setup (pd_conv_set_ir) may
+// allocate; pd_conv_process is allocation-free and RT-safe, at B samples of
+// latency. Runs the real OpenAIR / EchoThief impulse responses.
+//
+// Concurrency: pd_conv_set_ir fills whichever of the two IR spectrum banks is
+// NOT live, then publishes it with a release store to `active`. The RT thread
+// reads `active` with an acquire load and never touches the bank being filled.
+// The frequency-domain delay line is input history, not IR-derived, so it is
+// left running across an IR change (a brief tail cross-fade, as on hardware).
+struct pd_conv {
+    static constexpr int B = 512;
+    static constexpr int N = 1024;
+    static constexpr int NB = N / 2 + 1;
+    static constexpr int MAX_PARTS = 384;   // up to ~196 k-sample IR (~4 s at 48 kHz)
+    double sampleRate;
+    signalsmith::linear::RealFFT<float> fft{N};
+
+    struct Bank {
+        std::vector<std::complex<float>> spec;   // parts * NB
+        int parts = 0;
+        float gain = 1.0f;
+    };
+    Bank bank[2];
+    std::atomic<int> active{-1};                  // -1 none, else 0/1
+
+    std::vector<std::complex<float>> fdl;         // MAX_PARTS * NB, circular
+    int fdlHead = 0;
+    std::array<float, N> inWin{};                 // [B history | B new]
+    std::array<std::complex<float>, NB> xSpec{};
+    std::array<std::complex<float>, NB> ySpec{};
+    std::array<float, N> timeOut{};
+    std::array<float, B> inAccum{};
+    int inFill = 0;
+    std::array<float, B> outBlock{};              // last completed conv block
+    int outPos = B;                               // B => nothing ready yet
+    float mix = 1.0f;
+
+    explicit pd_conv(double sr) : sampleRate(sr) {
+        fdl.assign(static_cast<size_t>(MAX_PARTS) * NB, {});
+    }
+
+    void runBlock() {
+        const int a = active.load(std::memory_order_acquire);
+        // Slide history: inWin[0..B) <- previous new; inWin[B..2B) <- inAccum.
+        for (int i = 0; i < B; ++i) inWin[i] = inWin[B + i];
+        for (int i = 0; i < B; ++i) inWin[B + i] = inAccum[i];
+        fft.fft(inWin.data(), xSpec.data());
+        std::complex<float>* slot = &fdl[static_cast<size_t>(fdlHead) * NB];
+        for (int k = 0; k < NB; ++k) slot[k] = xSpec[k];
+
+        if (a < 0) { outBlock.fill(0.0f); outPos = 0; fdlHead = (fdlHead + 1) % MAX_PARTS; return; }
+        const Bank& bk = bank[a];
+        for (int k = 0; k < NB; ++k) ySpec[k] = {0.0f, 0.0f};
+        for (int p = 0; p < bk.parts; ++p) {
+            int src = fdlHead - p;
+            if (src < 0) src += MAX_PARTS;
+            const std::complex<float>* xs = &fdl[static_cast<size_t>(src) * NB];
+            const std::complex<float>* hs = &bk.spec[static_cast<size_t>(p) * NB];
+            for (int k = 0; k < NB; ++k) ySpec[k] += xs[k] * hs[k];
+        }
+        fdlHead = (fdlHead + 1) % MAX_PARTS;
+        fft.ifft(ySpec.data(), timeOut.data());
+        const float norm = bk.gain / static_cast<float>(N);
+        for (int i = 0; i < B; ++i) {
+            const float v = timeOut[B + i] * norm;
+            outBlock[i] = std::isfinite(v) ? v : 0.0f;
+        }
+        outPos = 0;
+    }
+};
+
+pd_conv* pd_conv_create(double sample_rate) {
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;
+    return new (std::nothrow) pd_conv(sample_rate);
+}
+
+int pd_conv_set_ir(pd_conv* c, const float* ir, int ir_len) {
+    if (!c || !ir || ir_len <= 0) {
+        if (c) c->active.store(-1, std::memory_order_release);
+        return PD_ERR_PARAM;
+    }
+    const int B = pd_conv::B, N = pd_conv::N, NB = pd_conv::NB;
+    int parts = (ir_len + B - 1) / B;
+    if (parts > pd_conv::MAX_PARTS) parts = pd_conv::MAX_PARTS;
+
+    const int live = c->active.load(std::memory_order_acquire);
+    const int next = (live == 0) ? 1 : 0;         // fill the non-live bank
+    pd_conv::Bank& bk = c->bank[next];
+    bk.spec.assign(static_cast<size_t>(parts) * NB, {});
+    bk.parts = parts;
+
+    float peak = 1e-9f;
+    for (int i = 0; i < ir_len; ++i) peak = std::fmax(peak, std::fabs(ir[i]));
+    bk.gain = 1.0f / peak;                        // unity-peak so `mix` is predictable
+
+    std::array<float, N> block{};
+    std::array<std::complex<float>, NB> spec{};
+    for (int p = 0; p < parts; ++p) {
+        block.fill(0.0f);
+        const int off = p * B;
+        for (int i = 0; i < B && off + i < ir_len; ++i) block[i] = ir[off + i];
+        c->fft.fft(block.data(), spec.data());
+        std::complex<float>* dst = &bk.spec[static_cast<size_t>(p) * NB];
+        for (int k = 0; k < NB; ++k) dst[k] = spec[k];
+    }
+    c->active.store(next, std::memory_order_release);   // publish
+    return PD_OK;
+}
+
+void pd_conv_set_mix(pd_conv* c, float mix) {
+    if (c) c->mix = std::isfinite(mix) ? std::fmax(0.0f, std::fmin(1.0f, mix)) : 0.0f;
+}
+
+void pd_conv_process(pd_conv* c, const float* in_l, const float* in_r,
+                     float* out_l, float* out_r, int frames) {
+    if (!c || frames <= 0) return;
+    if (c->active.load(std::memory_order_acquire) < 0) {   // no IR -> dry passthrough
+        for (int i = 0; i < frames; ++i) {
+            if (out_l) out_l[i] = in_l ? in_l[i] : 0.0f;
+            if (out_r) out_r[i] = in_r ? in_r[i] : (in_l ? in_l[i] : 0.0f);
+        }
+        return;
+    }
+    for (int i = 0; i < frames; ++i) {
+        const float dl = in_l ? in_l[i] : 0.0f;
+        const float dr = in_r ? in_r[i] : dl;
+        c->inAccum[c->inFill++] = 0.5f * (dl + dr);   // mono send
+        float w = 0.0f;
+        if (c->outPos < pd_conv::B) w = c->outBlock[c->outPos++];
+        if (c->inFill == pd_conv::B) { c->runBlock(); c->inFill = 0; }
+        if (out_l) out_l[i] = dl * (1.0f - c->mix) + w * c->mix;
+        if (out_r) out_r[i] = dr * (1.0f - c->mix) + w * c->mix;
+    }
+}
+
+void pd_conv_destroy(pd_conv* c) { delete c; }
 
 pd_limiter* pd_limiter_create(double sample_rate, float ceiling_db) {
     if (!std::isfinite(sample_rate) || sample_rate <= 0.0) return nullptr;

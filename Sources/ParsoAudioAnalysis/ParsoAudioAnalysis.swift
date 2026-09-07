@@ -57,6 +57,29 @@ public struct KeyResult: Sendable, Equatable {
         self.openKey = openKey
         self.confidence = confidence
     }
+
+    /// This key transposed by `semitones` (octave-wrapping), mode preserved.
+    /// Used for Key Shift / Key Sync "sounding key" display (CDJ3000 parity C2).
+    public func transposed(by semitones: Int) -> KeyResult {
+        let shift = ((semitones % 12) + 12) % 12
+        guard shift != 0 else { return self }
+        let newTonic = (tonic + shift) % 12
+        let isMinor = mode == .minor
+        let camelotKey = Camelot.from(tonic: newTonic, isMinor: isMinor)
+        let open = camelotKey.map { "\((($0.number + 4) % 12) + 1)\(isMinor ? "m" : "d")" }
+        return KeyResult(tonic: newTonic, mode: mode,
+                         camelot: camelotKey?.code ?? camelot,
+                         openKey: open ?? openKey, confidence: confidence)
+    }
+
+    /// Smallest semitone shift (−6…+6) that moves this key's tonic onto
+    /// `other`'s. Mode is ignored — the CDJ-3000 Key Sync matches pitch class.
+    public func shortestShift(to other: KeyResult) -> Int {
+        var delta = (other.tonic - tonic) % 12
+        if delta > 6 { delta -= 12 }
+        if delta < -6 { delta += 12 }
+        return delta
+    }
 }
 
 public struct Section: Sendable, Equatable {

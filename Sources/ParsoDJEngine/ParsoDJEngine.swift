@@ -24,11 +24,41 @@ public struct EngineStats: Sendable {
     public var masterSample: Int64
     public var masterBPM: Double
     public var downbeatPhase: Double
+    /// Decks 0/1 only — kept for source compatibility. Prefer the `*All` arrays,
+    /// which cover every deck the engine was created with (up to 4).
     public var deckEffectiveBPM: (Double, Double)
     public var deckBeatPhase: (Double, Double)
     public var deckSynced: (Bool, Bool)
+    /// Per-deck telemetry for all `deckCount` decks (CDJ3000 parity C1).
+    public var deckEffectiveBPMAll: [Double]
+    public var deckBeatPhaseAll: [Double]
+    public var deckSyncedAll: [Bool]
     public var renderLoad: Double
     public var starvedFrames: Int64
+}
+
+/// The shared master timeline all synced decks phase-lock to (CDJ3000 parity
+/// C1b — the software analogue of PRO DJ LINK's tempo master, minus the wire
+/// protocol). Drive it from a deck (`Deck.setAsMaster()`) or from an app-supplied
+/// external clock (`DJEngine.setExternalClock` — e.g. an Ableton Link bridge).
+public struct MasterClock: Sendable {
+    /// Master tempo in BPM (0 when nothing is driving the clock).
+    public var bpm: Double
+    /// Phase within the current bar, 0…1 (0 == downbeat).
+    public var barPhase: Double
+    /// Phase within the current beat, 0…1.
+    public var beatPhase: Double { (barPhase * 4).truncatingRemainder(dividingBy: 1) }
+    /// Monotonic engine frame counter.
+    public var frame: Int64
+    /// The deck driving the clock, or nil (external clock or no master).
+    public var sourceDeck: Int?
+    /// True when an app-supplied external clock is driving.
+    public var isExternal: Bool
+    public var isRunning: Bool { bpm > 0 }
+    /// Frames per beat at the current tempo and engine sample rate, 0 if stopped.
+    public func framesPerBeat(sampleRate: Double) -> Double {
+        bpm > 0 ? sampleRate * 60 / bpm : 0
+    }
 }
 
 // MARK: - Top-level engine
@@ -37,8 +67,14 @@ public struct EngineStats: Sendable {
 /// `Sampler`, a `MicInput`, and `Monitoring`. Install with `start()`.
 @MainActor
 public final class DJEngine {
-    public let deckA: Deck
-    public let deckB: Deck
+    /// All decks (2…4). `deckA`/`deckB` alias `decks[0]`/`decks[1]`.
+    public let decks: [Deck]
+    public var deckA: Deck { decks[0] }
+    public var deckB: Deck { decks[1] }
+    /// Third / fourth decks — present when created with `deckCount >= 3` / `>= 4`
+    /// (the default is 4, the CDJ-3000 booth target). Trap on a 2-deck engine.
+    public var deckC: Deck { decks[2] }
+    public var deckD: Deck { decks[3] }
     public let mixer: Mixer
     public let sampler: Sampler
     public let mic: MicInput
@@ -55,13 +91,12 @@ public final class DJEngine {
     private var configChangeObserver: NSObjectProtocol?
     private var configChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
-        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender, deckCount: deckCount)
         self.bridge = bridge
         self.sampleRateValue = sampleRate
         self.maxFramesPerRender = maxFramesPerRender
-        deckA = Deck(bridge: bridge, index: 0)
-        deckB = Deck(bridge: bridge, index: 1)
+        decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
@@ -164,6 +199,38 @@ public final class DJEngine {
     /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
     public func telemetry() -> EngineStats { bridge.engineStats() }
 
+    /// The current tempo-master deck's sounding key, or nil if no master is set
+    /// or it has no analysed key (CDJ3000 parity C2 — the DJM/CDJ "master key").
+    public var masterKey: KeyResult? {
+        guard let idx = bridge.masterDeckIndex, decks.indices.contains(idx) else { return nil }
+        return decks[idx].soundingKey
+    }
+
+    /// The shared master timeline synced decks phase-lock to (CDJ3000 parity C1b).
+    public var masterClock: MasterClock { bridge.masterClock() }
+
+    /// Drive the master clock from an app-supplied external source (e.g. a bridge
+    /// to Ableton Link). Synced decks lock to this instead of a master deck.
+    public func setExternalClock(bpm: Double, barPhase: Double = 0) {
+        bridge.setExternalClock(bpm: bpm, barPhase: barPhase)
+    }
+    /// Stop using the external clock (revert to a master deck / none).
+    public func clearExternalClock() { bridge.clearExternalClock() }
+
+    /// Advance time-based mixer automation (the Smart Fader transition). Call
+    /// each frame from a display link with the real elapsed seconds.
+    public func tickAutomation(elapsed: TimeInterval) { mixer.advanceAutomation(elapsed: elapsed) }
+
+    /// Load a real impulse response for the master `.convolution` reverb mode
+    /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
+    /// then set `mixer.master.reverbMode = .convolution` and raise `reverbSend`.
+    public func loadReverbImpulseResponse(_ ir: PCMBuffer) {
+        var samples = [Float](repeating: 0, count: ir.frameCount)
+        for i in 0..<ir.frameCount { samples[i] = ir.channel(0)[i] }
+        bridge.loadConvolutionIR(samples)
+    }
+    public func loadReverbImpulseResponse(samples: [Float]) { bridge.loadConvolutionIR(samples) }
+
     // MARK: Recording (Phase 6b item 4)
     private var recordingPump: Task<Void, Never>?
 
@@ -191,33 +258,91 @@ public final class DJEngine {
 
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
-        HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender)
+        HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender,
+                         deckCount: decks.count)
     }
+}
+
+/// Maximum decks / mixer channels — mirrors `PE_MAX_DECKS` in parso_engine.h.
+fileprivate let kPEMaxDecks = 4
+
+@inline(__always)
+fileprivate func peSet(_ t: inout (Float, Float, Float, Float), _ i: Int, _ v: Float) {
+    switch i {
+    case 0: t.0 = v
+    case 1: t.1 = v
+    case 2: t.2 = v
+    default: t.3 = v
+    }
+}
+@inline(__always) fileprivate func peQuad(_ v: Float) -> (Float, Float, Float, Float) { (v, v, v, v) }
+
+// MARK: - Insert / send-return seam (CDJ3000 parity C3)
+
+/// An app-supplied realtime effect insert. `process` runs on the audio render
+/// thread: it **must be realtime-safe** — no locks, no allocation, no syscalls,
+/// bounded work. For a channel insert the signal is mono (`left == right`). Use
+/// it to host an AUv3, a hand-written kernel, or an external hardware send/return
+/// loop (the DJM SEND/RETURN). Mirrors the BYO-codec / BYO-model pattern.
+public protocol RealtimeInsert: AnyObject {
+    func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int)
+}
+
+/// Where a `RealtimeInsert` sits in the signal path.
+public enum InsertPoint: Sendable, Hashable {
+    case channel(Int)   // 0…3, post-EQ / pre-gain
+    case master         // post master fader, pre isolator + limiter
+
+    fileprivate var raw: Int32 {
+        switch self {
+        case .channel(let i): return Int32(max(0, min(3, i)))   // PE_INSERT_CH0…CH3
+        case .master: return 4                                  // PE_INSERT_MASTER
+        }
+    }
+}
+
+fileprivate let peInsertTrampoline: pe_insert_fn = { left, right, frames, ctx in
+    guard let left, let ctx else { return }
+    let insert = Unmanaged<AnyObject>.fromOpaque(ctx).takeUnretainedValue()
+    (insert as? RealtimeInsert)?.process(left: left, right: right ?? left, frames: Int(frames))
+}
+
+@MainActor
+fileprivate final class WeakDeck {
+    weak var deck: Deck?
+    init(_ deck: Deck?) { self.deck = deck }
 }
 
 @MainActor
 fileprivate final class EngineBridge {
     private let handleBits: UInt
     let engineSampleRate: Double
+    let deckCount: Int
     var control: pe_control
     private(set) var masterDeckIndex: Int?
-    private var trackBPM: [Double] = [120, 120]
-    weak var deckA: Deck?
-    weak var deckB: Deck?
+    private var trackBPM: [Double]
+    private var deckBoxes: [WeakDeck]
     weak var sampler: Sampler?
     weak var mixer: Mixer?
+
+    var deckA: Deck? { deckBoxes[0].deck }
+    var deckB: Deck? { deckBoxes[1].deck }
 
     var handle: OpaquePointer {
         // The C handle is owned and used exclusively on the main/control actor.
         OpaquePointer(bitPattern: handleBits)!
     }
 
-    init(sampleRate: Double, maxFrames: Int) {
-        guard let handle = pe_create(sampleRate, Int32(maxFrames)) else {
+    init(sampleRate: Double, maxFrames: Int, deckCount: Int) {
+        let clampedDecks = min(max(deckCount, 2), kPEMaxDecks)
+        guard let handle = pe_create(sampleRate, Int32(maxFrames), Int32(clampedDecks)) else {
             fatalError("CParsoEngine could not be created")
         }
         self.handleBits = UInt(bitPattern: handle)
         self.engineSampleRate = sampleRate
+        self.deckCount = clampedDecks
+        self.trackBPM = Array(repeating: 120, count: kPEMaxDecks)
+        self.deckBoxes = (0..<kPEMaxDecks).map { _ in WeakDeck(nil) }
         var control = pe_control()
         control.crossfader = 0
         control.xfade_curve = 0
@@ -226,26 +351,47 @@ fileprivate final class EngineBridge {
         control.cue_master_mix = 0.5
         control.master_cue = 0
         control.headphone_level = 0.7
-        control.cue_pfl = (0, 0)
-        control.xfade_assign = (2, 2)
-        control.fader_start = (0, 0)
-        control.eq_low = (0, 0)
-        control.eq_mid = (0, 0)
-        control.eq_high = (0, 0)
-        control.color_amount = (0, 0)
-        control.color_kind = (0, 0)
+        control.mic_eq_low = 0
+        control.mic_eq_high = 0
+        control.mic_talkover_on = 0
+        control.mic_talkover_depth_db = -14
+        control.mic_talkover_threshold = 0.02
+        control.mic_fx_on = 0
+        control.cue_pfl = peQuad(0)
+        control.xfade_assign = peQuad(2)
+        control.fader_start = peQuad(0)
+        control.eq_low = peQuad(0)
+        control.eq_mid = peQuad(0)
+        control.eq_high = peQuad(0)
+        control.color_amount = peQuad(0)
+        control.color_kind = peQuad(0)
         control.beatfx_kind = 0
         control.beatfx_beats = 0.5
         control.beatfx_depth = 0.5
         control.beatfx_assign = 0
         control.beatfx_on = 0
-        control.trim = (0.5, 0.5)
-        control.fader = (1, 1)
-        control.deck_time_ratio = (1, 1)
-        control.deck_pitch = (0, 0)
-        control.deck_keylock = (1, 1)  // Deck.keyLock defaults to true
+        control.beatfx_xpad = -1
+        control.beatfx_band = 0
+        control.color_param = peQuad(0.5)
+        control.trim = peQuad(0.5)
+        control.fader = peQuad(1)
+        control.deck_time_ratio = peQuad(1)
+        control.deck_pitch = peQuad(0)
+        control.deck_keylock = peQuad(1)  // Deck.keyLock defaults to true
         control.limiter_enabled = 1
         control.cue_mode = 0
+        control.master_eq_low = 0
+        control.master_eq_mid = 0
+        control.master_eq_high = 0
+        control.booth_level = 0.8
+        control.booth_eq_low = 0
+        control.booth_eq_mid = 0
+        control.booth_eq_high = 0
+        control.master_reverb_send = 0
+        control.master_reverb_size = 0.6
+        control.master_reverb_decay = 0.6
+        control.master_reverb_damp = 0.5
+        control.master_reverb_mode = 0
         self.control = control
         pe_set_control(handle, &self.control)
     }
@@ -255,7 +401,11 @@ fileprivate final class EngineBridge {
     func publishControl() { pe_set_control(handle, &control) }
 
     func register(_ deck: Deck, index: Int) {
-        if index == 0 { deckA = deck } else if index == 1 { deckB = deck }
+        if deckBoxes.indices.contains(index) { deckBoxes[index] = WeakDeck(deck) }
+    }
+
+    private func forEachDeck(_ body: (Deck) -> Void) {
+        for box in deckBoxes { if let deck = box.deck { body(deck) } }
     }
 
     func register(_ sampler: Sampler) { self.sampler = sampler }
@@ -272,14 +422,60 @@ fileprivate final class EngineBridge {
     }
 
     func deck(at index: Int) -> Deck? {
-        index == 0 ? deckA : (index == 1 ? deckB : nil)
+        deckBoxes.indices.contains(index) ? deckBoxes[index].deck : nil
     }
 
     func setMaster(index: Int) {
-        guard index == 0 || index == 1 else { return }
+        guard (0..<deckCount).contains(index) else { return }
+        externalClock = nil          // a deck master supersedes an external clock
         masterDeckIndex = index
-        deckA?.refreshSyncFromMasterIfNeeded()
-        deckB?.refreshSyncFromMasterIfNeeded()
+        forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
+    }
+
+    // MARK: External master clock (CDJ3000 parity C1b)
+
+    private(set) var externalClock: (bpm: Double, barPhase: Double)?
+
+    func setExternalClock(bpm: Double, barPhase: Double) {
+        guard bpm.isFinite, bpm > 0 else { return }
+        let phase = barPhase.isFinite ? barPhase - floor(barPhase) : 0
+        externalClock = (bpm, phase)
+        masterDeckIndex = nil
+        pe_set_master_clock(handle, -2, bpm, phase)
+        forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
+    }
+
+    func clearExternalClock() {
+        externalClock = nil
+        pe_set_master_clock(handle, -1, 0, 0)
+    }
+
+    // MARK: Convolution reverb IR (CDJ3000 parity C7c)
+
+    func loadConvolutionIR(_ samples: [Float]) {
+        samples.withUnsafeBufferPointer { p in
+            pe_master_convolution_ir(handle, p.baseAddress, Int32(p.count))
+        }
+    }
+
+    /// The master BPM / bar-phase currently driving the clock (deck or external),
+    /// or nil when nothing is.
+    var masterClockSource: (bpm: Double, barPhase: Double, deck: Int?)? {
+        if let externalClock { return (externalClock.bpm, externalClock.barPhase, nil) }
+        if let idx = masterDeckIndex, let deck = deck(at: idx), deck.effectiveBPM > 0 {
+            return (deck.effectiveBPM, deck.beatPhase, idx)
+        }
+        return nil
+    }
+
+    func masterClock() -> MasterClock {
+        let s = engineStats()
+        let src = masterClockSource
+        return MasterClock(bpm: src?.bpm ?? s.masterBPM,
+                           barPhase: src?.barPhase ?? s.downbeatPhase,
+                           frame: s.masterSample,
+                           sourceDeck: src?.deck,
+                           isExternal: externalClock != nil)
     }
 
     private var isRefreshingSync = false
@@ -287,31 +483,23 @@ fileprivate final class EngineBridge {
     func setDeckPlayback(index: Int, tempoRatio: Double, pitchSemitones: Double) {
         let ratio = tempoRatio.isFinite && tempoRatio > 0 ? tempoRatio : 1
         let pitch = pitchSemitones.isFinite ? pitchSemitones : 0
-        if index == 0 {
-            control.deck_time_ratio.0 = Float(ratio)
-            control.deck_pitch.0 = Float(pitch)
-        } else if index == 1 {
-            control.deck_time_ratio.1 = Float(ratio)
-            control.deck_pitch.1 = Float(pitch)
-        } else {
-            return
-        }
+        guard (0..<deckCount).contains(index) else { return }
+        peSet(&control.deck_time_ratio, index, Float(ratio))
+        peSet(&control.deck_pitch, index, Float(pitch))
         publishControl()
         publishSyncState(index: index)
         // Phase 6b item 2: a master-deck rate change drags the synced deck.
         // Finding C4 — this re-derivation used to run only at engage time.
         if !isRefreshingSync, masterDeckIndex == index {
             isRefreshingSync = true
-            deckA?.refreshSyncFromMasterIfNeeded()
-            deckB?.refreshSyncFromMasterIfNeeded()
+            forEachDeck { $0.refreshSyncFromMasterIfNeeded() }
             isRefreshingSync = false
         }
     }
 
     func setDeckKeylock(_ on: Bool, index: Int) {
-        if index == 0 { control.deck_keylock.0 = on ? 1 : 0 }
-        else if index == 1 { control.deck_keylock.1 = on ? 1 : 0 }
-        else { return }
+        guard (0..<deckCount).contains(index) else { return }
+        peSet(&control.deck_keylock, index, on ? 1 : 0)
         publishControl()
     }
 
@@ -321,7 +509,10 @@ fileprivate final class EngineBridge {
         guard let deck = deck(at: index) else { return }
         pe_set_deck_sync(handle, Int32(index), deck.isSynced ? 1 : 0,
                          deck.effectiveBPM, deck.beatPhase)
-        if masterDeckIndex == index {
+        if let externalClock {
+            // The external clock owns the master timeline; a deck can't overwrite it.
+            pe_set_master_clock(handle, -2, externalClock.bpm, externalClock.barPhase)
+        } else if masterDeckIndex == index {
             pe_set_master_clock(handle, Int32(index), deck.effectiveBPM, deck.beatPhase)
         } else if masterDeckIndex == nil {
             pe_set_master_clock(handle, -1, 0, 0)
@@ -381,6 +572,16 @@ fileprivate final class EngineBridge {
     func engineStats() -> EngineStats {
         var s = pe_stats()
         pe_get_stats(handle, &s)
+        let n = deckCount
+        let bpmAll = withUnsafeBytes(of: s.deck_effective_bpm) { raw -> [Double] in
+            let p = raw.bindMemory(to: Double.self); return (0..<n).map { p[$0] }
+        }
+        let phaseAll = withUnsafeBytes(of: s.deck_beat_phase) { raw -> [Double] in
+            let p = raw.bindMemory(to: Double.self); return (0..<n).map { p[$0] }
+        }
+        let syncedAll = withUnsafeBytes(of: s.deck_synced) { raw -> [Bool] in
+            let p = raw.bindMemory(to: Int32.self); return (0..<n).map { p[$0] != 0 }
+        }
         return EngineStats(
             masterSample: s.master_frame,
             masterBPM: s.master_bpm,
@@ -388,6 +589,9 @@ fileprivate final class EngineBridge {
             deckEffectiveBPM: (s.deck_effective_bpm.0, s.deck_effective_bpm.1),
             deckBeatPhase: (s.deck_beat_phase.0, s.deck_beat_phase.1),
             deckSynced: (s.deck_synced.0 != 0, s.deck_synced.1 != 0),
+            deckEffectiveBPMAll: bpmAll,
+            deckBeatPhaseAll: phaseAll,
+            deckSyncedAll: syncedAll,
             renderLoad: s.render_load,
             starvedFrames: s.starved_frames
         )
@@ -397,18 +601,22 @@ fileprivate final class EngineBridge {
 /// Synchronous render harness for tests. Same DSP as `DJEngine`, no audio device.
 @MainActor
 public final class HeadlessDJEngine {
-    public let deckA: Deck
-    public let deckB: Deck
+    /// All decks (2…4). `deckA`/`deckB` alias `decks[0]`/`decks[1]`.
+    public let decks: [Deck]
+    public var deckA: Deck { decks[0] }
+    public var deckB: Deck { decks[1] }
+    public var deckC: Deck { decks[2] }
+    public var deckD: Deck { decks[3] }
     public let mixer: Mixer
     public let sampler: Sampler
     public let mic: MicInput
     public let monitoring: Monitoring
     private let bridge: EngineBridge
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512) {
-        bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender)
-        deckA = Deck(bridge: bridge, index: 0)
-        deckB = Deck(bridge: bridge, index: 1)
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender, deckCount: deckCount)
+        self.bridge = bridge
+        decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
@@ -417,6 +625,7 @@ public final class HeadlessDJEngine {
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
         let count = max(0, frames)
+        if count > 0 { mixer.advanceAutomation(elapsed: Double(count) / bridge.engineSampleRate) }
         var left = [Float](repeating: 0, count: count)
         var right = [Float](repeating: 0, count: count)
         left.withUnsafeMutableBufferPointer { leftPointer in
@@ -442,8 +651,55 @@ public final class HeadlessDJEngine {
         return (left, right)
     }
 
+    /// The booth output for the block most recently produced by `render(frames:)`
+    /// — the master through the independent booth level + booth EQ (CDJ3000
+    /// parity C3). Call with the same frame count, right after `render`.
+    public func renderBooth(frames: Int) -> (left: [Float], right: [Float]) {
+        let count = max(0, frames)
+        var left = [Float](repeating: 0, count: count)
+        var right = [Float](repeating: 0, count: count)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                pe_render_booth(bridge.handle, l.baseAddress, r.baseAddress, Int32(count))
+            }
+        }
+        return (left, right)
+    }
+
     /// Snapshot of the render-side telemetry atomics (Phase 6b item 2).
     public func telemetry() -> EngineStats { bridge.engineStats() }
+
+    /// The current tempo-master deck's sounding key, or nil if no master is set
+    /// or it has no analysed key (CDJ3000 parity C2 — the DJM/CDJ "master key").
+    public var masterKey: KeyResult? {
+        guard let idx = bridge.masterDeckIndex, decks.indices.contains(idx) else { return nil }
+        return decks[idx].soundingKey
+    }
+
+    /// The shared master timeline synced decks phase-lock to (CDJ3000 parity C1b).
+    public var masterClock: MasterClock { bridge.masterClock() }
+
+    /// Drive the master clock from an app-supplied external source (e.g. a bridge
+    /// to Ableton Link). Synced decks lock to this instead of a master deck.
+    public func setExternalClock(bpm: Double, barPhase: Double = 0) {
+        bridge.setExternalClock(bpm: bpm, barPhase: barPhase)
+    }
+    /// Stop using the external clock (revert to a master deck / none).
+    public func clearExternalClock() { bridge.clearExternalClock() }
+
+    /// Advance time-based mixer automation (the Smart Fader transition). Call
+    /// each frame from a display link with the real elapsed seconds.
+    public func tickAutomation(elapsed: TimeInterval) { mixer.advanceAutomation(elapsed: elapsed) }
+
+    /// Load a real impulse response for the master `.convolution` reverb mode
+    /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
+    /// then set `mixer.master.reverbMode = .convolution` and raise `reverbSend`.
+    public func loadReverbImpulseResponse(_ ir: PCMBuffer) {
+        var samples = [Float](repeating: 0, count: ir.frameCount)
+        for i in 0..<ir.frameCount { samples[i] = ir.channel(0)[i] }
+        bridge.loadConvolutionIR(samples)
+    }
+    public func loadReverbImpulseResponse(samples: [Float]) { bridge.loadConvolutionIR(samples) }
 
     // MARK: Recording (Phase 6b item 4)
     public func startRecording(_ recorder: MixRecorder) { bridge.startRecording(recorder) }
@@ -462,15 +718,15 @@ public final class HeadlessDJEngine {
             for event in events.prefix(Int(count)) {
                 switch event.type {
                 case PE_EVT_PLAYHEAD, PE_EVT_STATE:
-                    if event.deck == 0 { deckA.apply(event) }
-                    if event.deck == 1 { deckB.apply(event) }
+                    let d = Int(event.deck)
+                    if decks.indices.contains(d) { decks[d].apply(event) }
                 case PE_EVT_PEAK:
-                    if event.deck == 0 { mixer.channelA.updatePeak(event.f0) }
-                    if event.deck == 1 { mixer.channelB.updatePeak(event.f0) }
-                    if event.deck == -1 { mixer.master.updatePeak(event.f0) }
+                    let d = Int(event.deck)
+                    if d == -1 { mixer.master.updatePeak(event.f0) }
+                    else if mixer.channels.indices.contains(d) { mixer.channels[d].updatePeak(event.f0) }
                 case PE_EVT_END_OF_TRACK:
-                    if event.deck == 0 { deckA.applyEndOfTrack(event) }
-                    if event.deck == 1 { deckB.applyEndOfTrack(event) }
+                    let d = Int(event.deck)
+                    if decks.indices.contains(d) { decks[d].applyEndOfTrack(event) }
                 default:
                     break
                 }
@@ -573,9 +829,13 @@ public final class Deck {
         currentPlayhead = 0
         shadowPlayhead = 0
         hotCueTimes = Array(repeating: nil, count: 8)
+        hotCueBankStore = Array(repeating: Array(repeating: nil, count: 8), count: Deck.hotCueBankCount)
+        hotCueFadeIn = Array(repeating: 0, count: 8)
+        hotCueBank = 0
         cueTime = nil
         nudgeRatio = 1
         isPlaying = false
+        reverse = false
         loopStartTime = nil
         loopEndTime = nil
         loopRollActive = false
@@ -598,10 +858,7 @@ public final class Deck {
                 )
             }
         }
-        if autoCue {
-            cueTime = 0
-            post(PE_CMD_SET_CUE)
-        }
+        if autoCue { applyAutoCue() }
     }
 
     public func play() {
@@ -659,9 +916,9 @@ public final class Deck {
     }
     public func jumpToCue() {
         guard let cueTime else { return }
-        currentPlayhead = cueTime
-        shadowPlayhead = cueTime
-        post(PE_CMD_JUMP_CUE)
+        let q = jumpQuantizeArgs
+        if q.i2 == 0 { currentPlayhead = cueTime; shadowPlayhead = cueTime }
+        post(PE_CMD_JUMP_CUE, i2: q.i2, f1: q.f1)
     }
     public func cuePlayPress() {
         if cueTime == nil { setCue() }
@@ -757,6 +1014,39 @@ public final class Deck {
     /// Independent key change (Key Shift), in semitones.
     public var pitchSemitones: Double = 0 { didSet { updatePlaybackRate() } }
 
+    // MARK: Key Sync / detected key (CDJ3000 parity C2)
+
+    /// The analysed key of the loaded track, if any.
+    public var detectedKey: KeyResult? { trackAnalysis?.key }
+
+    /// The key the deck is currently *sounding* in — `detectedKey` transposed by
+    /// the current Key Shift. Tempo changes are pitch-neutral under key-lock so
+    /// they do not affect this; with key-lock off, varispeed does shift pitch but
+    /// the CDJ likewise reports the nominal shifted key here.
+    public var soundingKey: KeyResult? {
+        detectedKey?.transposed(by: Int(pitchSemitones.rounded()))
+    }
+
+    /// Maximum shift Key Sync will apply, in semitones (CDJ default ±6 — a
+    /// perfect-fourth/fifth is the farthest musically sensible pull).
+    public var keySyncRange: Int = 6
+
+    /// Shifts this deck's key (pitch only) to sit in `reference`'s detected key,
+    /// shortest path, clamped to `keySyncRange`. Engages key-lock if it was off
+    /// (Key Shift needs the time-pitch path). Returns the shift applied, or nil
+    /// if either track has no analysed key. Mirrors the CDJ-3000 Key Sync button.
+    @discardableResult
+    public func keySync(to reference: Deck) -> Int? {
+        guard let mine = detectedKey, let theirs = reference.detectedKey else { return nil }
+        let shift = max(-keySyncRange, min(keySyncRange, mine.shortestShift(to: theirs)))
+        if !keyLock { keyLock = true }
+        pitchSemitones = Double(shift)
+        return shift
+    }
+
+    /// Returns Key Shift / Key Sync to the track's native key.
+    public func keyReset() { pitchSemitones = 0 }
+
     /// `true` when this deck is following the current master deck's tempo.
     public private(set) var isSynced: Bool = false
 
@@ -781,6 +1071,21 @@ public final class Deck {
 
     private func updatePlaybackRate() {
         bridge.setDeckPlayback(index: index, tempoRatio: playbackRatio * nudgeRatio, pitchSemitones: pitchSemitones)
+    }
+
+    // MARK: Vinyl Speed Adjust (CDJ3000 parity C2)
+
+    /// Seconds for playback to brake to a stop on pause / vinyl-touch (0 = the
+    /// classic instant stop). The CDJ-3000 TOUCH/BRAKE knob.
+    public var brakeTime: TimeInterval = 0 { didSet { publishVinylSpeed() } }
+    /// Seconds for playback to spin back up to speed on play / release (0 =
+    /// instant). The CDJ-3000 RELEASE/START knob.
+    public var spinUpTime: TimeInterval = 0 { didSet { publishVinylSpeed() } }
+
+    private func publishVinylSpeed() {
+        post(PE_CMD_VINYL_SPEED,
+             f0: Float(max(0, min(10, brakeTime))),
+             f1: Float(max(0, min(10, spinUpTime))))
     }
 
     // Jog / scratch (engages varispeed transiently)
@@ -820,20 +1125,55 @@ public final class Deck {
         updatePlaybackRate()
     }
 
-    // Hot cues (8)
-    public func setHotCue(_ index: Int) {
+    // Hot cues (8 per bank)
+
+    /// Number of hot-cue banks (rekordbox A/B/C/D → 8×4 effective cues).
+    public static let hotCueBankCount = 4
+    private var hotCueBankStore: [[TimeInterval?]] =
+        Array(repeating: Array(repeating: nil, count: 8), count: Deck.hotCueBankCount)
+    private var hotCueFadeIn: [TimeInterval] = Array(repeating: 0, count: 8)
+
+    /// Active hot-cue bank (0…3). Switching banks re-points the engine's 8 hot
+    /// cue slots (CDJ3000 parity C6).
+    public var hotCueBank: Int = 0 {
+        didSet {
+            guard hotCueBank != oldValue,
+                  (0..<Deck.hotCueBankCount).contains(hotCueBank) else {
+                if !(0..<Deck.hotCueBankCount).contains(hotCueBank) { hotCueBank = oldValue }
+                return
+            }
+            hotCueBankStore[oldValue] = hotCueTimes
+            hotCueTimes = hotCueBankStore[hotCueBank]
+            for slot in 0..<8 {
+                if let t = hotCueTimes[slot] {
+                    post(PE_CMD_HOTCUE_SET, i0: slot, f0: Float(t))
+                } else {
+                    post(PE_CMD_HOTCUE_DELETE, i0: slot)
+                }
+            }
+        }
+    }
+
+    public func setHotCue(_ index: Int) { setHotCue(index, fadeIn: 0) }
+
+    /// Set a hot cue, optionally with a fade-in applied when it is triggered
+    /// (rekordbox fade-in cue point).
+    public func setHotCue(_ index: Int, fadeIn: TimeInterval) {
         guard hotCueTimes.indices.contains(index) else { return }
         hotCueTimes[index] = quantizedTime(currentPlayhead)
+        hotCueFadeIn[index] = max(0, fadeIn)
         post(PE_CMD_HOTCUE_SET, i0: index, f0: Float(hotCueTimes[index] ?? currentPlayhead))
     }
     public func jumpHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index), let time = hotCueTimes[index] else { return }
-        currentPlayhead = time
-        post(PE_CMD_HOTCUE_JUMP, i0: index)
+        let q = jumpQuantizeArgs
+        if q.i2 == 0 { currentPlayhead = time }
+        post(PE_CMD_HOTCUE_JUMP, i0: index, i2: q.i2, f0: Float(hotCueFadeIn[index]), f1: q.f1)
     }
     public func deleteHotCue(_ index: Int) {
         guard hotCueTimes.indices.contains(index) else { return }
         hotCueTimes[index] = nil
+        hotCueFadeIn[index] = 0
         post(PE_CMD_HOTCUE_DELETE, i0: index)
     }
 
@@ -955,6 +1295,18 @@ public final class Deck {
             publishLoop(start: loopStartTime, end: loopEndTime, active: isLoopActive)
         }
     }
+    /// Scale the active loop by an arbitrary factor (CDJ3000 parity C6 — LOOP
+    /// CUT / ×4 and finer). `0.5` == `loopHalve`, `2` == `loopDouble`.
+    public func loopResize(_ factor: Double) {
+        guard factor.isFinite, factor > 0 else { return }
+        resizeLocalLoop(by: factor)
+        if let loopStartTime, let loopEndTime {
+            publishLoop(start: loopStartTime, end: loopEndTime, active: isLoopActive)
+        }
+    }
+    /// Emergency hold — instantly loop the last `beats` beats (CDJ3000 parity C6;
+    /// an app calls this off a stream-underrun signal to avoid silence).
+    public func emergencyHold(beats: Double = 4) { autoBeatLoop(beats: beats) }
     public func loopMove(beats: Double) {
         guard trackBPM > 0 else { return }
         if let start = loopStartTime, let end = loopEndTime {
@@ -1029,6 +1381,13 @@ public final class Deck {
 
     // Sync
     public func sync() {
+        // Lock to an app-supplied external clock if one is running…
+        if bridge.externalClock != nil {
+            isSynced = true
+            refreshSyncFromMasterIfNeeded()
+            return
+        }
+        // …otherwise to the master deck (electing one if none is set).
         let masterIndex = bridge.masterDeckIndex ?? (index == 0 ? 1 : 0)
         guard masterIndex != index else { return }
         if bridge.masterDeckIndex == nil { bridge.setMaster(index: masterIndex) }
@@ -1044,9 +1403,17 @@ public final class Deck {
     }
 
     fileprivate func refreshSyncFromMasterIfNeeded() {
-        guard isSynced, let masterIndex = bridge.masterDeckIndex, masterIndex != index else { return }
-        let master = bridge.deck(at: masterIndex)
-        let masterBPM = master?.effectiveBPM ?? bridge.bpm(for: masterIndex)
+        guard isSynced else { return }
+        let master: Deck?
+        let masterBPM: Double
+        if let ext = bridge.externalClock {
+            master = nil
+            masterBPM = ext.bpm
+        } else {
+            guard let masterIndex = bridge.masterDeckIndex, masterIndex != index else { return }
+            master = bridge.deck(at: masterIndex)
+            masterBPM = master?.effectiveBPM ?? bridge.bpm(for: masterIndex)
+        }
         guard masterBPM.isFinite, masterBPM > 0, trackBPM > 0 else { return }
 
         let ratio = masterBPM / trackBPM
@@ -1085,7 +1452,17 @@ public final class Deck {
     private var barSync = false
 
     private func syncTargetPosition(master: Deck?, masterBPM: Double) -> TimeInterval {
-        guard let master else { return 0 }
+        guard let master else {
+            // External clock: align this deck's grid to the clock's bar phase.
+            guard let ext = bridge.externalClock, let firstBeat = beatPositions.first else { return 0 }
+            let beatPeriod = 60 / trackBPM
+            let phaseBeats = ext.barPhase * 4                       // beats into the bar
+            let now = currentPlayhead
+            let cyclesBack = ((now - firstBeat) / beatPeriod - phaseBeats).rounded(.down)
+            let target = firstBeat + (cyclesBack + phaseBeats) * beatPeriod
+            let dur = trackDuration
+            return max(0, min(dur > 0 ? dur : .greatestFiniteMagnitude, target))
+        }
         let masterPeriod = 60 / masterBPM
         let targetPeriod = 60 / trackBPM
         let trackDuration = buffer.map { Double($0.frameCount) / $0.format.sampleRate } ?? .greatestFiniteMagnitude
@@ -1103,16 +1480,78 @@ public final class Deck {
         return max(0, min(trackDuration, target))
     }
     public var quantize: Bool = true
+    /// When on, cue / hot-cue / beat-jump *actions* are deferred to the next grid
+    /// line (grain = `quantizeResolution`) rather than firing immediately — the
+    /// CDJ-3000 "quantize snaps triggers to the beat" behaviour, and, for a
+    /// synced deck, quantized relative to the master grid (CDJ3000 parity C1b).
+    /// `quantize` (above) still governs where stored cue/loop points land.
+    public var quantizeJumps: Bool = false
+
+    /// i2 / f1 command args for a jump: (2, grainBeats) when `quantizeJumps`, else (0, 0).
+    private var jumpQuantizeArgs: (i2: Int, f1: Float) {
+        quantizeJumps ? (2, Float(quantizeResolution.beatFraction)) : (0, 0)
+    }
+
     public var autoCue: Bool = false {
         didSet {
             if autoCue, buffer != nil {
-                cueTime = 0
-                post(PE_CMD_SET_CUE)
+                applyAutoCue()
             }
         }
     }
+    /// Level (dBFS) the first sample must exceed for Auto Cue to place the first
+    /// cue there — the CDJ AUTO CUE LEVEL. Analysis onsets take precedence.
+    public var autoCueThresholdDB: Double = -60
+
+    private func applyAutoCue() {
+        // Prefer the analysed first onset / beat; fall back to a threshold scan.
+        if let first = trackAnalysis?.tempo.beatPositions.first, first > 0 {
+            cueTime = first
+            post(PE_CMD_SET_CUE, f0: Float(first))
+            return
+        }
+        guard let buffer else { cueTime = 0; post(PE_CMD_SET_CUE); return }
+        let threshold = Float(pow(10.0, max(-96, min(0, autoCueThresholdDB)) / 20))
+        let channelCount = min(buffer.channelCount, 2)
+        var cueSample = 0
+        scan: for f in 0..<buffer.frameCount {
+            for c in 0..<channelCount where abs(buffer.channel(c)[f]) > threshold {
+                cueSample = f
+                break scan
+            }
+        }
+        cueTime = Double(cueSample) / buffer.format.sampleRate
+        post(PE_CMD_SET_CUE, i1: cueSample, i2: 1)   // integer-sample cue
+    }
     public var slip: Bool = false {
         didSet { post(PE_CMD_SET_SLIP, f0: slip ? 1 : 0) }
+    }
+
+    // MARK: Reverse / Slip Reverse (CDJ3000 parity C2)
+
+    /// Latching reverse playback (the CDJ-3000 REV button). Varispeed only —
+    /// pitch inverts with the direction, as on hardware.
+    public var reverse: Bool = false {
+        didSet {
+            guard reverse != oldValue else { return }
+            post(PE_CMD_SET_REVERSE, i0: reverse ? 1 : 0)
+        }
+    }
+
+    private var slipReverseRestoreSlip = false
+
+    /// Momentary Slip Reverse: play backwards while held with the slip shadow
+    /// advancing underneath; `slipReverseRelease()` jumps forward to where the
+    /// track would have been.
+    public func slipReversePress() {
+        slipReverseRestoreSlip = slip
+        if !slip { slip = true }
+        reverse = true
+    }
+
+    public func slipReverseRelease() {
+        reverse = false
+        if !slipReverseRestoreSlip { slip = false }
     }
 
     // Performance pads
@@ -1125,6 +1564,12 @@ public final class Deck {
         case .hotCue:
             jumpHotCue(index)
         case .keyboard:
+            // Pitch-play the selected hot cue chromatically: jump to it, then
+            // transpose (pad 4 == the cue's native pitch).
+            if hotCueTimes.indices.contains(keyboardCueIndex),
+               hotCueTimes[keyboardCueIndex] != nil {
+                jumpHotCue(keyboardCueIndex)
+            }
             pitchSemitones = Double(index - 4)
         case .padFX1, .padFX2:
             let bank = padMode == .padFX1 ? 0 : 1
@@ -1228,9 +1673,9 @@ public final class Deck {
         let rawTarget = currentPlayhead + beats * 60 / trackBPM
         let target = quantizedTime(rawTarget)
         let seconds = target - currentPlayhead
-        currentPlayhead = target
-        shadowPlayhead = target
-        post(PE_CMD_BEATJUMP, f0: Float(seconds))
+        let q = jumpQuantizeArgs
+        if q.i2 == 0 { currentPlayhead = target; shadowPlayhead = target }
+        post(PE_CMD_BEATJUMP, i2: q.i2, f0: Float(seconds), f1: q.f1)
     }
 
 }
@@ -1239,8 +1684,15 @@ public final class Deck {
 
 @MainActor
 public final class Mixer {
-    public let channelA: Channel
-    public let channelB: Channel
+    /// All mixer channels (2…4). `channelA`/`channelB` alias `channels[0]`/`[1]`.
+    public let channels: [Channel]
+    public var channelA: Channel { channels[0] }
+    public var channelB: Channel { channels[1] }
+    /// Third / fourth channels — present when the engine was created with
+    /// `deckCount >= 3` / `>= 4` (the default). Accessing them on a 2-deck
+    /// engine traps.
+    public var channelC: Channel { channels[2] }
+    public var channelD: Channel { channels[3] }
     public let master: MasterOut
     public let beatFX: BeatFXUnit
     public let smartFader: SmartFader
@@ -1254,14 +1706,21 @@ public final class Mixer {
 
     fileprivate init(bridge: EngineBridge) {
         self.bridge = bridge
-        channelA = Channel(bridge: bridge, index: 0)
-        channelB = Channel(bridge: bridge, index: 1)
+        channels = (0..<bridge.deckCount).map { Channel(bridge: bridge, index: $0) }
         master = MasterOut(bridge: bridge)
         beatFX = BeatFXUnit(bridge: bridge)
         smartFader = SmartFader()
         smartCFX = SmartCFX()
         smartFader.attach(to: self)
+        smartCFX.attach(to: self)
         bridge.register(self)
+    }
+
+    /// Advance time-based mixer automation (currently the Smart Fader transition).
+    /// `HeadlessDJEngine.render` calls this itself; a `DJEngine` app calls it from
+    /// its display link with the real elapsed time.
+    public func advanceAutomation(elapsed: TimeInterval) {
+        smartFader.tick(elapsed: elapsed)
     }
 
     private func publishControl() {
@@ -1269,30 +1728,85 @@ public final class Mixer {
         bridge.control.xfade_curve = crossfaderCurve == .smooth ? 0 : (crossfaderCurve == .linear ? 0.5 : 1)
         bridge.publishControl()
     }
+
+    // MARK: Insert / send-return seam (CDJ3000 parity C3)
+
+    private var inserts: [InsertPoint: RealtimeInsert] = [:]
+
+    /// Installs (or, with `nil`, removes) a realtime effect insert at `point`.
+    /// The mixer keeps a strong reference while installed. Set inserts before
+    /// starting audio; the callback runs on the render thread and must be
+    /// realtime-safe (see `RealtimeInsert`).
+    public func setInsert(_ insert: RealtimeInsert?, at point: InsertPoint) {
+        inserts[point] = insert
+        if let insert {
+            // `inserts` holds the strong reference; the engine gets an
+            // unretained opaque pointer to the same object.
+            let ptr = Unmanaged.passUnretained(insert as AnyObject).toOpaque()
+            pe_set_insert(bridge.handle, point.raw, peInsertTrampoline, ptr)
+        } else {
+            pe_set_insert(bridge.handle, point.raw, nil, nil)
+        }
+    }
 }
 
 public enum ColorFX: Sendable, CaseIterable, Equatable { case filter, space, dubEcho, sweep, noise, crush, pitch }
 
 public enum XFAssign: Sendable { case a, b, thru }
 
+/// Channel / crossfader fader-taper shapes (CDJ3000 parity C3 — the DJM
+/// CH FADER CURVE and CROSSFADER CURVE switches).
+public enum FaderCurve: Sendable, CaseIterable {
+    case linear    // gain == position
+    case smooth    // gentle S — more travel near the top
+    case sharp     // fast onset — near full level early in the throw
+
+    /// Maps a 0…1 fader position to a 0…1 gain.
+    public func gain(_ position: Double) -> Double {
+        let p = max(0, min(1, position))
+        switch self {
+        case .linear: return p
+        case .smooth: return p * p * (3 - 2 * p)          // smoothstep
+        case .sharp:  return p <= 0 ? 0 : pow(p, 0.35)    // steep near the bottom
+        }
+    }
+}
+
 @MainActor
 public final class Channel {
     private let bridge: EngineBridge
     private let index: Int
     public var trim: Double = 0.5 { didSet { publishControl() } } // gain
+    /// Fader taper (CDJ3000 parity C3). `.linear` is the default and matches
+    /// pre-C3 behaviour exactly.
+    public var faderCurve: FaderCurve = .linear { didSet { publishControl() } }
     public var eqLow: Double = 0 { didSet { publishControl() } } // dB, -inf(kill)..+6
     public var eqMid: Double = 0 { didSet { publishControl() } }
     public var eqHigh: Double = 0 { didSet { publishControl() } }
     public var colorFX: ColorFX = .filter { didSet { publishControl() } }
     public var colorAmount: Double = 0 { didSet { publishControl() } } // -1..+1 (center = off)
+    /// Sound Color FX PARAMETER knob (CDJ3000 C4) — 0…1 depth / resonance.
+    /// 0.5 is neutral: a default channel is byte-identical to pre-C4.
+    public var colorParameter: Double = 0.5 { didSet { publishControl() } }
+    /// DJM-A9 "Center Lock" — once the knob leaves centre it cannot cross to the
+    /// other side (no accidental LPF↔HPF flip) until this is turned off.
+    public var colorFXCenterLock: Bool = false {
+        didSet { if !colorFXCenterLock { colorLockedSide = 0 }; publishControl() }
+    }
+    private var colorLockedSide: Double = 0   // -1 / 0 / +1
     public var fader: Double = 1 { didSet { publishControl() } } // 0..1
     public var cuePFL: Bool = false { didSet { publishControl() } } // headphone pre-listen
     public var faderStart: Bool = false { didSet { publishControl() } }
     public var crossfaderAssign: XFAssign = .thru { didSet { publishControl() } }
     /// Latest peak meter (0..1), updated from the RT event stream.
     public private(set) var peakMeter: Float = 0
+    /// Peak-hold reading (0..1): follows `peakMeter` up instantly, decays slowly
+    /// (CDJ3000 parity C5 — the segmented meter's hold dot).
+    public private(set) var peakHold: Float = 0
     fileprivate func updatePeak(_ value: Float) {
-        peakMeter = value.isFinite ? max(0, min(1, value)) : 0
+        let v = value.isFinite ? max(0, min(1, value)) : 0
+        peakMeter = v
+        peakHold = v >= peakHold ? v : max(v, peakHold * 0.92)
     }
     fileprivate init(bridge: EngineBridge, index: Int) {
         self.bridge = bridge
@@ -1301,7 +1815,7 @@ public final class Channel {
 
     private func publishControl() {
         let gain = Float(max(0, trim))
-        let channelFader = Float(max(0, min(1, fader)))
+        let channelFader = Float(faderCurve.gain(max(0, min(1, fader))))
         let pfl = cuePFL ? Float(1) : Float(0)
         let assignment: Float = switch crossfaderAssign {
         case .a: 0
@@ -1312,31 +1826,26 @@ public final class Channel {
         let low = Float(eqLow.isNaN ? 0 : eqLow)
         let mid = Float(eqMid.isNaN ? 0 : eqMid)
         let high = Float(eqHigh.isNaN ? 0 : eqHigh)
-        let colorAmount = Float(self.colorAmount.isFinite ? max(-1, min(1, self.colorAmount)) : 0)
-        let colorKind = Float(ColorFX.allCases.firstIndex(of: colorFX) ?? 0)
-        if index == 0 {
-            bridge.control.trim.0 = gain
-            bridge.control.fader.0 = channelFader
-            bridge.control.cue_pfl.0 = pfl
-            bridge.control.xfade_assign.0 = assignment
-            bridge.control.fader_start.0 = start
-            bridge.control.eq_low.0 = low
-            bridge.control.eq_mid.0 = mid
-            bridge.control.eq_high.0 = high
-            bridge.control.color_amount.0 = colorAmount
-            bridge.control.color_kind.0 = colorKind
-        } else {
-            bridge.control.trim.1 = gain
-            bridge.control.fader.1 = channelFader
-            bridge.control.cue_pfl.1 = pfl
-            bridge.control.xfade_assign.1 = assignment
-            bridge.control.fader_start.1 = start
-            bridge.control.eq_low.1 = low
-            bridge.control.eq_mid.1 = mid
-            bridge.control.eq_high.1 = high
-            bridge.control.color_amount.1 = colorAmount
-            bridge.control.color_kind.1 = colorKind
+        var colorAmt = self.colorAmount.isFinite ? max(-1, min(1, self.colorAmount)) : 0
+        if colorFXCenterLock {
+            if colorLockedSide == 0, colorAmt != 0 { colorLockedSide = colorAmt < 0 ? -1 : 1 }
+            if colorLockedSide > 0 { colorAmt = max(0, colorAmt) }
+            if colorLockedSide < 0 { colorAmt = min(0, colorAmt) }
         }
+        let colorAmount = Float(colorAmt)
+        let colorKind = Float(ColorFX.allCases.firstIndex(of: colorFX) ?? 0)
+        let colorParam = Float(colorParameter.isFinite ? max(0, min(1, colorParameter)) : 0.5)
+        peSet(&bridge.control.color_param, index, colorParam)
+        peSet(&bridge.control.trim, index, gain)
+        peSet(&bridge.control.fader, index, channelFader)
+        peSet(&bridge.control.cue_pfl, index, pfl)
+        peSet(&bridge.control.xfade_assign, index, assignment)
+        peSet(&bridge.control.fader_start, index, start)
+        peSet(&bridge.control.eq_low, index, low)
+        peSet(&bridge.control.eq_mid, index, mid)
+        peSet(&bridge.control.eq_high, index, high)
+        peSet(&bridge.control.color_amount, index, colorAmount)
+        peSet(&bridge.control.color_kind, index, colorKind)
         bridge.publishControl()
     }
 }
@@ -1345,8 +1854,12 @@ public final class Channel {
 public final class BeatFXUnit {
     public enum Kind: Sendable, CaseIterable, Equatable {
         case echo, echoOut, reverb, delay, multiTapDelay, flanger, phaser,
-             trans, roll, spiral, pitch, lowCutEcho, vinylBrake, helix
+             trans, roll, spiral, pitch, lowCutEcho, vinylBrake, helix,
+             // CDJ3000 parity C4 — DJM-A9 / 900NXS2 additions
+             pingPong, mobius, tripletFilter, tripletRoll, enigma, shimmer
     }
+    /// FX-input band limit (CDJ3000 C4 — the DJM FX FREQUENCY switch).
+    public enum Band: Sendable, CaseIterable { case all, low, mid, high }
     public enum Assign: Sendable { case chA, chB, both, master }
     private let bridge: EngineBridge
     public var kind: Kind = .echo { didSet { publishControl() } }
@@ -1354,6 +1867,11 @@ public final class BeatFXUnit {
     public var depth: Double = 0.5 { didSet { publishControl() } } // wet/level
     public var assign: Assign = .chA { didSet { publishControl() } }
     public var isOn: Bool = false { didSet { publishControl() } }
+    /// X-Pad sweep of the primary parameter (0…1). `nil` = not touched, `beats`
+    /// governs. Touching it overrides `beats` with an exponential 1/16…4 sweep.
+    public var xPad: Double? = nil { didSet { publishControl() } }
+    /// Band-limit the FX send (dry path untouched).
+    public var band: Band = .all { didSet { publishControl() } }
 
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -1376,6 +1894,13 @@ public final class BeatFXUnit {
         case .master: 3
         }
         bridge.control.beatfx_on = isOn ? 1 : 0
+        bridge.control.beatfx_xpad = xPad.map { Float(max(0, min(1, $0))) } ?? -1
+        bridge.control.beatfx_band = switch band {
+        case .all: 0
+        case .low: 1
+        case .mid: 2
+        case .high: 3
+        }
         bridge.publishControl()
     }
 }
@@ -1390,10 +1915,46 @@ public final class MasterOut {
     /// `false` bypasses the master brickwall limiter entirely (Phase 6b item 8),
     /// so `WorkspaceEngine.limiterCeiling` can be represented as `nil`.
     public var limiterEnabled: Bool = true { didSet { publishControl() } }
+
+    // MARK: Master isolator (CDJ3000 parity C3 — the DJM MASTER ISOLATOR)
+    /// 3-band EQ/kill on the master bus, post-fader / pre-limiter. dB;
+    /// `-.infinity` kills the band; `0` (the default) is bit-transparent.
+    public var isolatorLow: Double = 0 { didSet { publishControl() } }
+    public var isolatorMid: Double = 0 { didSet { publishControl() } }
+    public var isolatorHigh: Double = 0 { didSet { publishControl() } }
+
+    // MARK: Booth output (CDJ3000 parity C3 — the DJM BOOTH bus)
+    /// Independent booth-output level (0…1). Fed from the final master; render
+    /// it with `HeadlessDJEngine.renderBooth` / `pe_render_booth`.
+    public var boothLevel: Double = 0.8 { didSet { publishControl() } }
+    /// Booth 3-band EQ (dB; the A9 booth is 2-band — leave `boothEqMid` at 0).
+    public var boothEqLow: Double = 0 { didSet { publishControl() } }
+    public var boothEqMid: Double = 0 { didSet { publishControl() } }
+    public var boothEqHigh: Double = 0 { didSet { publishControl() } }
+
+    // MARK: Master reverb send (CDJ3000 parity C7)
+    /// Wet amount of the master-bus reverb (0…1). 0 (default) is fully dry and
+    /// bit-transparent. Feed the DJM Reverb / SHIMMER Beat FX into this.
+    public var reverbSend: Double = 0 { didSet { publishControl() } }
+    /// Room size (0…1), tail length (0…1), high-frequency damping (0…1).
+    /// `.algorithmic` only — the convolution reverb uses its loaded IR.
+    public var reverbSize: Double = 0.6 { didSet { publishControl() } }
+    public var reverbDecay: Double = 0.6 { didSet { publishControl() } }
+    public var reverbDamp: Double = 0.5 { didSet { publishControl() } }
+    /// `.algorithmic` — the 8-line FDN (default, no assets). `.convolution` —
+    /// runs the IR loaded via `DJEngine.loadReverbImpulseResponse` (CDJ3000 C7c);
+    /// falls back to dry until one is loaded.
+    public enum ReverbMode: Sendable { case algorithmic, convolution }
+    public var reverbMode: ReverbMode = .algorithmic { didSet { publishControl() } }
+
     /// Latest master peak (0..1).
     public private(set) var peakMeter: Float = 0
+    /// Peak-hold reading (0..1) — instant attack, slow decay (CDJ3000 C5).
+    public private(set) var peakHold: Float = 0
     fileprivate func updatePeak(_ value: Float) {
-        peakMeter = value.isFinite ? max(0, min(1, value)) : 0
+        let v = value.isFinite ? max(0, min(1, value)) : 0
+        peakMeter = v
+        peakHold = v >= peakHold ? v : max(v, peakHold * 0.92)
     }
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
@@ -1401,6 +1962,18 @@ public final class MasterOut {
         bridge.control.master_level = Float(max(0, min(1, level)))
         bridge.control.limiter_ceiling_db = Float(limiterCeilingDB.isFinite ? limiterCeilingDB : -0.3)
         bridge.control.limiter_enabled = limiterEnabled ? 1 : 0
+        bridge.control.master_eq_low = Float(isolatorLow.isNaN ? 0 : isolatorLow)
+        bridge.control.master_eq_mid = Float(isolatorMid.isNaN ? 0 : isolatorMid)
+        bridge.control.master_eq_high = Float(isolatorHigh.isNaN ? 0 : isolatorHigh)
+        bridge.control.booth_level = Float(boothLevel.isFinite ? max(0, min(1, boothLevel)) : 0.8)
+        bridge.control.booth_eq_low = Float(boothEqLow.isNaN ? 0 : boothEqLow)
+        bridge.control.booth_eq_mid = Float(boothEqMid.isNaN ? 0 : boothEqMid)
+        bridge.control.booth_eq_high = Float(boothEqHigh.isNaN ? 0 : boothEqHigh)
+        bridge.control.master_reverb_send = Float(reverbSend.isFinite ? max(0, min(1, reverbSend)) : 0)
+        bridge.control.master_reverb_size = Float(reverbSize.isFinite ? max(0, min(1, reverbSize)) : 0.6)
+        bridge.control.master_reverb_decay = Float(reverbDecay.isFinite ? max(0, min(1, reverbDecay)) : 0.6)
+        bridge.control.master_reverb_damp = Float(reverbDamp.isFinite ? max(0, min(1, reverbDamp)) : 0.5)
+        bridge.control.master_reverb_mode = reverbMode == .convolution ? 1 : 0
         bridge.publishControl()
     }
 }
@@ -1409,32 +1982,127 @@ public final class MasterOut {
 
 @MainActor
 public final class SmartFader {
-    public enum Tail: Sendable { case echo, reverb }
+    public enum Tail: Sendable { case echo, reverb, none }
     private weak var mixer: Mixer?
     public var isEnabled: Bool = false
     public var tail: Tail = .echo
-    /// Optional: call once to run an automated transition (§11.5). Normally the
-    /// engine reacts to fader movement while enabled.
+
+    /// 0…1 progress of an in-flight assisted transition, or nil when idle.
+    public private(set) var progress: Double?
+
+    private var fromChannel = 0
+    private var toChannel = 1
+    private var duration: TimeInterval = 0
+    private var elapsed: TimeInterval = 0
+    private var startXF = 0.0
+    private var endXF = 0.0
+    private var tailEngaged = false
+
     fileprivate func attach(to mixer: Mixer) { self.mixer = mixer }
 
+    /// Start an assisted transition: BPM-match `to` to `from`, then over
+    /// `seconds` automate the crossfader (cosine sweep), the incoming/outgoing
+    /// EQ lows (kill incoming bass, fade it in, then cut outgoing bass), and a
+    /// tail effect on the outgoing channel near the end. The app advances it by
+    /// calling `DJEngine.tickAutomation(elapsed:)` each frame; `HeadlessDJEngine`
+    /// advances it automatically inside `render`.
     public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) {
-        guard isEnabled, seconds > 0, from !== to else { return }
+        guard isEnabled, seconds > 0, from !== to, let mixer,
+              mixer.channels.indices.contains(from.channelIndex),
+              mixer.channels.indices.contains(to.channelIndex) else { return }
         from.setAsMaster()
         to.sync()
-        if from.channelIndex == 0 {
-            mixer?.channelA.eqLow = -6
-        } else if from.channelIndex == 1 {
-            mixer?.channelB.eqLow = -6
+        if !to.isPlaying { to.play() }
+        fromChannel = from.channelIndex
+        toChannel = to.channelIndex
+        duration = seconds
+        elapsed = 0
+        progress = 0
+        tailEngaged = false
+        startXF = fromChannel <= toChannel ? -1 : 1
+        endXF = -startXF
+        mixer.crossfader = startXF
+        mixer.channels[toChannel].eqLow = -.infinity      // incoming bass killed
+        mixer.channels[fromChannel].eqLow = 0
+    }
+
+    fileprivate func tick(elapsed dt: TimeInterval) {
+        guard let mixer, progress != nil, dt > 0, duration > 0 else { return }
+        elapsed += dt
+        let p = min(1, elapsed / duration)
+        progress = p
+
+        let s = 0.5 - 0.5 * cos(Double.pi * p)             // eased 0…1
+        mixer.crossfader = startXF + (endXF - startXF) * s
+
+        let inGain = min(1, p / 0.6)                       // incoming bass in over first 60%
+        mixer.channels[toChannel].eqLow = inGain >= 1 ? 0 : -24 * (1 - inGain)
+        let outCut = p > 0.6 ? (p - 0.6) / 0.4 : 0         // outgoing bass out over last 40%
+        mixer.channels[fromChannel].eqLow = -24 * outCut
+
+        if !tailEngaged, p >= 0.7, tail != .none {
+            let fx = mixer.beatFX
+            fx.kind = tail == .echo ? .echo : .reverb
+            fx.assign = fromChannel == 0 ? .chA : (fromChannel == 1 ? .chB : .master)
+            fx.beats = 0.5
+            fx.depth = 0.6
+            fx.isOn = true
+            tailEngaged = true
+        }
+
+        if p >= 1 {
+            mixer.channels[toChannel].eqLow = 0
+            mixer.channels[fromChannel].eqLow = 0
+            if tailEngaged { mixer.beatFX.releaseFX() }
+            progress = nil
         }
     }
+
     internal init() {}
 }
 
 @MainActor
 public final class SmartCFX {
-    public var isEnabled: Bool = false
-    public var amount: Double = 0                     // single control
-    public var preset: Int = 0                        // curated multi-FX chains
+    private weak var mixer: Mixer?
+    public var isEnabled: Bool = false { didSet { apply() } }
+    /// Single 0…1 control driving the curated chain.
+    public var amount: Double = 0 { didSet { apply() } }
+    /// Preset: 0 = Wash (tempo-synced echo + master reverb), 1 = Filter
+    /// (resonant low-pass sweep), 2 = Gate (trans + a touch of reverb).
+    public var preset: Int = 0 { didSet { apply() } }
+
+    private var active = false
+
+    fileprivate func attach(to mixer: Mixer) { self.mixer = mixer }
+
+    private func apply() {
+        guard let mixer else { return }
+        let fx = mixer.beatFX
+        guard isEnabled, amount > 0.001 else {
+            if active {
+                fx.isOn = false
+                mixer.master.reverbSend = 0
+                active = false
+            }
+            return
+        }
+        active = true
+        let a = min(1, max(0, amount))
+        fx.assign = .master
+        switch max(0, min(2, preset)) {
+        case 0:
+            fx.kind = .echo; fx.beats = 0.5; fx.depth = a * 0.85
+            mixer.master.reverbSend = a * 0.6
+        case 1:
+            fx.kind = .tripletFilter; fx.beats = 1; fx.depth = a
+            mixer.master.reverbSend = 0
+        default:
+            fx.kind = .trans; fx.beats = 0.5; fx.depth = a
+            mixer.master.reverbSend = a * 0.35
+        }
+        fx.isOn = true
+    }
+
     internal init() {}
 }
 
@@ -1488,14 +2156,30 @@ public final class Sampler {
     public func setMode(_ slot: Int, _ mode: Play) {
         guard modes.indices.contains(slot) else { return }
         modes[slot] = mode
+        publishSlot(slot)
     }
 
     public func setGain(_ slot: Int, _ gain: Double) {
         guard gains.indices.contains(slot) else { return }
         gains[slot] = max(0, gain)
+        publishSlot(slot)
     }
 
-    public var masterGain: Double = 0.8
+    /// Overall sampler level (0…1); was a hardcoded 0.8 in the mix before C6.
+    public var masterGain: Double = 0.8 {
+        didSet {
+            var command = pe_command(type: PE_CMD_SAMPLER_CONFIG, deck: -1, i0: -1, i1: 0, i2: 0,
+                                     f0: Float(max(0, min(1, masterGain))), f1: 0)
+            _ = pe_post_command(bridge.handle, &command)
+        }
+    }
+
+    private func publishSlot(_ slot: Int) {
+        let modeIndex: Int32 = switch modes[slot] { case .oneShot: 0; case .loop: 1; case .gate: 2 }
+        var command = pe_command(type: PE_CMD_SAMPLER_CONFIG, deck: -1, i0: Int32(slot),
+                                 i1: modeIndex, i2: 0, f0: Float(gains[slot]), f1: 0)
+        _ = pe_post_command(bridge.handle, &command)
+    }
 }
 
 @MainActor
@@ -1508,6 +2192,21 @@ public final class MicInput {
     public var isMuted: Bool = true {
         didSet { publishLevel() }
     }
+
+    // MARK: Mic strip (CDJ3000 parity C5 — the DJM mic section)
+    /// 2-band mic EQ (dB; 0 = flat).
+    public var eqLow: Double = 0 { didSet { publishLevel() } }
+    public var eqHigh: Double = 0 { didSet { publishLevel() } }
+    /// Auto-duck the music while the mic is live (DJM TALKOVER).
+    public var talkover: Bool = false { didSet { publishLevel() } }
+    /// Attenuation applied to the music under talkover (dB, negative).
+    public var talkoverDepthDB: Double = -14 { didSet { publishLevel() } }
+    /// Mic block-RMS above which talkover engages.
+    public var talkoverThreshold: Double = 0.02 { didSet { publishLevel() } }
+    /// Route the mic through the Beat FX (takes effect for the "all channels" /
+    /// "master" FX assigns).
+    public var routeToFX: Bool = false { didSet { publishLevel() } }
+
     /// Push captured mic PCM (app supplies the capture path).
     public func submit(_ buffer: PCMBuffer) {
         self.buffer = buffer
@@ -1527,6 +2226,12 @@ public final class MicInput {
 
     private func publishLevel() {
         bridge.control.mic_level = Float(isMuted ? 0 : max(0, min(1, level)))
+        bridge.control.mic_eq_low = Float(eqLow.isNaN ? 0 : eqLow)
+        bridge.control.mic_eq_high = Float(eqHigh.isNaN ? 0 : eqHigh)
+        bridge.control.mic_talkover_on = talkover ? 1 : 0
+        bridge.control.mic_talkover_depth_db = Float(talkoverDepthDB.isFinite ? min(0, talkoverDepthDB) : -14)
+        bridge.control.mic_talkover_threshold = Float(talkoverThreshold.isFinite && talkoverThreshold >= 0 ? talkoverThreshold : 0.02)
+        bridge.control.mic_fx_on = routeToFX ? 1 : 0
         bridge.publishControl()
     }
 }
@@ -1553,6 +2258,12 @@ public final class Monitoring {
     /// `.splitOutput` sums master→mono-left, cue→mono-right in the monitor bus.
     /// `.off` keeps the monitor render path bit-exact (offline harness relies on it).
     public var cueMode: CueMode = .off { didSet { publishControl() } }
+    /// Split Cue (CDJ3000 parity C5): cue and master to separate ears. Convenience
+    /// over `cueMode` — setting it toggles `.splitOutput` / `.off`.
+    public var splitCue: Bool {
+        get { cueMode == .splitOutput }
+        set { cueMode = newValue ? .splitOutput : .off }
+    }
     fileprivate init(bridge: EngineBridge) { self.bridge = bridge }
 
     private func publishControl() {
