@@ -539,9 +539,12 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_COLORFX_KIND:
         case PE_CMD_SAMPLER_TRIGGER:
         case PE_CMD_SAMPLER_STOP:
+        case PE_CMD_SAMPLER_CONFIG:
         case PE_CMD_LOAD:
-            // These commands are reserved for subsequent engine slices;
-            // ignoring them is deterministic and non-blocking.
+            // Deck-agnostic or redundant here: the sampler / master / key-lock /
+            // color-kind state is owned by the deck == -1 branch or by the
+            // control-atom path in pe_set_control. Ignoring them for a specific
+            // deck is deterministic and non-blocking.
             break;
         case PE_CMD_BEATFX_KIND:
             if (std::isfinite(command.f0)) {
