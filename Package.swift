@@ -52,8 +52,7 @@ let package = Package(
                 .define("HAVE_FSEEKO"),
                 .define("HAVE_INTTYPES_H"),
                 .define("HAVE_SYS_PARAM_H"),
-                .define("PACKAGE_VERSION", to: "\"1.4.3\""),
-                .unsafeFlags(["-include", "strings.h", "-include", "string.h"])
+                .define("PACKAGE_VERSION", to: "\"1.4.3\"")
             ]
         ),
         .target(
@@ -131,12 +130,7 @@ let package = Package(
             name: "CflacBridge",
             dependencies: ["Cflac"],
             path: "Sources/CflacBridge",
-            publicHeadersPath: "include",
-            cSettings: [
-                // libFLAC's public share/safe_str.h is an upstream header that
-                // relies on the including translation unit for string APIs.
-                .unsafeFlags(["-include", "string.h"])
-            ]
+            publicHeadersPath: "include"
         ),
         .target(
             name: "CvorbisBridge",
