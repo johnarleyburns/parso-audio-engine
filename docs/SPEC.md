@@ -205,7 +205,10 @@ The FLX4 rows above remain the byte-for-byte 2-deck baseline.
 ## 16–17. Build / versioning
 `swift build` + `swift test` on macOS; iOS-sim build via `xcodebuild`. CI: build+test, SPDX copyleft
 guard, iOS build; a manual job runs `RealFixture` with downloaded fixtures. SemVer; **0.x unstable**
-until validated by a first real integration; tag **1.0.0** thereafter.
+until validated by a first real integration; tag **1.0.0** thereafter. **Done**: both consuming
+apps — `parso-tonearm` (DJ engine convergence, Phase 6) and `parso-voxglass` (decoders/encoders,
+Phase 4) — completed their migration onto this package as their sole audio substrate; tagged
+**1.0.0** (2026-09-07).
 
 ## 18. Non-goals
 Streaming-service integration, library/browser UI, DVS timecode, external-MIDI/controller mapping
