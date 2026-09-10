@@ -72,6 +72,15 @@ class CodecServicesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 engine.render(257)
 
+    def test_headless_engine_keeps_deck_pcm_alive(self) -> None:
+        samples = [0.2 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0) for index in range(4_800)]
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_deck_buffer(0, samples, 48_000, 1)
+            engine.play(0)
+            left, right = engine.render(128)
+            self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
+            self.assertEqual(len(left), len(right))
+
 
 if __name__ == "__main__":
     unittest.main()

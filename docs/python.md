@@ -17,6 +17,8 @@ with CodecServices() as audio:
     print(decoded.frames, decoded.channel_count, decoded.sample_rate_hz)
 
 with Engine(max_frames=512) as engine:
+    engine.set_deck_buffer(0, samples, 48_000, 2)
+    engine.play(0)
     left, right = engine.render(256)
     print(engine.stats().master_frame)
 ```
@@ -34,7 +36,9 @@ AIFF, CAF, analysis, DJ controls, recording, and device IO remain explicit
 future gates.
 
 `Engine` provides bounded stereo headless rendering and a master-level control;
-deck loading and DJ behavior are separate native milestones.
+`set_deck_buffer` copies and retains planar channel storage until replacement or
+close, and `play`/`pause` queue the portable transport commands. Device IO,
+analysis, broader DJ controls, and recording remain explicit future gates.
 
 ## Local verification
 

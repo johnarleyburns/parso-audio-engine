@@ -225,6 +225,31 @@ class _OutputView(ctypes.Structure):
     ]
 
 
+class _PcmView(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("planes", ctypes.POINTER(ctypes.POINTER(ctypes.c_float))),
+        ("frames", ctypes.c_uint64),
+        ("channel_count", ctypes.c_uint32),
+        ("sample_rate_hz", ctypes.c_uint32),
+    ]
+
+
+class _Command(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("type", ctypes.c_uint32),
+        ("deck", ctypes.c_int32),
+        ("i0", ctypes.c_int32),
+        ("i1", ctypes.c_int32),
+        ("i2", ctypes.c_int32),
+        ("f0", ctypes.c_float),
+        ("f1", ctypes.c_float),
+    ]
+
+
 class _Stats(ctypes.Structure):
     _fields_ = [
         ("size", ctypes.c_uint32),
@@ -576,6 +601,8 @@ class Engine:
         self._raise_for_status(status, "engine creation")
         self._handle = handle
         self._max_frames = max_frames
+        self._deck_count = deck_count
+        self._deck_buffers: dict[int, tuple[tuple[array, ...], object]] = {}
 
     def _configure_functions(self) -> None:
         library = self._library
@@ -585,6 +612,10 @@ class Engine:
         library.parso_engine_options_init.restype = ctypes.c_int32
         library.parso_control_init.argtypes = [ctypes.POINTER(_Control)]
         library.parso_control_init.restype = ctypes.c_int32
+        library.parso_pcm_view_init.argtypes = [ctypes.POINTER(_PcmView)]
+        library.parso_pcm_view_init.restype = ctypes.c_int32
+        library.parso_command_init.argtypes = [ctypes.POINTER(_Command)]
+        library.parso_command_init.restype = ctypes.c_int32
         library.parso_engine_create.argtypes = [
             ctypes.POINTER(_EngineOptions), ctypes.POINTER(ctypes.c_void_p)
         ]
@@ -595,6 +626,14 @@ class Engine:
             ctypes.c_void_p, ctypes.POINTER(_Control)
         ]
         library.parso_engine_set_control.restype = ctypes.c_int32
+        library.parso_engine_set_deck_buffer.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_PcmView)
+        ]
+        library.parso_engine_set_deck_buffer.restype = ctypes.c_int32
+        library.parso_engine_post_command.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_Command)
+        ]
+        library.parso_engine_post_command.restype = ctypes.c_int32
         library.parso_engine_render.argtypes = [
             ctypes.c_void_p, ctypes.POINTER(_OutputView)
         ]
@@ -611,6 +650,7 @@ class Engine:
             status = self._library.parso_engine_destroy(ctypes.byref(self._handle))
             self._raise_for_status(status, "engine destruction")
             self._handle = ctypes.c_void_p()
+            self._deck_buffers.clear()
 
     def __enter__(self) -> "Engine":
         self._ensure_open()
@@ -630,6 +670,64 @@ class Engine:
             self._handle, ctypes.byref(control)
         )
         self._raise_for_status(status, "setting engine control")
+
+    def set_deck_buffer(
+        self,
+        deck: int,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+    ) -> None:
+        """Install copied interleaved PCM for a deck and retain it until replacement."""
+
+        self._ensure_open()
+        if deck < 0 or deck >= self._deck_count:
+            raise ValueError("deck is out of range")
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        channel_planes = tuple(
+            array("f", pcm[index::channel_count]) for index in range(channel_count)
+        )
+        pointer_type = ctypes.POINTER(ctypes.c_float)
+        planes = (pointer_type * channel_count)()
+        for index, channel in enumerate(channel_planes):
+            planes[index] = ctypes.cast(channel.buffer_info()[0], pointer_type)
+        view = _PcmView(
+            size=ctypes.sizeof(_PcmView), abi_version=self._ABI_VERSION,
+            planes=planes, frames=len(pcm) // channel_count,
+            channel_count=channel_count, sample_rate_hz=sample_rate_hz,
+        )
+        status = self._library.parso_engine_set_deck_buffer(
+            self._handle, deck, ctypes.byref(view)
+        )
+        self._raise_for_status(status, "setting deck buffer")
+        self._deck_buffers[deck] = (channel_planes, planes)
+
+    def play(self, deck: int) -> None:
+        """Queue the portable play command for a deck."""
+
+        self._post_command(0, deck)
+
+    def pause(self, deck: int) -> None:
+        """Queue the portable pause command for a deck."""
+
+        self._post_command(1, deck)
+
+    def _post_command(self, command_type: int, deck: int) -> None:
+        self._ensure_open()
+        if deck < 0 or deck >= self._deck_count:
+            raise ValueError("deck is out of range")
+        command = _Command(size=ctypes.sizeof(_Command), abi_version=self._ABI_VERSION)
+        self._call("command initialization", self._library.parso_command_init, command)
+        command.type = command_type
+        command.deck = deck
+        status = self._library.parso_engine_post_command(
+            self._handle, ctypes.byref(command)
+        )
+        self._raise_for_status(status, "posting engine command")
 
     def render(self, frames: int) -> tuple[array, array]:
         """Render a bounded stereo block into newly allocated managed arrays."""
