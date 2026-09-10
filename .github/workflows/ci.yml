@@ -143,6 +143,57 @@ jobs:
       - name: Cross-compile C# native consumer on Linux
         run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release --warnaserror
 
+  build-android-ndk:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java for Android tooling
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install pinned Android NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager --install \
+            'platform-tools' \
+            'platforms;android-35' \
+            'ndk;27.2.12479018' \
+            'cmake;3.22.1'
+      - name: Configure Android shared library
+        env:
+          ANDROID_NDK_VERSION: '27.2.12479018'
+        run: |
+          ndk_root="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          cmake -S . -B "build-android-${{ matrix.abi }}" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk_root/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_NDK="$ndk_root" \
+            -DPARSO_BUILD_TESTS=OFF \
+            -DPARSO_BUILD_SHARED_API=ON \
+            -DPARSO_BUILD_CODEC_BRIDGES=ON \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build Android shared library
+        run: cmake --build "build-android-${{ matrix.abi }}" --parallel
+      - name: Check Android ABI exports
+        run: |
+          test -f "build-android-${{ matrix.abi }}/libparso_android.so"
+          python3 scripts/check-native-abi.py \
+            --library "build-android-${{ matrix.abi }}/libparso_android.so" \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeCreate \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeDestroy \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeSetDeckBuffer \
+            --symbol Java_com_parsoaudio_ParsoNative_nativePlay \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeRender \
+            --output "android-abi-${{ matrix.abi }}.json"
+
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
     # image because windows-latest now resolves to the Visual Studio 2026
