@@ -148,7 +148,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [arm64-v8a, x86_64]
+        include:
+          - abi: arm64-v8a
+            machine: AArch64
+          - abi: x86_64
+            machine: Advanced Micro Devices X86-64
     steps:
       - uses: actions/checkout@v4
       - name: Set up Java for Android tooling
@@ -187,6 +191,8 @@ jobs:
           test -f "build-android-${{ matrix.abi }}/libparso_android.so"
           python3 scripts/check-native-abi.py \
             --library "build-android-${{ matrix.abi }}/libparso_android.so" \
+            --expect-class ELF64 \
+            --expect-machine "${{ matrix.machine }}" \
             --symbol Java_com_parsoaudio_ParsoNative_nativeCreate \
             --symbol Java_com_parsoaudio_ParsoNative_nativeDestroy \
             --symbol Java_com_parsoaudio_ParsoNative_nativeSetDeckBuffer \

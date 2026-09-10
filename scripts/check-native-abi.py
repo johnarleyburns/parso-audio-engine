@@ -35,7 +35,12 @@ def command_output(command: list[str]) -> str:
     return subprocess.check_output(command, text=True, stderr=subprocess.STDOUT)
 
 
-def check(path: Path, required: tuple[str, ...]) -> dict:
+def check(
+    path: Path,
+    required: tuple[str, ...],
+    expected_class: str | None = None,
+    expected_machine: str | None = None,
+) -> dict:
     symbol_output = command_output(["nm", "-D", "--defined-only", str(path)])
     symbols = {
         line.split()[-1]
@@ -49,6 +54,15 @@ def check(path: Path, required: tuple[str, ...]) -> dict:
         for line in elf_header.splitlines()
         if ":" in line
     }
+    errors = [f"missing exported symbol: {symbol}" for symbol in missing]
+    if expected_class and identity.get("Class") != expected_class:
+        errors.append(
+            f"ELF class is {identity.get('Class', '<missing>')!r}; expected {expected_class!r}"
+        )
+    if expected_machine and identity.get("Machine") != expected_machine:
+        errors.append(
+            f"ELF machine is {identity.get('Machine', '<missing>')!r}; expected {expected_machine!r}"
+        )
     return {
         "path": str(path),
         "sha256": sha256(path),
@@ -56,7 +70,10 @@ def check(path: Path, required: tuple[str, ...]) -> dict:
         "machine": identity.get("Machine"),
         "requiredSymbols": list(required),
         "missingSymbols": missing,
-        "passed": not missing,
+        "expectedClass": expected_class,
+        "expectedMachine": expected_machine,
+        "errors": errors,
+        "passed": not errors,
     }
 
 
@@ -65,19 +82,19 @@ def main() -> int:
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--symbol", action="append", dest="symbols",
                         help="required exported symbol; defaults to the public C ABI")
+    parser.add_argument("--expect-class", help="expected ELF class, for example ELF64")
+    parser.add_argument("--expect-machine", help="expected readelf Machine field")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     required = tuple(args.symbols) if args.symbols else PUBLIC_SYMBOLS
     try:
-        report = check(args.library, required)
+        report = check(args.library, required, args.expect_class, args.expect_machine)
     except (OSError, subprocess.CalledProcessError) as error:
         report = {"path": str(args.library), "passed": False, "errors": [str(error)]}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     for error in report.get("errors", []):
         print(f"error: {error}", file=sys.stderr)
-    for symbol in report.get("missingSymbols", []):
-        print(f"error: missing exported symbol: {symbol}", file=sys.stderr)
     print(args.output)
     return 0 if report.get("passed") else 1
 
