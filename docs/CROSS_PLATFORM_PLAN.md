@@ -232,6 +232,9 @@ and UndefinedBehaviorSanitizer. The portable core/public-API CTest subset has be
 instrumentation; normal builds leave sanitizer flags disabled.
 `scripts/check-native-abi.py` records ELF class/machine, SHA-256, and required public C ABI exports;
 the same checker accepts explicit JNI symbol lists for Android shared libraries.
+The native `long_session_consumer` stress test renders beyond the record-ring capacity with
+variable callback sizes, verifies command-queue saturation is reported, and checks monotonic frame
+telemetry plus nonzero dropped-frame accounting.
 
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 

@@ -486,6 +486,21 @@ if(PARSO_BUILD_TESTS)
             LABELS "native;headless;integration"
         )
 
+        add_executable(parso_long_session_consumer
+            Tests/Native/long_session_consumer.cpp
+        )
+        target_link_libraries(parso_long_session_consumer PRIVATE
+            $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+            $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        )
+        target_include_directories(parso_long_session_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME long_session_consumer COMMAND parso_long_session_consumer)
+        set_tests_properties(long_session_consumer PROPERTIES
+            LABELS "native;stress;recording;consumer;cxx17"
+        )
+
         add_executable(parso_native_header_smoke
             Tests/Native/native_header_smoke.c
         )
