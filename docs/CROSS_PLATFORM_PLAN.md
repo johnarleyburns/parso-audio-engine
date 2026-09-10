@@ -235,6 +235,8 @@ the same checker accepts explicit JNI symbol lists for Android shared libraries.
 The native `long_session_consumer` stress test renders beyond the record-ring capacity with
 variable callback sizes, verifies command-queue saturation is reported, and checks monotonic frame
 telemetry plus nonzero dropped-frame accounting.
+`scripts/aggregate-release-evidence.py` combines these JSON gate results with the current commit
+without copying generated audio or changing pending human-review status.
 
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 

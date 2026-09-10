@@ -120,6 +120,16 @@ python3 scripts/check-native-abi.py \
   --output /tmp/parso-abi.json
 ```
 
+Aggregate machine-readable release evidence without copying generated media:
+
+```bash
+python3 scripts/aggregate-release-evidence.py \
+  --gate native-abi=/tmp/parso-native-abi.json \
+  --gate android-abi=/tmp/parso-android-abi.json \
+  --gate cross-backend=/tmp/parso-crossfader-comparison.json \
+  --output /tmp/parso-release-evidence.json
+```
+
 The versioned native C ABI also exposes the first CP3 offline service slice: capability reporting,
 WAV read/write, raw little-endian integer PCM read/write, sample-rate conversion, and EBU R128
 loudness measurement. PCM reads and SRC produce owned interleaved float32 buffers; writers produce
