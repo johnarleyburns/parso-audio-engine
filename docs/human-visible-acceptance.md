@@ -105,6 +105,18 @@ The report checks scenario/event parity, WAVE format and frame count, then recor
 mean absolute 16-bit sample differences. The default tolerance is two integer counts; a passing
 comparison still requires separate human listening review.
 
+The complete Linux gate can be run with one safe orchestration command. Its output directory must
+be new or empty; the runner never deletes prior artifacts:
+
+```bash
+python3 scripts/run-linux-acceptance.py \
+  --build-dir build-native \
+  --output-dir /tmp/parso-linux-crossfader-review
+```
+
+It builds the native acceptance executable, renders native and Python artifacts, writes
+`manifest.json`, writes `comparison.json`, and finishes with `summary.json`.
+
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
 downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. Section
