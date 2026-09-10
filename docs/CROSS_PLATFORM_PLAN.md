@@ -180,7 +180,9 @@ idempotent. `Bindings/ParsoAudioAndroid` now builds a release AAR containing the
 output, capture, audio focus, and route-change behavior remain required before Android support can
 be advertised.
 
-Gate: JVM API/lifetime tests, JNI instrumentation, AAR consumer build, 16 KB page-size validation, and real-device playback/capture/route-change/underrun tests. Emulator tests do not establish latency performance.
+Gate: JVM API/lifetime tests and the external AAR consumer build now pass locally and in CI. JNI
+instrumentation, 16 KB page-size validation, and real-device playback/capture/route-change/underrun
+tests remain. Emulator tests do not establish latency performance.
 
 ### CP5 — Linux playback and native SDK packaging
 
