@@ -109,6 +109,9 @@ if(NOT MSVC)
     # Upstream 1.2.6 carries an intentionally unused error scratch variable in
     # one allocation path; keep the warning boundary limited to that vendor.
     target_compile_options(Cebur128 PRIVATE -Wno-unused-but-set-variable)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        target_compile_options(Cebur128 PRIVATE -Wno-cpp -Wno-pedantic)
+    endif()
 endif()
 set_target_properties(Cebur128 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -178,12 +181,19 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         PRIVATE Sources/Cvorbis/xiph/src
     )
     target_compile_definitions(Cvorbis PRIVATE HAVE_CONFIG_H)
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         # Unmodified libvorbis 1.3.7 uses compact one-line cleanup statements
         # that trigger this diagnostic under the repository's -Werror policy.
         target_compile_options(Cvorbis PRIVATE
             -Wno-misleading-indentation
             -Wno-maybe-uninitialized
+        )
+    elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        target_compile_options(Cvorbis PRIVATE
+            -Wno-misleading-indentation
+            -Wno-strict-prototypes
+            -Wno-unused-but-set-variable
+            -Wno-unused-variable
         )
     endif()
     target_link_libraries(Cvorbis PUBLIC Cogg)
@@ -233,13 +243,18 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         FIXED_POINT
         USE_ALLOCA
     )
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         # These are optimizer diagnostics in the unchanged libopus/libopusfile
         # sources; they are not emitted by the first-party bridge or tests.
         target_compile_options(Copus PRIVATE
             -Wno-maybe-uninitialized
             -Wno-stringop-overflow
             -Wno-unused-variable
+        )
+    elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        target_compile_options(Copus PRIVATE
+            -Wno-unused-variable
+            -Wno-null-pointer-subtraction
         )
     endif()
     if(UNIX)
@@ -270,7 +285,7 @@ if(PARSO_BUILD_CODEC_BRIDGES)
             $<INSTALL_INTERFACE:include>
         PRIVATE Sources/CGlint/src
     )
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # Glint is vendored unchanged under its MIT license. Its upstream
         # release has a few intentionally dormant code paths and optimizer
         # false positives under the repository's global -Werror policy.
@@ -278,6 +293,13 @@ if(PARSO_BUILD_CODEC_BRIDGES)
             -Wno-unused-parameter
             -Wno-maybe-uninitialized
             -Wno-stringop-overflow
+            -Wno-unused-variable
+            -Wno-unused-but-set-variable
+            -Wno-unused-function
+        )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(CGlint PRIVATE
+            -Wno-unused-parameter
             -Wno-unused-variable
             -Wno-unused-but-set-variable
             -Wno-unused-function
