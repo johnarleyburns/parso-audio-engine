@@ -11,6 +11,10 @@ object ParsoNative {
 
     @JvmStatic external fun nativeCreate(sampleRateHz: Int, maxFrames: Int, deckCount: Int): Long
     @JvmStatic external fun nativeDestroy(handle: Long)
+    @JvmStatic external fun nativeSetDeckBuffer(
+        handle: Long, deck: Int, left: ByteBuffer, right: ByteBuffer?,
+        frames: Int, sampleRateHz: Int, channelCount: Int
+    ): Boolean
     @JvmStatic external fun nativePlay(handle: Long, deck: Int): Boolean
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int

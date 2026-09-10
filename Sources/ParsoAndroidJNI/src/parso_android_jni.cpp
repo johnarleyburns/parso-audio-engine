@@ -39,6 +39,38 @@ JNIEXPORT void JNICALL Java_com_parsoaudio_ParsoNative_nativeDestroy(
     if (engine) parso_engine_destroy(&engine);
 }
 
+JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativeSetDeckBuffer(
+    JNIEnv *env, jclass, jlong handle, jint deck, jobject leftBuffer,
+    jobject rightBuffer, jint frames, jint sampleRateHz, jint channelCount
+) {
+    parso_engine_t *engine = fromHandle(handle);
+    if (!engine || !env || deck < 0 || deck >= 4 || frames <= 0 || sampleRateHz <= 0 ||
+        (channelCount != 1 && channelCount != 2) || !leftBuffer ||
+        (channelCount == 2 && !rightBuffer)) return JNI_FALSE;
+    void *leftAddress = env->GetDirectBufferAddress(leftBuffer);
+    const jlong leftCapacity = env->GetDirectBufferCapacity(leftBuffer);
+    const jlong requiredBytes = static_cast<jlong>(frames) * static_cast<jlong>(sizeof(float));
+    if (!leftAddress || leftCapacity < requiredBytes) return JNI_FALSE;
+    const void *rightAddress = nullptr;
+    if (channelCount == 2) {
+        rightAddress = env->GetDirectBufferAddress(rightBuffer);
+        const jlong rightCapacity = env->GetDirectBufferCapacity(rightBuffer);
+        if (!rightAddress || rightCapacity < requiredBytes) return JNI_FALSE;
+    }
+    const float *planes[] = {
+        static_cast<const float *>(leftAddress),
+        static_cast<const float *>(rightAddress)
+    };
+    parso_pcm_view_t view{};
+    if (parso_pcm_view_init(&view) != PARSO_STATUS_OK) return JNI_FALSE;
+    view.planes = planes;
+    view.frames = static_cast<uint64_t>(frames);
+    view.channel_count = static_cast<uint32_t>(channelCount);
+    view.sample_rate_hz = static_cast<uint32_t>(sampleRateHz);
+    return parso_engine_set_deck_buffer(engine, static_cast<uint32_t>(deck), &view) == PARSO_STATUS_OK
+        ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativePlay(
     JNIEnv *, jclass, jlong handle, jint deck
 ) {
