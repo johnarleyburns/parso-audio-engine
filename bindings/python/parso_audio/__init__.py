@@ -84,6 +84,16 @@ class DecodedPcm:
     sample_rate_hz: int
 
 
+@dataclass(frozen=True)
+class LoudnessResult:
+    """EBU R128 measurement returned by the native loudness service."""
+
+    integrated_lufs: float
+    true_peak_dbtp: float
+    gain_to_target_db: float
+    loudness_range_lu: float
+
+
 class _Capabilities(ctypes.Structure):
     _fields_ = [
         ("size", ctypes.c_uint32),
@@ -132,6 +142,40 @@ class _CodecOptions(ctypes.Structure):
         ("vbr_quality", ctypes.c_uint32),
         ("reserved0", ctypes.c_uint32),
         ("reserved1", ctypes.c_uint32),
+    ]
+
+
+class _SrcOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("source_sample_rate_hz", ctypes.c_uint32),
+        ("destination_sample_rate_hz", ctypes.c_uint32),
+        ("channel_count", ctypes.c_uint32),
+        ("quality", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("reserved1", ctypes.c_uint32),
+    ]
+
+
+class _LoudnessOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("target_lufs", ctypes.c_double),
+        ("reserved0", ctypes.c_uint32),
+        ("reserved1", ctypes.c_uint32),
+    ]
+
+
+class _LoudnessResult(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("integrated_lufs", ctypes.c_double),
+        ("true_peak_dbtp", ctypes.c_double),
+        ("gain_to_target_db", ctypes.c_double),
+        ("loudness_range_lu", ctypes.c_double),
     ]
 
 
@@ -201,6 +245,24 @@ class CodecServices:
             ctypes.POINTER(_Bytes),
         ]
         library.parso_codec_write.restype = ctypes.c_int32
+        library.parso_src_options_init.argtypes = [ctypes.POINTER(_SrcOptions)]
+        library.parso_src_options_init.restype = ctypes.c_int32
+        library.parso_src_convert.argtypes = [
+            ctypes.POINTER(_PcmBuffer),
+            ctypes.POINTER(_SrcOptions),
+            ctypes.POINTER(_PcmBuffer),
+        ]
+        library.parso_src_convert.restype = ctypes.c_int32
+        library.parso_loudness_options_init.argtypes = [ctypes.POINTER(_LoudnessOptions)]
+        library.parso_loudness_options_init.restype = ctypes.c_int32
+        library.parso_loudness_result_init.argtypes = [ctypes.POINTER(_LoudnessResult)]
+        library.parso_loudness_result_init.restype = ctypes.c_int32
+        library.parso_loudness_measure.argtypes = [
+            ctypes.POINTER(_PcmBuffer),
+            ctypes.POINTER(_LoudnessOptions),
+            ctypes.POINTER(_LoudnessResult),
+        ]
+        library.parso_loudness_measure.restype = ctypes.c_int32
 
     def close(self) -> None:
         """Close this facade; calling close repeatedly is safe."""
@@ -305,6 +367,88 @@ class CodecServices:
         finally:
             self._library.parso_pcm_buffer_release(ctypes.byref(output))
 
+    def convert_sample_rate(
+        self,
+        samples: Samples,
+        source_sample_rate_hz: int,
+        destination_sample_rate_hz: int,
+        channel_count: int,
+        quality: int = 0,
+    ) -> DecodedPcm:
+        """Convert interleaved float32-compatible PCM through native libsamplerate."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or source_sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive source rate")
+        if destination_sample_rate_hz <= 0 or quality not in (0, 1, 2):
+            raise ValueError("destination rate must be positive and quality must be zero, one, or two")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        native_input = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer),
+            abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=source_sample_rate_hz,
+        )
+        options = _SrcOptions(size=ctypes.sizeof(_SrcOptions), abi_version=self._ABI_VERSION)
+        self._call("SRC-options initialization", self._library.parso_src_options_init, options)
+        options.source_sample_rate_hz = source_sample_rate_hz
+        options.destination_sample_rate_hz = destination_sample_rate_hz
+        options.channel_count = channel_count
+        options.quality = quality
+        output = _PcmBuffer()
+        self._call("PCM-buffer initialization", self._library.parso_pcm_buffer_init, output)
+        try:
+            status = self._library.parso_src_convert(
+                ctypes.byref(native_input), ctypes.byref(options), ctypes.byref(output)
+            )
+            self._raise_for_status(status, "sample-rate conversion")
+            return self._copy_decoded(output)
+        finally:
+            self._library.parso_pcm_buffer_release(ctypes.byref(output))
+
+    def measure_loudness(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        target_lufs: float = -14.0,
+    ) -> LoudnessResult:
+        """Measure interleaved float32-compatible PCM through native EBU R128."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        native_input = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer),
+            abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=sample_rate_hz,
+        )
+        options = _LoudnessOptions(size=ctypes.sizeof(_LoudnessOptions), abi_version=self._ABI_VERSION)
+        self._call("loudness-options initialization", self._library.parso_loudness_options_init, options)
+        options.target_lufs = target_lufs
+        result = _LoudnessResult()
+        self._call("loudness-result initialization", self._library.parso_loudness_result_init, result)
+        status = self._library.parso_loudness_measure(
+            ctypes.byref(native_input), ctypes.byref(options), ctypes.byref(result)
+        )
+        self._raise_for_status(status, "loudness measurement")
+        return LoudnessResult(
+            result.integrated_lufs,
+            result.true_peak_dbtp,
+            result.gain_to_target_db,
+            result.loudness_range_lu,
+        )
+
     def _native_options(self, options: Optional[CodecOptions]) -> _CodecOptions:
         selected = options or CodecOptions()
         native = _CodecOptions()
@@ -317,6 +461,18 @@ class CodecServices:
         native.quality = selected.quality
         native.vbr_quality = self._VBR_CBR if selected.vbr_quality is None else selected.vbr_quality
         return native
+
+    @staticmethod
+    def _copy_decoded(output: _PcmBuffer) -> DecodedPcm:
+        sample_count = output.frames * output.channel_count
+        if sample_count > sys.maxsize // 4:
+            raise ParsoError(-1, "native PCM copy", "output is too large for Python")
+        raw = ctypes.string_at(output.samples, sample_count * 4)
+        samples = array("f")
+        samples.frombytes(raw)
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return DecodedPcm(samples, output.frames, output.channel_count, output.sample_rate_hz)
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -359,5 +515,6 @@ __all__ = [
     "CodecServices",
     "ContainerCapability",
     "DecodedPcm",
+    "LoudnessResult",
     "ParsoError",
 ]

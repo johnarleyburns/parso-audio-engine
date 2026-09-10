@@ -24,8 +24,10 @@ before the call returns. `CodecServices.close()` is idempotent and operations
 after close raise `ParsoError`.
 
 The current offline gate covers WAV, FLAC, Xiph Ogg Vorbis, Opus, MP3, and AAC
-where the loaded native capability bits advertise them. ALAC, AIFF, CAF,
-analysis, DJ controls, recording, and device IO remain explicit future gates.
+where the loaded native capability bits advertise them. `convert_sample_rate`
+and `measure_loudness` expose the native SRC and EBU R128 services. ALAC,
+AIFF, CAF, analysis, DJ controls, recording, and device IO remain explicit
+future gates.
 
 ## Local verification
 

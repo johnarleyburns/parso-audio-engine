@@ -13,5 +13,6 @@ with CodecServices("/path/to/libparso.so") as audio:
     decoded = audio.decode(encoded, AudioCodec.OGG_VORBIS)
 ```
 
-This initial package covers synchronous offline codec services. Device IO,
-analysis, DJ control, and recording remain separate native milestones.
+This initial package covers synchronous offline codec, sample-rate conversion,
+and loudness services. Device IO, analysis, DJ control, and recording remain
+separate native milestones.

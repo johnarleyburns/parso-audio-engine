@@ -38,6 +38,20 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(decoded.frames, 0)
         self.assertEqual(len(decoded.samples), decoded.frames)
 
+    def test_sample_rate_conversion(self) -> None:
+        samples = [0.25 * math.sin(2.0 * math.pi * 440.0 * index / 48_000.0) for index in range(4_800)]
+        converted = self.audio.convert_sample_rate(samples, 48_000, 24_000, 1)
+        self.assertEqual(converted.sample_rate_hz, 24_000)
+        self.assertEqual(converted.channel_count, 1)
+        self.assertGreater(converted.frames, 0)
+        self.assertLess(abs(converted.frames - 2_400), 8)
+
+    def test_loudness_measurement(self) -> None:
+        samples = [0.25] * 48_000
+        result = self.audio.measure_loudness(samples, 48_000, 1)
+        self.assertTrue(math.isfinite(result.integrated_lufs))
+        self.assertTrue(math.isfinite(result.true_peak_dbtp))
+
     def test_close_is_idempotent_and_rejects_calls(self) -> None:
         service = CodecServices(self.library)
         service.close()
