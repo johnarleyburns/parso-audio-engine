@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import unittest
 
-from parso_audio import AudioCodec, CodecServices, ContainerCapability, ParsoError
+from parso_audio import AudioCodec, CodecServices, ContainerCapability, Engine, ParsoError
 
 
 class CodecServicesTests(unittest.TestCase):
@@ -58,6 +58,19 @@ class CodecServicesTests(unittest.TestCase):
         service.close()
         with self.assertRaises(ParsoError):
             _ = service.capabilities
+
+    def test_headless_engine_renders_bounded_blocks(self) -> None:
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_master_level(0.8)
+            left, right = engine.render(128)
+            self.assertEqual(len(left), 128)
+            self.assertEqual(len(right), 128)
+            self.assertTrue(all(sample == 0.0 for sample in left))
+            stats = engine.stats()
+            self.assertEqual(stats.master_frame, 128)
+            self.assertEqual(stats.deck_count, 2)
+            with self.assertRaises(ValueError):
+                engine.render(257)
 
 
 if __name__ == "__main__":

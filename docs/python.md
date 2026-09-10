@@ -8,13 +8,17 @@ not bundle or download a native library. Use a CMake install, a system
 ## Quickstart
 
 ```python
-from parso_audio import AudioCodec, CodecServices
+from parso_audio import AudioCodec, CodecServices, Engine
 
 with CodecServices() as audio:
     capabilities = audio.capabilities
     encoded = audio.encode(samples, 48_000, 2, AudioCodec.OGG_VORBIS)
     decoded = audio.decode(encoded, AudioCodec.OGG_VORBIS)
     print(decoded.frames, decoded.channel_count, decoded.sample_rate_hz)
+
+with Engine(max_frames=512) as engine:
+    left, right = engine.render(256)
+    print(engine.stats().master_frame)
 ```
 
 `encode` accepts an iterable or a contiguous one-dimensional buffer of
@@ -28,6 +32,9 @@ where the loaded native capability bits advertise them. `convert_sample_rate`
 and `measure_loudness` expose the native SRC and EBU R128 services. ALAC,
 AIFF, CAF, analysis, DJ controls, recording, and device IO remain explicit
 future gates.
+
+`Engine` provides bounded stereo headless rendering and a master-level control;
+deck loading and DJ behavior are separate native milestones.
 
 ## Local verification
 

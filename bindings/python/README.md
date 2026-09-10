@@ -14,5 +14,5 @@ with CodecServices("/path/to/libparso.so") as audio:
 ```
 
 This initial package covers synchronous offline codec, sample-rate conversion,
-and loudness services. Device IO, analysis, DJ control, and recording remain
-separate native milestones.
+loudness, and bounded headless rendering services. Device IO, analysis, DJ
+control, and recording remain separate native milestones.

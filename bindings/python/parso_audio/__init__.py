@@ -94,6 +94,15 @@ class LoudnessResult:
     loudness_range_lu: float
 
 
+@dataclass(frozen=True)
+class EngineStats:
+    """Snapshot of native headless render counters."""
+
+    master_frame: int
+    starved_frames: int
+    deck_count: int
+
+
 class _Capabilities(ctypes.Structure):
     _fields_ = [
         ("size", ctypes.c_uint32),
@@ -176,6 +185,54 @@ class _LoudnessResult(ctypes.Structure):
         ("true_peak_dbtp", ctypes.c_double),
         ("gain_to_target_db", ctypes.c_double),
         ("loudness_range_lu", ctypes.c_double),
+    ]
+
+
+class _EngineOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("sample_rate_hz", ctypes.c_uint32),
+        ("max_frames", ctypes.c_uint32),
+        ("deck_count", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
+class _Control(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("crossfader", ctypes.c_float),
+        ("xfade_curve", ctypes.c_float),
+        ("master_level", ctypes.c_float),
+        ("limiter_ceiling_db", ctypes.c_float),
+        ("limiter_enabled", ctypes.c_float),
+        ("xfade_assign", ctypes.c_float * 4),
+        ("fader", ctypes.c_float * 4),
+        ("trim", ctypes.c_float * 4),
+    ]
+
+
+class _OutputView(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("left", ctypes.c_void_p),
+        ("right", ctypes.c_void_p),
+        ("frames", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
+class _Stats(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("master_frame", ctypes.c_uint64),
+        ("starved_frames", ctypes.c_uint64),
+        ("deck_count", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
     ]
 
 
@@ -490,6 +547,135 @@ class CodecServices:
         raise ParsoError(status, operation, detail)
 
 
+class Engine:
+    """Owns a native headless render engine for bounded synchronous callbacks."""
+
+    _ABI_VERSION = 1
+
+    def __init__(
+        self,
+        sample_rate_hz: int = 48_000,
+        max_frames: int = 512,
+        deck_count: int = 2,
+        library_path: Optional[Union[str, os.PathLike[str]]] = None,
+    ) -> None:
+        if sample_rate_hz <= 0 or max_frames <= 0 or not 1 <= deck_count <= 4:
+            raise ValueError("invalid engine sample rate, block size, or deck count")
+        self._library = ctypes.CDLL(CodecServices._find_library(library_path))
+        self._configure_functions()
+        options = _EngineOptions(
+            size=ctypes.sizeof(_EngineOptions), abi_version=self._ABI_VERSION,
+            sample_rate_hz=sample_rate_hz, max_frames=max_frames, deck_count=deck_count,
+        )
+        self._call("engine-options initialization", self._library.parso_engine_options_init, options)
+        options.sample_rate_hz = sample_rate_hz
+        options.max_frames = max_frames
+        options.deck_count = deck_count
+        handle = ctypes.c_void_p()
+        status = self._library.parso_engine_create(ctypes.byref(options), ctypes.byref(handle))
+        self._raise_for_status(status, "engine creation")
+        self._handle = handle
+        self._max_frames = max_frames
+
+    def _configure_functions(self) -> None:
+        library = self._library
+        library.parso_last_error.argtypes = []
+        library.parso_last_error.restype = ctypes.c_char_p
+        library.parso_engine_options_init.argtypes = [ctypes.POINTER(_EngineOptions)]
+        library.parso_engine_options_init.restype = ctypes.c_int32
+        library.parso_control_init.argtypes = [ctypes.POINTER(_Control)]
+        library.parso_control_init.restype = ctypes.c_int32
+        library.parso_engine_create.argtypes = [
+            ctypes.POINTER(_EngineOptions), ctypes.POINTER(ctypes.c_void_p)
+        ]
+        library.parso_engine_create.restype = ctypes.c_int32
+        library.parso_engine_destroy.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        library.parso_engine_destroy.restype = ctypes.c_int32
+        library.parso_engine_set_control.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_Control)
+        ]
+        library.parso_engine_set_control.restype = ctypes.c_int32
+        library.parso_engine_render.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_OutputView)
+        ]
+        library.parso_engine_render.restype = ctypes.c_int32
+        library.parso_engine_get_stats.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_Stats)
+        ]
+        library.parso_engine_get_stats.restype = ctypes.c_int32
+
+    def close(self) -> None:
+        """Destroy the native engine; calling close repeatedly is safe."""
+
+        if getattr(self, "_handle", None) and self._handle.value:
+            status = self._library.parso_engine_destroy(ctypes.byref(self._handle))
+            self._raise_for_status(status, "engine destruction")
+            self._handle = ctypes.c_void_p()
+
+    def __enter__(self) -> "Engine":
+        self._ensure_open()
+        return self
+
+    def __exit__(self, _exc_type: object, _exc_value: object, _traceback: object) -> None:
+        self.close()
+
+    def set_master_level(self, level: float) -> None:
+        """Set the linear master level used by subsequent renders."""
+
+        self._ensure_open()
+        control = _Control(size=ctypes.sizeof(_Control), abi_version=self._ABI_VERSION)
+        self._call("control initialization", self._library.parso_control_init, control)
+        control.master_level = level
+        status = self._library.parso_engine_set_control(
+            self._handle, ctypes.byref(control)
+        )
+        self._raise_for_status(status, "setting engine control")
+
+    def render(self, frames: int) -> tuple[array, array]:
+        """Render a bounded stereo block into newly allocated managed arrays."""
+
+        self._ensure_open()
+        if frames <= 0 or frames > self._max_frames:
+            raise ValueError("frames must be positive and no greater than max_frames")
+        left = array("f", [0.0]) * frames
+        right = array("f", [0.0]) * frames
+        output = _OutputView(
+            size=ctypes.sizeof(_OutputView), abi_version=self._ABI_VERSION,
+            left=ctypes.c_void_p(left.buffer_info()[0]),
+            right=ctypes.c_void_p(right.buffer_info()[0]), frames=frames,
+        )
+        status = self._library.parso_engine_render(
+            self._handle, ctypes.byref(output)
+        )
+        self._raise_for_status(status, "engine render")
+        return left, right
+
+    def stats(self) -> EngineStats:
+        """Return native render counters and deck topology."""
+
+        self._ensure_open()
+        stats = _Stats(size=ctypes.sizeof(_Stats), abi_version=self._ABI_VERSION)
+        self._call("stats initialization", self._library.parso_stats_init, stats)
+        status = self._library.parso_engine_get_stats(self._handle, ctypes.byref(stats))
+        self._raise_for_status(status, "reading engine stats")
+        return EngineStats(stats.master_frame, stats.starved_frames, stats.deck_count)
+
+    def _ensure_open(self) -> None:
+        if not getattr(self, "_handle", None) or not self._handle.value:
+            raise ParsoError(-6, "engine", "engine is closed")
+
+    def _call(self, operation: str, function: object, structure: ctypes.Structure) -> None:
+        status = function(ctypes.byref(structure))  # type: ignore[union-attr]
+        self._raise_for_status(status, operation)
+
+    def _raise_for_status(self, status: int, operation: str) -> None:
+        if status == 0:
+            return
+        detail_bytes = self._library.parso_last_error()
+        detail = detail_bytes.decode("utf-8", errors="replace") if detail_bytes else ""
+        raise ParsoError(status, operation, detail)
+
+
 def _as_float_array(samples: Samples) -> array:
     """Copy one-dimensional float-compatible buffer data into native float storage."""
 
@@ -515,6 +701,8 @@ __all__ = [
     "CodecServices",
     "ContainerCapability",
     "DecodedPcm",
+    "Engine",
+    "EngineStats",
     "LoudnessResult",
     "ParsoError",
 ]
