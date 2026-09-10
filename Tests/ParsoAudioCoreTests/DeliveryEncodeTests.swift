@@ -16,6 +16,26 @@ struct DeliveryEncodeTests {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
     }
 
+    @Test func deliveryDefaultsUse320KbpsWithoutChangingExplicitOverrides() {
+        #expect(ExportCodec.aacDefault == .aac(bitrate: 320_000))
+        #expect(ExportCodec.mp3Default == .mp3(bitrate: 320))
+        #expect(ExportCodec.defaultAACBitrate == 320_000)
+        #expect(ExportCodec.defaultMP3Bitrate == 320)
+        #expect(ExportCodec.aacDefault != .aac(bitrate: 256_000))
+        #expect(ExportCodec.mp3Default != .mp3(bitrate: 192))
+    }
+
+    @Test func defaultMP3WriterProduces320KbpsFrames() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 1)
+        let url = tempURL("mp3")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try AudioFileWriter(url: url, format: src.format, codec: .mp3Default).write(src)
+        let frames = MP3Frames.parse(try Data(contentsOf: url))
+        #expect(!frames.isEmpty)
+        #expect(frames.allSatisfy { $0.bitrateKbps == 320 })
+    }
+
     @Test func deliveryFLACRoundTripsBitExactAt16() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.5, amplitude: 0.7, channels: 1)
         let url = tempURL("flac")

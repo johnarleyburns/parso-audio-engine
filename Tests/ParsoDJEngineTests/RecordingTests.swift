@@ -42,4 +42,17 @@ struct MixRecorderTests {
         #expect(output.frameCount == source.frameCount)
         #expect(output.channel(0)[100] == source.channel(0)[100])
     }
+
+    @Test func defaultRecordingInitializerUsesAACDeliveryDefault() throws {
+        let url = tempURL("m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let recorder = try MixRecorder(url: url)
+        #expect(recorder.isRecording == false)
+
+        // The default is represented by the same public codec factory used by
+        // export callers; the actual AVFoundation encode is covered by the
+        // codec roundtrip suite on Apple runners.
+        #expect(ExportCodec.aacDefault == .aac(bitrate: 320_000))
+    }
 }

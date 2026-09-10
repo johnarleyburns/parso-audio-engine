@@ -533,6 +533,11 @@ public struct FLACVorbisComment: Sendable, Equatable {
 }
 
 public enum ExportCodec: Sendable, Equatable {
+    /// The default AAC-LC delivery bitrate used by convenience APIs.
+    public static let defaultAACBitrate = 320_000
+    /// The default CBR MP3 delivery bitrate used by convenience APIs.
+    public static let defaultMP3Bitrate = 320
+
     case wavPCM(bitDepth: Int)   // via AVAudioFile / ExtAudioFile
     case flac(compression: Int)  // via libFLAC (Cflac) — PFLT float-preserving, 32-bit
     case aac(bitrate: Int)       // via AudioToolbox
@@ -541,6 +546,11 @@ public enum ExportCodec: Sendable, Equatable {
     /// Standard delivery FLAC: caller bit depth (16/24), Vorbis-comment tags,
     /// no PFLT block — the file other tools expect. `bitDepth` clamps to 16/24.
     case flacDelivery(bitDepth: Int, compression: Int, tags: [FLACVorbisComment])
+
+    /// AAC-LC at 320 kbps, suitable for delivery and mix recording.
+    public static let aacDefault: ExportCodec = .aac(bitrate: defaultAACBitrate)
+    /// CBR MP3 at 320 kbps, suitable for delivery and mix recording.
+    public static let mp3Default: ExportCodec = .mp3(bitrate: defaultMP3Bitrate)
 }
 
 /// Calls `body` with a C array of NUL-terminated pointers into `strings`,
@@ -584,7 +594,9 @@ public struct AudioFileWriter {
     ///   caller-supplied `MP3Encoding` conformance (e.g. an app-side LAME
     ///   wrapper). `nil` (the default) keeps the built-in Glint encoder —
     ///   PAE's own MP3 support never depends on this parameter being set.
-    public init(url: URL, format: AudioFormat, codec: ExportCodec,
+    /// Creates a writer using AAC-LC at 320 kbps when no codec is supplied.
+    /// Pass `.aac(bitrate:)` or `.mp3(bitrate:)` to select an explicit bitrate.
+    public init(url: URL, format: AudioFormat, codec: ExportCodec = .aacDefault,
                 mp3Encoder: (any MP3Encoding)? = nil) throws {
         guard format.sampleRate.isFinite, format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioFileError.formatMismatch

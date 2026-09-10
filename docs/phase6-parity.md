@@ -386,7 +386,9 @@ PAE control objects; nothing downstream of the seam changed.
 - **Telemetry:** `sampleTelemetry()` builds `EngineTelemetry` from
   `DJEngine.telemetry()` (`EngineStats`) + the `@MainActor` deck/channel/master
   props; `EngineTelemetryStream` (Tonearm's, already AVFoundation-free) vends it.
-- **Recording:** `MixRecorder` per session dir (`.aac(bitrate: 256_000)` M4A);
+- **Recording:** `MixRecorder` per session dir (AAC-LC defaults to
+  `ExportCodec.aacDefault`, 320 kbps M4A; use `.aac(bitrate:)` for an explicit
+  override; `.mp3Default` selects CBR 320 kbps MP3);
   `interruptRecordingForInterruption` flushes a complete segment via
   `DJEngine.interruptRecording(to:)` and appends it to the segment list;
   `stopRecording` assembles `RecordingEncoder.RecordingOutput` from the

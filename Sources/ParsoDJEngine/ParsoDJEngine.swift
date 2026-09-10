@@ -2275,7 +2275,8 @@ public final class Monitoring {
     }
 }
 
-/// Records the master bus off the RT thread. **No MP3** (see `ExportCodec`).
+/// Records the master bus off the RT thread. AAC defaults to 320 kbps; MP3 is
+/// also available through `ExportCodec.mp3Default` or an explicit bitrate.
 @MainActor
 public final class MixRecorder {
     private let codec: ExportCodec
@@ -2287,6 +2288,12 @@ public final class MixRecorder {
     public init(codec: ExportCodec, url: URL) throws {
         self.codec = codec
         self.url = url
+    }
+
+    /// Creates an AAC-LC recorder at the 320 kbps delivery default.
+    /// Pass `ExportCodec.mp3Default` or an explicit codec to select another format.
+    public convenience init(url: URL, codec: ExportCodec = .aacDefault) throws {
+        try self.init(codec: codec, url: url)
     }
 
     /// Frames the render tap had to drop because the encoder fell behind

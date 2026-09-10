@@ -455,15 +455,20 @@ engine.mixer.smartCFX.preset = 1
 engine.mixer.smartCFX.amount = 0.7   // single control drives a curated chain
 ```
 
-### Record the mix (WAV / FLAC / AAC / ALAC — no MP3)
+### Record the mix (WAV / FLAC / AAC / ALAC / MP3)
 
 ```swift
-let rec = try MixRecorder(codec: .aac(bitrate: 256_000), url: outURL)
+let rec = try MixRecorder(url: outURL) // AAC-LC, 320 kbps default
 rec.start()
 // … perform …
 try rec.stop()
-// Other codecs: .wavPCM(bitDepth: 24), .flac(compression: 5), .alac
+// Other codecs: .wavPCM(bitDepth: 24), .flac(compression: 5), .alac,
+// .mp3Default (CBR 320 kbps)
 ```
+
+AAC and MP3 export/recording default to 320 kbps through
+`ExportCodec.aacDefault` and `ExportCodec.mp3Default`. Use
+`.aac(bitrate: 256_000)` or `.mp3(bitrate: 192)` when an explicit bitrate is required.
 
 ---
 
