@@ -98,6 +98,20 @@ cmake --build build-native
 ctest --test-dir build-native --output-on-failure
 ```
 
+For a portable memory/undefined-behavior check, use a separate build directory so shipping
+artifacts remain uninstrumented:
+
+```bash
+cmake -S . -B build-native-sanitize -DPARSO_BUILD_TESTS=ON \
+  -DPARSO_ENABLE_SANITIZERS=ON -DPARSO_BUILD_CODEC_FIXTURE_TESTS=OFF
+cmake --build build-native-sanitize
+ctest --test-dir build-native-sanitize --output-on-failure
+```
+
+The sanitizer configuration intentionally omits the external installed-package process because
+that consumer needs the sanitizer runtime injected by its host environment; the normal
+un-instrumented build retains the installed SDK gate.
+
 The versioned native C ABI also exposes the first CP3 offline service slice: capability reporting,
 WAV read/write, raw little-endian integer PCM read/write, sample-rate conversion, and EBU R128
 loudness measurement. PCM reads and SRC produce owned interleaved float32 buffers; writers produce

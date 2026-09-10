@@ -223,6 +223,7 @@ parso_status_t copyPCM(const std::vector<float> &samples, uint32_t sampleRate,
     return PARSO_STATUS_OK;
 }
 
+#if defined(PARSO_CODEC_BRIDGES_AVAILABLE)
 parso_status_t copyPCM(const float *samples, uint64_t sampleCount,
                        uint32_t sampleRate, uint32_t channels,
                        parso_pcm_buffer_t *out) noexcept {
@@ -266,6 +267,7 @@ parso_status_t copyIntegerPCM(const int32_t *samples, uint64_t sampleCount,
         converted[index] = static_cast<float>(static_cast<double>(samples[index]) / scale);
     return copyPCM(converted, sampleRate, channels, out);
 }
+#endif
 
 parso_status_t copyBytes(const std::vector<uint8_t> &bytes, parso_bytes_t *out) noexcept {
     uint8_t *owned = nullptr;

@@ -10,6 +10,7 @@ option(PARSO_BUILD_TESTS "Build native CTest smoke tests" ON)
 option(PARSO_BUILD_SHARED_API "Build the shared parso C ABI library" ON)
 option(PARSO_BUILD_CODEC_BRIDGES "Build the vendored FLAC/Vorbis/Opus bridge targets" ON)
 option(PARSO_BUILD_CODEC_FIXTURE_TESTS "Build native codec fixture smoke tests" ON)
+option(PARSO_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
 set(PARSO_NATIVE_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/Tests/Fixtures/audio" CACHE PATH
     "Directory containing downloaded native codec fixtures")
@@ -28,6 +29,14 @@ if(MSVC)
     add_compile_options(/W4 /WX)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+endif()
+
+if(PARSO_ENABLE_SANITIZERS)
+    if(MSVC)
+        message(FATAL_ERROR "PARSO_ENABLE_SANITIZERS requires Clang or GCC")
+    endif()
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
 endif()
 
 add_library(CParsoDSP STATIC
@@ -633,16 +642,18 @@ if(PARSO_BUILD_TESTS)
             set_tests_properties(public_codec_consumer PROPERTIES
                 LABELS "native;public-api;consumer;offline;codec;c11"
             )
-            add_test(NAME public_codec_fixture_consumer
-                COMMAND parso_public_codec_consumer
-                    "${PARSO_NATIVE_FIXTURES_DIR}/wikipedia_chanukah.flac"
-                    "${PARSO_NATIVE_FIXTURES_DIR}/audial_waking_up.ogg"
-                    "${PARSO_NATIVE_FIXTURES_DIR}/gostreyshen_world.mp3"
-            )
-            set_tests_properties(public_codec_fixture_consumer PROPERTIES
-                LABELS "native;public-api;consumer;offline;codec;fixtures;c11"
-                SKIP_RETURN_CODE 77
-            )
+            if(PARSO_BUILD_CODEC_FIXTURE_TESTS)
+                add_test(NAME public_codec_fixture_consumer
+                    COMMAND parso_public_codec_consumer
+                        "${PARSO_NATIVE_FIXTURES_DIR}/wikipedia_chanukah.flac"
+                        "${PARSO_NATIVE_FIXTURES_DIR}/audial_waking_up.ogg"
+                        "${PARSO_NATIVE_FIXTURES_DIR}/gostreyshen_world.mp3"
+                )
+                set_tests_properties(public_codec_fixture_consumer PROPERTIES
+                    LABELS "native;public-api;consumer;offline;codec;fixtures;c11"
+                    SKIP_RETURN_CODE 77
+                )
+            endif()
         endif()
 
         if(PARSO_BUILD_CODEC_BRIDGES AND PARSO_BUILD_CODEC_FIXTURE_TESTS)
@@ -671,16 +682,18 @@ if(PARSO_BUILD_TESTS)
             )
         endif()
 
-        add_test(NAME installed_c_consumer
-            COMMAND ${CMAKE_COMMAND}
-                -DPARSO_PACKAGE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
-                -DPARSO_PACKAGE_BINARY_DIR=${CMAKE_BINARY_DIR}
-                -DPARSO_PACKAGE_INSTALL_DIR=${CMAKE_BINARY_DIR}/installed-package
-                -P ${CMAKE_SOURCE_DIR}/cmake/run-installed-consumer.cmake
-        )
-        set_tests_properties(installed_c_consumer PROPERTIES
-            LABELS "native;public-api;consumer;packaging;c11"
-        )
+        if(NOT PARSO_ENABLE_SANITIZERS)
+            add_test(NAME installed_c_consumer
+                COMMAND ${CMAKE_COMMAND}
+                    -DPARSO_PACKAGE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+                    -DPARSO_PACKAGE_BINARY_DIR=${CMAKE_BINARY_DIR}
+                    -DPARSO_PACKAGE_INSTALL_DIR=${CMAKE_BINARY_DIR}/installed-package
+                    -P ${CMAKE_SOURCE_DIR}/cmake/run-installed-consumer.cmake
+            )
+            set_tests_properties(installed_c_consumer PROPERTIES
+                LABELS "native;public-api;consumer;packaging;c11"
+            )
+        endif()
 
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_executable(parso_linux_host_callback

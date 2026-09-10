@@ -227,6 +227,10 @@ comparison into one safe output directory without deleting prior artifacts.
 The C# engine wrapper exposes the same bounded `SetCrossfader` control and its Windows-targeted
 consumer exercises both endpoints; native DLL execution remains a Windows CI gate.
 
+The native CMake build now has an opt-in `PARSO_ENABLE_SANITIZERS=ON` path for AddressSanitizer
+and UndefinedBehaviorSanitizer. The portable core/public-API CTest subset has been run with that
+instrumentation; normal builds leave sanitizer flags disabled.
+
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 
 ### CP-PY — Python 3 wrapper and packaging (after CP3; device integration after CP5)
