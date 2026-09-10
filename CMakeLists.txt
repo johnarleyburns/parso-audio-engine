@@ -40,12 +40,22 @@ target_include_directories(CParsoEngine
 )
 target_link_libraries(CParsoEngine PUBLIC CParsoDSP)
 
+add_library(CParsoAPI STATIC
+    Sources/CParsoAPI/src/parso_api.cpp
+)
+target_include_directories(CParsoAPI
+    PUBLIC Sources/CParsoAPI/include
+    PRIVATE Sources/CParsoEngine/include
+)
+target_link_libraries(CParsoAPI PUBLIC CParsoEngine)
+
 if(MSVC)
     target_compile_options(CParsoDSP PRIVATE /W4)
     target_compile_options(CParsoEngine PRIVATE /W4)
 else()
     target_compile_options(CParsoDSP PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(CParsoEngine PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(CParsoAPI PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 include(CTest)
@@ -73,6 +83,30 @@ if(PARSO_BUILD_TESTS)
         add_test(NAME native_header_smoke COMMAND parso_native_header_smoke)
         set_tests_properties(native_header_smoke PROPERTIES
             LABELS "native;headers;unit"
+        )
+
+        add_executable(parso_public_c_consumer
+            Tests/Native/public_c_consumer.c
+        )
+        target_link_libraries(parso_public_c_consumer PRIVATE CParsoAPI)
+        target_include_directories(parso_public_c_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_c_consumer COMMAND parso_public_c_consumer)
+        set_tests_properties(public_c_consumer PROPERTIES
+            LABELS "native;public-api;consumer;c11"
+        )
+
+        add_executable(parso_public_cpp_consumer
+            Tests/Native/public_cpp_consumer.cpp
+        )
+        target_link_libraries(parso_public_cpp_consumer PRIVATE CParsoAPI)
+        target_include_directories(parso_public_cpp_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_cpp_consumer COMMAND parso_public_cpp_consumer)
+        set_tests_properties(public_cpp_consumer PROPERTIES
+            LABELS "native;public-api;consumer;cxx17"
         )
     endif()
 endif()

@@ -1,0 +1,68 @@
+#include "parso.hpp"
+
+#include <cmath>
+#include <cstdio>
+
+int main() {
+    constexpr uint32_t frames = 256;
+    float left[frames] = {};
+    float right[frames] = {};
+    float outputLeft[frames] = {};
+    float outputRight[frames] = {};
+    for (uint32_t index = 0; index < frames; ++index) {
+        left[index] = 0.15f;
+        right[index] = 0.15f;
+    }
+    const float *planes[] = {left, right};
+
+    parso_engine_options_t options{};
+    parso_control_t control{};
+    parso_pcm_view_t view{};
+    parso_output_view_t output{};
+    parso_command_t command{};
+    parso_stats_t stats{};
+    if (parso_engine_options_init(&options) != PARSO_STATUS_OK ||
+        parso_control_init(&control) != PARSO_STATUS_OK ||
+        parso_pcm_view_init(&view) != PARSO_STATUS_OK ||
+        parso_output_view_init(&output) != PARSO_STATUS_OK ||
+        parso_command_init(&command) != PARSO_STATUS_OK ||
+        parso_stats_init(&stats) != PARSO_STATUS_OK) return 1;
+
+    options.max_frames = frames;
+    view.planes = planes;
+    view.frames = frames;
+    view.channel_count = 2;
+    view.sample_rate_hz = 48000;
+    output.left = outputLeft;
+    output.right = outputRight;
+    output.frames = frames;
+    command.type = PARSO_COMMAND_PLAY;
+    command.deck = 0;
+
+    parso::Engine engine;
+    if (parso::Engine::create(options, &engine) != PARSO_STATUS_OK ||
+        engine.setControl(control) != PARSO_STATUS_OK ||
+        engine.setDeckBuffer(0, view) != PARSO_STATUS_OK ||
+        engine.postCommand(command) != PARSO_STATUS_OK ||
+        engine.render(output) != PARSO_STATUS_OK ||
+        engine.getStats(&stats) != PARSO_STATUS_OK) {
+        std::fprintf(stderr, "public_cpp_consumer: %s\n", parso_last_error());
+        return 1;
+    }
+
+    bool signal = false;
+    for (uint32_t index = 0; index < frames; ++index) {
+        if (std::fabs(outputLeft[index]) > 1.0e-5f || std::fabs(outputRight[index]) > 1.0e-5f) {
+            signal = true;
+            break;
+        }
+    }
+    if (!signal || stats.master_frame != frames || !engine.isOpen()) {
+        std::fprintf(stderr, "public_cpp_consumer: signal=%d master_frame=%llu open=%d\n",
+                     signal ? 1 : 0,
+                     static_cast<unsigned long long>(stats.master_frame),
+                     engine.isOpen() ? 1 : 0);
+        return 1;
+    }
+    return 0;
+}
