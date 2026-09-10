@@ -9,6 +9,7 @@ build-windows-cross/
 build-android-*/
 Bindings/ParsoAudioAndroid/.cxx/
 Bindings/ParsoAudioAndroid/.gradle/
+Bindings/ParsoAudioAndroid/.kotlin/
 Bindings/ParsoAudioAndroid/build/
 *.xcodeproj
 DerivedData/

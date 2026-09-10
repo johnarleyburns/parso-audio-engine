@@ -3,6 +3,49 @@ package com.parsoaudio
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+internal interface NativeEngineBridge {
+    fun create(sampleRateHz: Int, maxFrames: Int, deckCount: Int): Long
+    fun destroy(handle: Long)
+    fun setDeckBuffer(
+        handle: Long,
+        deck: Int,
+        left: ByteBuffer,
+        right: ByteBuffer?,
+        frames: Int,
+        sampleRateHz: Int,
+        channelCount: Int,
+    ): Boolean
+    fun play(handle: Long, deck: Int): Boolean
+    fun pause(handle: Long, deck: Int): Boolean
+    fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int
+}
+
+private object JniEngineBridge : NativeEngineBridge {
+    override fun create(sampleRateHz: Int, maxFrames: Int, deckCount: Int): Long =
+        ParsoNative.nativeCreate(sampleRateHz, maxFrames, deckCount)
+
+    override fun destroy(handle: Long) = ParsoNative.nativeDestroy(handle)
+
+    override fun setDeckBuffer(
+        handle: Long,
+        deck: Int,
+        left: ByteBuffer,
+        right: ByteBuffer?,
+        frames: Int,
+        sampleRateHz: Int,
+        channelCount: Int,
+    ): Boolean = ParsoNative.nativeSetDeckBuffer(
+        handle, deck, left, right, frames, sampleRateHz, channelCount
+    )
+
+    override fun play(handle: Long, deck: Int): Boolean = ParsoNative.nativePlay(handle, deck)
+
+    override fun pause(handle: Long, deck: Int): Boolean = ParsoNative.nativePause(handle, deck)
+
+    override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int =
+        ParsoNative.nativeRender(handle, left, right, frames)
+}
+
 /**
  * Closeable Kotlin facade for the direct-buffer JNI render seam.
  *
@@ -11,12 +54,19 @@ import java.nio.ByteOrder
  * adds no lock to the audio path. The direct buffers must be allocated with
  * [ByteBuffer.allocateDirect], use [ByteOrder.nativeOrder], and have position 0.
  */
-class ParsoEngine(
-    private val sampleRateHz: Int = 48_000,
-    private val maxFrames: Int = 512,
-    private val deckCount: Int = 2,
+class ParsoEngine private constructor(
+    private val sampleRateHz: Int,
+    private val maxFrames: Int,
+    private val deckCount: Int,
+    private val native: NativeEngineBridge,
 ) : AutoCloseable {
-    private var nativeHandle: Long = ParsoNative.nativeCreate(sampleRateHz, maxFrames, deckCount)
+    constructor(
+        sampleRateHz: Int = 48_000,
+        maxFrames: Int = 512,
+        deckCount: Int = 2,
+    ) : this(sampleRateHz, maxFrames, deckCount, JniEngineBridge)
+
+    private var nativeHandle: Long = native.create(sampleRateHz, maxFrames, deckCount)
     private val deckBuffers = arrayOfNulls<DeckBuffer>(deckCount)
 
     init {
@@ -46,7 +96,7 @@ class ParsoEngine(
         val channelCount = if (right == null) 1 else 2
         validateBuffer(left, frames, "left")
         if (right != null) validateBuffer(right, frames, "right")
-        check(ParsoNative.nativeSetDeckBuffer(
+        check(native.setDeckBuffer(
             handle, deck, left, right, frames, sourceSampleRateHz, channelCount
         )) { "native deck buffer was rejected" }
         deckBuffers[deck] = DeckBuffer(left, right)
@@ -56,14 +106,14 @@ class ParsoEngine(
     fun play(deck: Int) {
         val handle = requireOpen()
         require(deck in 0 until deckCount) { "deck is out of range" }
-        check(ParsoNative.nativePlay(handle, deck)) { "native play command was rejected" }
+        check(native.play(handle, deck)) { "native play command was rejected" }
     }
 
     /** Queue a pause command for one of the configured decks. */
     fun pause(deck: Int) {
         val handle = requireOpen()
         require(deck in 0 until deckCount) { "deck is out of range" }
-        check(ParsoNative.nativePause(handle, deck)) { "native pause command was rejected" }
+        check(native.pause(handle, deck)) { "native pause command was rejected" }
     }
 
     /** Fill caller-owned stereo direct buffers and return the rendered frame count. */
@@ -72,7 +122,7 @@ class ParsoEngine(
         require(frames in 1..maxFrames) { "frames must be between 1 and maxFrames" }
         validateBuffer(left, frames, "left")
         validateBuffer(right, frames, "right")
-        val rendered = ParsoNative.nativeRender(handle, left, right, frames)
+        val rendered = native.render(handle, left, right, frames)
         check(rendered == frames) { "native render failed: $rendered" }
         return rendered
     }
@@ -82,7 +132,7 @@ class ParsoEngine(
         val handle = nativeHandle
         if (handle != 0L) {
             nativeHandle = 0L
-            ParsoNative.nativeDestroy(handle)
+            native.destroy(handle)
             deckBuffers.fill(null)
         }
     }
@@ -105,4 +155,13 @@ class ParsoEngine(
     }
 
     private data class DeckBuffer(val left: ByteBuffer, val right: ByteBuffer?)
+
+    internal companion object {
+        fun forTesting(
+            sampleRateHz: Int = 48_000,
+            maxFrames: Int = 512,
+            deckCount: Int = 2,
+            native: NativeEngineBridge,
+        ): ParsoEngine = ParsoEngine(sampleRateHz, maxFrames, deckCount, native)
+    }
 }

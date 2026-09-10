@@ -6,6 +6,10 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.0.21"
 }
 
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}
+
 val parsoNdkVersion = providers.gradleProperty("parsoNdkVersion")
     .orElse("30.0.16248370")
     .get()
