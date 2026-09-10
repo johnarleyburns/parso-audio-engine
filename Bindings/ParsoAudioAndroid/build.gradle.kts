@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     id("com.android.library") version "8.7.3"
     id("org.jetbrains.kotlin.android") version "2.0.21"
+    id("maven-publish")
 }
 
 dependencies {
@@ -56,6 +57,12 @@ android {
         }
     }
 
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -66,5 +73,24 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+publishing {
+    repositories {
+        maven {
+            name = "localStaging"
+            url = layout.buildDirectory.dir("maven-repository").get().asFile.toURI()
+        }
+    }
+    publications {
+        register<MavenPublication>("release") {
+            groupId = "com.parsoaudio"
+            artifactId = "parso-audio-android"
+            version = "0.1.0"
+            afterEvaluate {
+                from(components["release"])
+            }
+        }
     }
 }

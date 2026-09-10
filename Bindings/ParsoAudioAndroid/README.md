@@ -16,3 +16,13 @@ The generated AAR is under
 26 or newer and retains direct PCM buffers until replacement or `close()`. The
 module is a packaging seam: device playback, capture, route changes, and JVM
 lifetime instrumentation remain separate acceptance gates.
+
+To stage a local Maven artifact for an application consumer:
+
+```bash
+gradle --project-dir Bindings/ParsoAudioAndroid \
+  testReleaseUnitTest publishReleasePublicationToLocalStagingRepository
+```
+
+The repository is written under `build/maven-repository/` and is not a remote
+publication or a device/runtime validation.

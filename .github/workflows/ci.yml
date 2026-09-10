@@ -228,7 +228,8 @@ jobs:
           gradle --project-dir Bindings/ParsoAudioAndroid \
             -PparsoNdkVersion=27.2.12479018 \
             -PparsoCmakeVersion=3.22.1 \
-            testReleaseUnitTest assembleRelease
+            testReleaseUnitTest assembleRelease \
+            publishReleasePublicationToLocalStagingRepository
       - name: Inspect AAR contents
         run: |
           aar='Bindings/ParsoAudioAndroid/build/outputs/aar/parso-audio-android-release.aar'
@@ -241,6 +242,8 @@ jobs:
             'jni/x86_64/libparso_android.so'; do
             unzip -l "$aar" | grep -F " $entry"
           done
+          test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/0.1.0/parso-audio-android-0.1.0.pom'
+          test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/0.1.0/parso-audio-android-0.1.0.aar'
 
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
