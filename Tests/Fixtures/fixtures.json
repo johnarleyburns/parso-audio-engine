@@ -7,7 +7,7 @@
     "committed (see .gitignore, ATTRIBUTION.md). License/author for each are on the linked",
     "Commons page.",
     "",
-    "The library decodes every fixture format NATIVELY (flac->libFLAC, ogg->stb_vorbis,",
+    "The library decodes every fixture format NATIVELY (flac->libFLAC, ogg->libvorbisfile,",
     "opus->libopusfile, mp3->Apple), so no ffmpeg/transcode step is required: each fixture",
     "also serves as a real decode-path test for its container.",
     "",

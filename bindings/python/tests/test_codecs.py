@@ -52,6 +52,24 @@ class CodecServicesTests(unittest.TestCase):
         self.assertTrue(math.isfinite(result.integrated_lufs))
         self.assertTrue(math.isfinite(result.true_peak_dbtp))
 
+    def test_real_ogg_fixture_decode(self) -> None:
+        fixture = Path(__file__).parents[3] / "Tests" / "Fixtures" / "audio" / "audial_waking_up.ogg"
+        if not fixture.exists():
+            self.skipTest("fixture corpus is unavailable")
+        decoded = self.audio.decode(fixture.read_bytes(), AudioCodec.OGG_VORBIS)
+        self.assertGreater(decoded.frames, 1_000)
+        self.assertIn(decoded.channel_count, (1, 2))
+        self.assertGreater(decoded.sample_rate_hz, 8_000)
+
+    def test_real_flac_fixture_decode(self) -> None:
+        fixture = Path(__file__).parents[3] / "Tests" / "Fixtures" / "audio" / "wikipedia_chanukah.flac"
+        if not fixture.exists():
+            self.skipTest("fixture corpus is unavailable")
+        decoded = self.audio.decode(fixture.read_bytes(), AudioCodec.FLAC)
+        self.assertGreater(decoded.frames, 1_000)
+        self.assertIn(decoded.channel_count, (1, 2))
+        self.assertGreater(decoded.sample_rate_hz, 8_000)
+
     def test_close_is_idempotent_and_rejects_calls(self) -> None:
         service = CodecServices(self.library)
         service.close()
