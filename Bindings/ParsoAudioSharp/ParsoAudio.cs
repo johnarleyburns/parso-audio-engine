@@ -145,6 +145,25 @@ public enum EngineCommand : uint
     Load = 39
 }
 
+/// <summary>Identifies a notification drained from the native render event ring.</summary>
+public enum EngineEventType : uint
+{
+    /// <summary>Playhead position changed.</summary>
+    Playhead = 0,
+    /// <summary>Deck peak telemetry.</summary>
+    Peak = 1,
+    /// <summary>Transport state changed.</summary>
+    State = 2,
+    /// <summary>A deck reached the end of its source.</summary>
+    EndOfTrack = 3,
+    /// <summary>A resident buffer can be released.</summary>
+    BufferReleased = 4
+}
+
+/// <summary>One copied notification from the native render event ring.</summary>
+public readonly record struct EngineEvent(
+    EngineEventType Type, int Deck, long Frame, float F0, float F1);
+
 /// <summary>Options shared by the native offline codec services.</summary>
 public readonly record struct CodecOptions
 {
@@ -541,6 +560,35 @@ public sealed class Engine : IDisposable
         return new EngineStats(stats.MasterFrame, stats.StarvedFrames, stats.DeckCount);
     }
 
+    /// <summary>Drains up to the requested number of notifications from the native event ring.</summary>
+    public unsafe EngineEvent[] PollEvents(uint maxEvents = 64)
+    {
+        if (maxEvents == 0 || maxEvents > 1024)
+            throw new ArgumentOutOfRangeException(nameof(maxEvents));
+        var nativeEvents = new NativeMethods.Event[(int)maxEvents];
+        for (var index = 0; index < nativeEvents.Length; index++)
+        {
+            nativeEvents[index].Size = (uint)Marshal.SizeOf<NativeMethods.Event>();
+            nativeEvents[index].AbiVersion = NativeMethods.AbiVersion;
+        }
+        uint outputEvents = 0;
+        fixed (NativeMethods.Event* eventPointer = nativeEvents)
+        {
+            var status = NativeMethods.PollEvents(handle, eventPointer, maxEvents, ref outputEvents);
+            ThrowIfFailed(status, "polling engine events");
+        }
+        if (outputEvents > maxEvents)
+            throw new ParsoException(NativeMethods.InvalidArgument, "polling engine events");
+        var managedEvents = new EngineEvent[(int)outputEvents];
+        for (var index = 0; index < managedEvents.Length; index++)
+        {
+            var native = nativeEvents[index];
+            managedEvents[index] = new EngineEvent(
+                (EngineEventType)native.Type, native.Deck, native.Frame, native.F0, native.F1);
+        }
+        return managedEvents;
+    }
+
     /// <summary>Enables or disables the bounded native master record ring.</summary>
     /// <param name="active">Whether subsequent renders should be copied into the ring.</param>
     public void SetRecordActive(bool active)
@@ -791,6 +839,18 @@ internal static unsafe partial class NativeMethods
         internal uint Reserved;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Event
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint Type;
+        internal int Deck;
+        internal long Frame;
+        internal float F0;
+        internal float F1;
+    }
+
     internal static EngineOptions DefaultOptions(uint sampleRateHz, uint maxFrames, uint deckCount) => new()
     {
         Size = (uint)Marshal.SizeOf<EngineOptions>(),
@@ -865,6 +925,10 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport("parso", EntryPoint = "parso_engine_get_stats")]
     internal static partial int GetStats(NativeEngineHandle engine, ref Stats stats);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_poll_events")]
+    internal static partial int PollEvents(NativeEngineHandle engine, Event* events,
+        uint maxEvents, ref uint outputEvents);
 
     [LibraryImport("parso", EntryPoint = "parso_engine_record_set_active")]
     internal static partial int RecordSetActive(NativeEngineHandle engine, uint active);

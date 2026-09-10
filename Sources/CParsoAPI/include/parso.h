@@ -266,6 +266,25 @@ typedef struct {
     uint32_t reserved;
 } parso_stats_t;
 
+/* Render-to-control notifications drained from the bounded native event ring. */
+enum {
+    PARSO_EVENT_PLAYHEAD = 0u,
+    PARSO_EVENT_PEAK = 1u,
+    PARSO_EVENT_STATE = 2u,
+    PARSO_EVENT_END_OF_TRACK = 3u,
+    PARSO_EVENT_BUFFER_RELEASED = 4u
+};
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint32_t type;
+    int32_t deck;
+    int64_t frame;
+    float f0;
+    float f1;
+} parso_event_t;
+
 PARSO_API const char *parso_last_error(void);
 PARSO_API const char *parso_status_string(parso_status_t status);
 
@@ -334,6 +353,7 @@ PARSO_API parso_status_t parso_pcm_view_init(parso_pcm_view_t *view);
 PARSO_API parso_status_t parso_output_view_init(parso_output_view_t *view);
 PARSO_API parso_status_t parso_command_init(parso_command_t *command);
 PARSO_API parso_status_t parso_stats_init(parso_stats_t *stats);
+PARSO_API parso_status_t parso_event_init(parso_event_t *event);
 
 PARSO_API parso_status_t parso_engine_create(
     const parso_engine_options_t *options,
@@ -357,6 +377,11 @@ PARSO_API parso_status_t parso_engine_post_command(
 PARSO_API parso_status_t parso_engine_render(
     parso_engine_t *engine,
     const parso_output_view_t *output
+);
+/* Drain up to max_events without blocking. Events are copied into caller-owned storage. */
+PARSO_API parso_status_t parso_engine_poll_events(
+    parso_engine_t *engine, parso_event_t *events, uint32_t max_events,
+    uint32_t *out_events
 );
 PARSO_API parso_status_t parso_engine_get_stats(
     const parso_engine_t *engine,

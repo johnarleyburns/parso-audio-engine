@@ -21,12 +21,18 @@ int main() {
     parso_output_view_t output{};
     parso_command_t command{};
     parso_stats_t stats{};
+    parso_event_t events[4]{};
+    uint32_t eventCount = 0;
     if (parso_engine_options_init(&options) != PARSO_STATUS_OK ||
         parso_control_init(&control) != PARSO_STATUS_OK ||
         parso_pcm_view_init(&view) != PARSO_STATUS_OK ||
         parso_output_view_init(&output) != PARSO_STATUS_OK ||
         parso_command_init(&command) != PARSO_STATUS_OK ||
-        parso_stats_init(&stats) != PARSO_STATUS_OK) return 1;
+        parso_stats_init(&stats) != PARSO_STATUS_OK ||
+        parso_event_init(&events[0]) != PARSO_STATUS_OK ||
+        parso_event_init(&events[1]) != PARSO_STATUS_OK ||
+        parso_event_init(&events[2]) != PARSO_STATUS_OK ||
+        parso_event_init(&events[3]) != PARSO_STATUS_OK) return 1;
 
     options.max_frames = frames;
     view.planes = planes;
@@ -45,6 +51,7 @@ int main() {
         engine.setDeckBuffer(0, view) != PARSO_STATUS_OK ||
         engine.postCommand(command) != PARSO_STATUS_OK ||
         engine.render(output) != PARSO_STATUS_OK ||
+        engine.pollEvents(events, 4, &eventCount) != PARSO_STATUS_OK ||
         engine.getStats(&stats) != PARSO_STATUS_OK) {
         std::fprintf(stderr, "public_cpp_consumer: %s\n", parso_last_error());
         return 1;
@@ -76,7 +83,8 @@ int main() {
             break;
         }
     }
-    if (!signal || stats.master_frame != frames || !engine.isOpen()) {
+    if (!signal || stats.master_frame != frames || !engine.isOpen() ||
+        eventCount == 0 || events[0].deck != 0) {
         std::fprintf(stderr, "public_cpp_consumer: signal=%d master_frame=%llu open=%d\n",
                      signal ? 1 : 0,
                      static_cast<unsigned long long>(stats.master_frame),

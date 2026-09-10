@@ -28,6 +28,7 @@ constexpr uint32_t kMinimumPCMViewSize = static_cast<uint32_t>(sizeof(parso_pcm_
 constexpr uint32_t kMinimumOutputSize = static_cast<uint32_t>(sizeof(parso_output_view_t));
 constexpr uint32_t kMinimumCommandSize = static_cast<uint32_t>(sizeof(parso_command_t));
 constexpr uint32_t kMinimumStatsSize = static_cast<uint32_t>(sizeof(parso_stats_t));
+constexpr uint32_t kMinimumEventSize = static_cast<uint32_t>(sizeof(parso_event_t));
 constexpr uint32_t kMinimumCapabilitiesSize = static_cast<uint32_t>(sizeof(parso_capabilities_t));
 constexpr uint32_t kMinimumPCMBufferSize = static_cast<uint32_t>(sizeof(parso_pcm_buffer_t));
 constexpr uint32_t kMinimumBytesSize = static_cast<uint32_t>(sizeof(parso_bytes_t));
@@ -1024,6 +1025,15 @@ PARSO_API parso_status_t parso_stats_init(parso_stats_t *stats) {
     return PARSO_STATUS_OK;
 }
 
+PARSO_API parso_status_t parso_event_init(parso_event_t *event) {
+    if (!event) return fail(PARSO_STATUS_INVALID_ARGUMENT, "event is null");
+    std::memset(event, 0, sizeof(*event));
+    event->size = sizeof(*event);
+    event->abi_version = PARSO_ABI_VERSION;
+    event->deck = -1;
+    return PARSO_STATUS_OK;
+}
+
 PARSO_API parso_status_t parso_engine_create(
     const parso_engine_options_t *options,
     parso_engine_t **out_engine
@@ -1228,6 +1238,53 @@ PARSO_API parso_status_t parso_engine_render(
         return PARSO_STATUS_OK;
     } catch (...) {
         return fail(PARSO_STATUS_INTERNAL, "exception caught while rendering");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_poll_events(
+    parso_engine_t *engine, parso_event_t *events, uint32_t maxEvents,
+    uint32_t *outEvents
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (!outEvents) return fail(PARSO_STATUS_INVALID_ARGUMENT, "event count output is null");
+        *outEvents = 0;
+        if (maxEvents == 0) return PARSO_STATUS_OK;
+        if (!events) return fail(PARSO_STATUS_INVALID_ARGUMENT, "event storage is null");
+        if (maxEvents > static_cast<uint32_t>(INT_MAX))
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "event count is too large");
+        for (uint32_t index = 0; index < maxEvents; ++index) {
+            const parso_status_t headerStatus = checkHeader(
+                events[index].size, events[index].abi_version, kMinimumEventSize
+            );
+            if (headerStatus != PARSO_STATUS_OK) return headerStatus;
+        }
+        pe_event nativeEvents[64]{};
+        uint32_t remaining = maxEvents;
+        uint32_t written = 0;
+        while (remaining > 0) {
+            const uint32_t batch = std::min<uint32_t>(remaining, 64u);
+            const int count = pe_poll_events(
+                engine->handle.engine, nativeEvents, static_cast<int>(batch));
+            if (count <= 0) break;
+            for (int index = 0; index < count; ++index) {
+                events[written].type = static_cast<uint32_t>(nativeEvents[index].type);
+                events[written].deck = nativeEvents[index].deck;
+                events[written].frame = nativeEvents[index].frame;
+                events[written].f0 = nativeEvents[index].f0;
+                events[written].f1 = nativeEvents[index].f1;
+                ++written;
+            }
+            written += 0;
+            remaining -= static_cast<uint32_t>(count);
+            if (static_cast<uint32_t>(count) < batch) break;
+        }
+        *outEvents = written;
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while polling events");
     }
 }
 

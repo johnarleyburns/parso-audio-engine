@@ -31,12 +31,18 @@ int main(void) {
     parso_output_view_t output;
     parso_command_t command;
     parso_stats_t stats;
+    parso_event_t events[4];
+    uint32_t event_count = 0;
     if (!require_status(parso_engine_options_init(&options), "options init") ||
         !require_status(parso_control_init(&control), "control init") ||
         !require_status(parso_pcm_view_init(&view), "PCM init") ||
         !require_status(parso_output_view_init(&output), "output init") ||
         !require_status(parso_command_init(&command), "command init") ||
-        !require_status(parso_stats_init(&stats), "stats init")) return 1;
+        !require_status(parso_stats_init(&stats), "stats init") ||
+        !require_status(parso_event_init(&events[0]), "event init") ||
+        !require_status(parso_event_init(&events[1]), "event init") ||
+        !require_status(parso_event_init(&events[2]), "event init") ||
+        !require_status(parso_event_init(&events[3]), "event init")) return 1;
 
     options.max_frames = frames;
     view.planes = planes;
@@ -63,6 +69,7 @@ int main(void) {
             .type = PARSO_COMMAND_SEEK, .deck = 0, .f0 = 0.001f
         }), "post seek") ||
         !require_status(parso_engine_render(engine, &output), "render") ||
+        !require_status(parso_engine_poll_events(engine, events, 4, &event_count), "poll events") ||
         !require_status(parso_engine_get_stats(engine, &stats), "get stats")) {
         if (engine) parso_engine_destroy(&engine);
         return 1;
@@ -75,7 +82,8 @@ int main(void) {
             break;
         }
     }
-    const int ok = signal && stats.master_frame == frames && stats.deck_count == 2;
+    const int ok = signal && stats.master_frame == frames && stats.deck_count == 2 &&
+                   event_count > 0 && events[0].deck == 0;
     if (!ok) fprintf(stderr, "public_c_consumer: invalid render result\n");
     if (!require_status(parso_engine_destroy(&engine), "destroy") || engine != NULL) return 1;
     if (!require_status(parso_engine_destroy(&engine), "repeat destroy")) return 1;

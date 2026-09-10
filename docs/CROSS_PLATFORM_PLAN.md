@@ -117,6 +117,10 @@ source tests and Vorbis example pass
 against the Linux CMake library. Fresh-venv installation is pending because this session's host has
 no `pip`/`ensurepip`; wheel construction itself passes through setuptools.
 
+The public event ABI now drains the native render-to-control ring without exposing internal engine
+types. C++, Python, and C# consumers can observe copied transport/playhead/state/peak notifications
+after a render boundary; the audio callback remains allocation-free and non-blocking.
+
 The binding also includes a 30-second minimum `render_acceptance.py` seam that writes actual native
 engine output through the public WAV service plus a JSON duration/event sidecar. It is intentionally
 only the first acceptance artifact and does not claim full FLX4 scenario or analysis coverage.

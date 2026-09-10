@@ -159,6 +159,11 @@ public:
         return parso_engine_get_stats(handle_, stats);
     }
 
+    parso_status_t pollEvents(parso_event_t *events, uint32_t maxEvents,
+                              uint32_t *outEvents) noexcept {
+        return parso_engine_poll_events(handle_, events, maxEvents, outEvents);
+    }
+
     parso_status_t setRecordActive(bool active) noexcept {
         return parso_engine_record_set_active(handle_, active ? 1u : 0u);
     }

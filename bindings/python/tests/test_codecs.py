@@ -9,6 +9,7 @@ from parso_audio import (
     ContainerCapability,
     Engine,
     EngineCommand,
+    EngineEventType,
     ParsoError,
 )
 
@@ -140,6 +141,8 @@ class CodecServicesTests(unittest.TestCase):
             left, right = engine.render(128)
             self.assertEqual(len(left), len(right))
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
+            events = engine.poll_events()
+            self.assertTrue(any(event.type == EngineEventType.STATE and event.deck == 0 for event in events))
 
     def test_headless_engine_rejects_invalid_command_deck(self) -> None:
         with Engine(max_frames=64, library_path=self.library) as engine:

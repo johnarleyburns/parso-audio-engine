@@ -81,6 +81,16 @@ class EngineCommand(IntEnum):
     LOAD = 39
 
 
+class EngineEventType(IntEnum):
+    """Stable render-to-control event selectors from ``parso.h``."""
+
+    PLAYHEAD = 0
+    PEAK = 1
+    STATE = 2
+    END_OF_TRACK = 3
+    BUFFER_RELEASED = 4
+
+
 class ContainerCapability(IntFlag):
     """Container bits reported by a native build."""
 
@@ -147,6 +157,17 @@ class EngineStats:
     master_frame: int
     starved_frames: int
     deck_count: int
+
+
+@dataclass(frozen=True)
+class EngineEvent:
+    """One copied notification from the native render event ring."""
+
+    type: EngineEventType
+    deck: int
+    frame: int
+    f0: float
+    f1: float
 
 
 class _Capabilities(ctypes.Structure):
@@ -304,6 +325,18 @@ class _Stats(ctypes.Structure):
         ("starved_frames", ctypes.c_uint64),
         ("deck_count", ctypes.c_uint32),
         ("reserved", ctypes.c_uint32),
+    ]
+
+
+class _Event(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("type", ctypes.c_uint32),
+        ("deck", ctypes.c_int32),
+        ("frame", ctypes.c_int64),
+        ("f0", ctypes.c_float),
+        ("f1", ctypes.c_float),
     ]
 
 
@@ -688,6 +721,13 @@ class Engine:
             ctypes.c_void_p, ctypes.POINTER(_Stats)
         ]
         library.parso_engine_get_stats.restype = ctypes.c_int32
+        library.parso_event_init.argtypes = [ctypes.POINTER(_Event)]
+        library.parso_event_init.restype = ctypes.c_int32
+        library.parso_engine_poll_events.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_Event), ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        library.parso_engine_poll_events.restype = ctypes.c_int32
         library.parso_engine_record_set_active.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
         library.parso_engine_record_set_active.restype = ctypes.c_int32
         library.parso_engine_record_drain.argtypes = [
@@ -925,6 +965,25 @@ class Engine:
         self._raise_for_status(status, "reading engine stats")
         return EngineStats(stats.master_frame, stats.starved_frames, stats.deck_count)
 
+    def poll_events(self, max_events: int = 64) -> list[EngineEvent]:
+        """Drain up to ``max_events`` copied notifications from the native ring."""
+
+        self._ensure_open()
+        if max_events <= 0:
+            raise ValueError("max_events must be positive")
+        events = (_Event * max_events)()
+        for event in events:
+            self._call("event initialization", self._library.parso_event_init, event)
+        out_events = ctypes.c_uint32()
+        status = self._library.parso_engine_poll_events(
+            self._handle, events, max_events, ctypes.byref(out_events)
+        )
+        self._raise_for_status(status, "polling engine events")
+        return [
+            EngineEvent(EngineEventType(event.type), event.deck, event.frame, event.f0, event.f1)
+            for event in events[:out_events.value]
+        ]
+
     def set_record_active(self, active: bool) -> None:
         """Enable or disable the bounded native master record ring."""
 
@@ -1013,6 +1072,8 @@ __all__ = [
     "ContainerCapability",
     "DecodedPcm",
     "Engine",
+    "EngineEvent",
+    "EngineEventType",
     "EngineStats",
     "LoudnessResult",
     "ParsoError",

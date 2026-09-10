@@ -21,6 +21,7 @@ with Engine(max_frames=512) as engine:
     engine.play(0)
     left, right = engine.render(256)
     print(engine.stats().master_frame)
+    print(engine.poll_events())
 ```
 
 `encode` accepts an iterable or a contiguous one-dimensional buffer of
@@ -40,7 +41,8 @@ future gates.
 close, and `play`/`pause` queue the portable transport commands. `post_command`
 exposes the versioned command payload (`i0`/`i1`/`i2` and `f0`/`f1`) for the
 shared native transport, with convenience methods for absolute seek, key-lock,
-and slip. Device IO,
+and slip. `poll_events()` drains copied state, playhead, peak, and end-of-track
+notifications from the bounded native event ring. Device IO,
 analysis, broader DJ controls, and recording remain explicit future gates.
 
 ## Local verification
