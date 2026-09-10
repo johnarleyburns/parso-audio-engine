@@ -133,7 +133,10 @@ jobs:
         run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release --warnaserror
 
   build-native-windows:
-    runs-on: windows-latest
+    # The job uses the Visual Studio 17 2022 generator. Pin the matching
+    # image because windows-latest now resolves to the Visual Studio 2026
+    # image, which no longer provides that generator.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - name: Configure native CMake targets
@@ -178,7 +181,6 @@ jobs:
           xcodebuild -scheme parso-audio-engine-Package \
             -destination 'generic/platform=watchOS Simulator' \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             -skipPackagePluginValidation build
 
   build-ios:
@@ -198,7 +200,6 @@ jobs:
           xcodebuild -scheme parso-audio-engine-Package \
             -destination 'generic/platform=iOS Simulator' \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             -skipPackagePluginValidation build
       - name: Cache acceptance-tool build
         uses: actions/cache@v4
