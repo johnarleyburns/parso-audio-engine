@@ -49,9 +49,18 @@ PYTHONPATH=bindings/python python3 -m unittest discover \
   -s bindings/python/tests -v
 PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
   PYTHONPATH=bindings/python python3 bindings/python/examples/vorbis_roundtrip.py
+PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
+  PYTHONPATH=bindings/python python3 bindings/python/examples/render_acceptance.py \
+  --output-dir /tmp/parso-python-acceptance
 ```
 
 The package's `pyproject.toml` builds a pure-Python wheel. Native artifacts
 are intentionally supplied by the platform package rather than embedded in
 that wheel; wheel installation and native-library discovery remain packaging
 matrix work for CP-PY.
+
+`render_acceptance.py` is a small offline acceptance seam, not the completed
+FLX4 scenario runner: it renders the native engine for at least 30 seconds,
+encodes the actual stereo output as WAV through `CodecServices`, and writes the
+matching duration/event sidecar. Full analysis, DJ scenarios, and human review
+remain later acceptance work.

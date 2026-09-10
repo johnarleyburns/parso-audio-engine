@@ -109,6 +109,10 @@ bounded headless rendering with retained deck-buffer ownership and play/pause co
 against the Linux CMake library. Fresh-venv installation is pending because this session's host has
 no `pip`/`ensurepip`; wheel construction itself passes through setuptools.
 
+The binding also includes a 30-second minimum `render_acceptance.py` seam that writes actual native
+engine output through the public WAV service plus a JSON duration/event sidecar. It is intentionally
+only the first acceptance artifact and does not claim full FLX4 scenario or analysis coverage.
+
 ### CP3 — Shared offline services and DJ behavior
 
 1. Expose native buffers, SRC, loudness, FLAC/Xiph-Vorbis/Opus bridges, and WAV IO. Audit CGlint's current decode/encode paths with real fixtures before advertising portable MP3 support.
