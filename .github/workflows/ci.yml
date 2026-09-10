@@ -67,6 +67,39 @@ jobs:
             echo "::error::Copyleft license text found in dependency tree"; exit 1
           fi
           echo "No copyleft licenses detected."
+      - name: Build native CMake targets
+        run: |
+          cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-native --parallel
+      - name: Test native CMake targets
+        run: ctest --test-dir build-native --output-on-failure
+
+  build-native-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native CMake targets
+        run: |
+          cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-native --parallel
+      - name: Test native CMake targets
+        run: ctest --test-dir build-native --output-on-failure
+
+  build-native-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native CMake targets
+        shell: pwsh
+        run: |
+          cmake -S . -B build-native `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DPARSO_BUILD_TESTS=ON
+      - name: Build native CMake targets
+        run: cmake --build build-native --config Release --parallel
+      - name: Test native CMake targets
+        run: ctest --test-dir build-native -C Release --output-on-failure
 
   build-watchos:
     runs-on: macos-14

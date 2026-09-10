@@ -92,8 +92,11 @@ cmake --build build-native
 ctest --test-dir build-native --output-on-failure
 ```
 
-This currently exercises the shared C++ headless render core. It does not claim complete Linux codec,
-device, Python, Android, or Apple-framework support; those require the later gates in the plan.
+This currently exercises the shared C++ headless render core. CI builds and tests these native CMake
+targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
+The C API is portable across those targets, while a C# wrapper and Windows-specific packaging remain
+future slices. This does not claim complete Linux codec, device, Python, Android, or Apple-framework
+support; those require the later gates in the plan.
 
 For the Android native toolchain on Debian/Ubuntu Linux or macOS, run:
 
