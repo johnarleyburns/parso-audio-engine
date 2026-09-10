@@ -1,12 +1,19 @@
-# Android, Linux, and Python 3 expansion plan
+# Android, Linux, Windows, and Python 3 expansion plan
 
 Status: implementation authorized; CP1 Linux build/headless slice is verified. CP0 contract/docs committed in `efa3d2f`; its baseline, detailed API/test inventory, and toolchain validation gates remain pending. Python 3 scope is specified for the next development session.
 
 ## Objective and scope
 
-Keep the existing Swift products and add a Kotlin/Android SDK, a Linux C/C++ SDK, and an approachable Python 3 wrapper over one shared native engine. Python should make file IO, analysis, DSP, mixing, and recording easy to use from scripts and interactive sessions. First deliver PCM-driven DSP/rendering, then complete file IO, DJ control, analysis, and recording parity. Playback, streaming, and neural products require their own acceptance inventory; they must not be implicitly advertised as portable when only the DJ engine is ready.
+Keep the existing Swift products and add Kotlin/Android, Linux C/C++, Windows C/C++, Windows C#, and approachable Python 3 APIs over one shared native engine. The Windows C and C++ APIs use the versioned C ABI and C++17 wrapper; the C# API uses generated P/Invoke over that C ABI rather than binding to C++ types. Python should make file IO, analysis, DSP, mixing, and recording easy to use from scripts and interactive sessions. First deliver PCM-driven DSP/rendering, then complete file IO, DJ control, analysis, and recording parity. Playback, streaming, and neural products require their own acceptance inventory; they must not be implicitly advertised as portable when only the DJ engine is ready.
 
-Proposed initial targets: Android API 26+, arm64-v8a devices and x86_64 emulators; Linux x86_64 and aarch64 with a documented glibc baseline. Preserve the Apple deployment targets in `Package.swift`. These are planning defaults, to be confirmed by the first toolchain/device spike. No Swift runtime should be needed on Android or Linux.
+Proposed initial targets: Android API 26+, arm64-v8a devices and x86_64 emulators; Linux x86_64 and aarch64 with a documented glibc baseline; Windows x64 with MSVC and .NET. Preserve the Apple deployment targets in `Package.swift`. These are planning defaults, to be confirmed by the first toolchain/device spike. No Swift runtime should be needed on Android, Linux, or Windows native artifacts.
+
+Windows support is a separate binding and platform gate. Linux will produce the best-effort Windows
+cross-builds that can be reproduced locally, using CMake with an audited MinGW-w64 or LLVM/Clang
+toolchain where available. Those artifacts are cross-compilation evidence, not a substitute for the
+native Windows build: MSVC ABI, DLL loading, Windows SDK behavior, Win32/WASAPI adapters, and C# native
+interop must be compiled and tested on a Windows runner. Toolchain/runtime licenses remain subject to
+the repository allowlist; no copyleft dependency may be introduced to obtain the cross-build.
 
 Python initially targets CPython 3 on Linux x86_64/aarch64. Select and document the minimum Python version and tested interpreter/architecture matrix during the packaging spike; Python 3.14.4 is available locally. Other OSes, interpreters, and free-threaded builds are not advertised until validated. Keep the user-facing Python API simple, with an installable package, context-managed resources, clear exceptions, and optional NumPy interoperability.
 
@@ -24,17 +31,22 @@ Python initially targets CPython 3 on Linux x86_64/aarch64. Select and document 
 ## Intended architecture
 
 ```text
-Swift SDK       Kotlin Android SDK       Linux C++ API       Python 3 package
-    |                  | JNI                   |                 | FFI
-    +---------------- versioned public C API -----------------------+
+Swift SDK       Kotlin Android SDK       Linux C/C++ API      Windows C/C++ API
+    |                  | JNI                   |                 | C ABI
+    |                  |                     |          Windows C# API
+    |                  |                     |                 | P/Invoke
+    |                  |                     +-----------------+
+    |                  |                                       |
+    +------------------+-------- versioned public C ABI --------+
                                     |
+                            Python 3 package (FFI)
                  shared native services and DJ control
                  IO / analysis / recording / commands
                                     |
                       CParsoEngine -> CParsoDSP
 
-Device adapters: Apple existing backend | Android Oboe | Linux host callback/backend
-Builds:          SwiftPM               | Gradle + CMake | CMake
+Device adapters: Apple existing backend | Android Oboe | Linux host callback/backend | Windows WASAPI (later)
+Builds:          SwiftPM               | Gradle + CMake | CMake                       | CMake/MSVC
 Python packaging: Python build frontend + native CMake artifacts -> wheel / source distribution
 ```
 
@@ -74,6 +86,17 @@ Gate: Linux native build plus Android NDK cross-build; device-free two-deck mix,
 7. Install headers, shared/static libraries, CMake package config, pkg-config metadata, and standalone C and C++ consumer examples.
 
 Gate: independent C11 and C++17 consumer builds; lifetime, double-close protection, invalid-input, long-position, saturation, ASan/UBSan, and control/render stress tests pass.
+
+### CP-WIN — Windows C/C++ and C# support
+
+1. Build the shared C ABI and C++17 wrapper natively with MSVC on `windows-latest` using the Visual Studio 2022 x64 generator. Produce and test the Windows DLL/import library or static-library form, headers, CMake package, and standalone C11/C++17 consumers.
+2. Add a Linux best-effort cross-build using a reproducible, license-audited MinGW-w64 or LLVM/Clang toolchain when available. Keep this job separate from the native Windows job; a Linux-produced artifact is cross-compilation evidence and is not the release authority for MSVC ABI, Windows SDK, DLL loading, or Windows runtime behavior.
+3. Add a C# API over the versioned C ABI using source-generated `LibraryImport`/P/Invoke. Keep C ABI structs fixed-width and blittable where practical; do not expose C++ types. Define ownership, `SafeHandle` shutdown, status-to-exception mapping, buffer lifetime, architecture selection, and native library discovery.
+4. Compile the managed Windows-targeted project on Linux with .NET Windows targeting enabled where the SDK supports it. Run managed marshaling/unit tests on Linux when they do not require Windows runtime APIs, then run the actual C# native consumer, DLL load, ABI, and Windows API/device-adapter tests on the native Windows runner.
+5. Keep Windows-specific backends (for example WASAPI, device enumeration, and route changes) behind platform adapters. Cross-compilation may validate headers and linkage, but only native Windows execution can establish those behaviors. NativeAOT is an optional later packaging target and must be built/tested on Windows rather than assumed cross-compilable from Linux.
+6. Add Windows x64 artifacts and a NuGet/CMake consumer smoke test only after the standalone consumers pass outside the repository. Consider Windows ARM64 as a follow-up matrix expansion after x64 is stable.
+
+Gate: Linux host build passes; the reproducible Linux-to-Windows cross-build passes when its audited toolchain is available; GitHub Actions native macOS, Linux, and Windows jobs are green; native Windows C11/C++17 and C# consumers load and exercise the same ABI; and Windows-specific device/runtime tests pass without weakening the portable tests.
 
 ### CP3 — Shared offline services and DJ behavior
 
@@ -138,8 +161,8 @@ Gate: documented Python APIs, installed-wheel unit/integration tests, runnable e
 
 ### CP7 — Cross-platform release gate
 
-- CI: existing Apple Swift tests; Linux GCC/Clang native tests and sanitizers; Python installed-wheel unit/integration/example tests across declared interpreter versions and architectures; Android NDK builds, Kotlin tests, emulator instrumentation, and a scheduled hardware run.
-- Run matching serialized command scenarios through Swift, C, C++, Kotlin, and Python, covering every matrix row. Use numeric audio tolerances and exact discrete-state assertions. Python release acceptance includes its own Linux human listening results, not only native results.
+- CI: existing Apple Swift tests plus native macOS CMake tests; Linux GCC/Clang native tests, sanitizers, and best-effort Windows cross-builds; native Windows MSVC/CMake/C/C++/C# tests; Python installed-wheel unit/integration/example tests across declared interpreter versions and architectures; Android NDK builds, Kotlin tests, emulator instrumentation, and a scheduled hardware run.
+- Run matching serialized command scenarios through Swift, C, C++, C#, Kotlin, and Python, covering every matrix row. Use numeric audio tolerances and exact discrete-state assertions. Python release acceptance includes its own Linux human listening results, not only native results; C# Windows acceptance includes native DLL and platform-backend tests.
 - Instrument allocation and prohibited operations around engine DSP calls, including transitions and queue pressure. Keep measurement outside RT kernels where it requires system calls. Verify zero allocations after preparation.
 - Measure render time against actual callback deadlines, dropouts, memory, recording overflow, long-track precision, and long-session stability on named devices. Record measured budgets; do not promise universal latency.
 - Verify dependency notices, source pins, SPDX policy, binary architecture/page alignment, exported symbols, and archive contents. Test consuming the packaged artifacts outside the monorepo.
@@ -154,12 +177,12 @@ Android hardware validation may be performed later by a contributor or device la
 | README | Explain the shared native architecture; SwiftPM, Gradle/Maven, and CMake installation; platform requirements; feature/codec gaps; runnable quickstarts; Linux listening command; links to full guides. Remove stale Apple-only and three-product claims as support lands. |
 | Architecture/spec | Update `docs/SPEC.md`, `docs/architecture.md`, and the historical retirement note in `docs/UNIFICATION_PLAN.md`; document ownership, threading, C ABI compatibility, backend selection, and native module boundaries. |
 | Feature acceptance | Extend `docs/FLX4-feature-inventory.md` with platform support, unit/integration test mapping, and Linux listening scenarios; separately inventory newer non-FLX4 APIs. |
-| Platform/API guides | Add Android and Linux build/integration guides, C/C++ ownership/error examples, Kotlin coroutine/lifecycle guidance, codec capability tables, packaging instructions, and troubleshooting. Update NOTICE/VENDOR records for actual dependency changes. |
+| Platform/API guides | Add Android, Linux, and Windows build/integration guides, C/C++ ownership/error examples, C# `LibraryImport`/`SafeHandle` guidance, Kotlin coroutine/lifecycle guidance, codec capability tables, packaging instructions, and troubleshooting. Update NOTICE/VENDOR records for actual dependency changes. |
 | Human review guide | Extend `docs/human-visible-acceptance.md` with native Linux commands, prerequisites, scenario coverage, A/B procedure, review manifest, live listening instructions, and honest pending hardware status. |
 | Examples | Maintain Swift examples against migrated APIs; add standalone C headless renderer, C++ live mixer/recorder, Kotlin Android mixer app, and native Linux acceptance CLI. Build examples and smoke-test documented commands in CI where feasible. |
 | Unit tests | Native DSP/control/analysis/codec correctness and boundary cases; C++ ownership/error behavior; Kotlin API state and cancellation; preserve Swift regressions. Test behavior, not merely forwarding calls. |
-| Integration tests | End-to-end decode -> analyze -> load -> command -> render -> record -> decode; identical scenario replay across bindings; JNI lifetime/queue pressure; device restart/route changes; installed CMake/Maven/SwiftPM consumer builds. |
-| Acceptance tests | Linux WAV/JSON/MP4 schema and duration checks, human listening manifest, real-fixture plausibility, Apple/native comparison, long-session/RT safety, and separately tracked real-device Android checks. |
+| Integration tests | End-to-end decode -> analyze -> load -> command -> render -> record -> decode; identical scenario replay across bindings; JNI/C# lifetime and queue pressure; Windows DLL load and native-backend behavior; device restart/route changes; installed CMake/NuGet/Maven/SwiftPM consumer builds. |
+| Acceptance tests | Linux WAV/JSON/MP4 schema and duration checks, native Windows C/C++/C# consumer checks, human listening manifest, real-fixture plausibility, Apple/native comparison, long-session/RT safety, and separately tracked real-device Android checks. |
 
 Each implementation PR must include the relevant rows above or explicitly identify why a row does not apply. No phase is complete with examples that do not build, undocumented public APIs, or pending tests for advertised behavior.
 
@@ -167,7 +190,7 @@ Python applies to every row of this table: README installation/quickstart, Pytho
 
 ## Recommended execution order
 
-CP0 remaining verification -> CP1 -> CP2 -> CP3 -> CP-PY offline/package implementation -> CP5 -> CP-PY live-device integration -> CP6 (C/C++ and Python listening) -> CP4 -> CP7. Preserve the existing phase IDs; CP-PY is an additional milestone. Prioritize Linux and Python usability/listening before Android integration because Linux is the maintainer's available review platform. Begin the native artifact CLI in CP2 and add scenarios with each feature; add Python scenarios as its APIs land. CP6 is the full listening gate for both. A thin PCM-only Android smoke app can validate JNI/Oboe earlier, but must not be presented as the complete SDK.
+CP0 remaining verification -> CP1 -> CP2 -> CP-WIN -> CP3 -> CP-PY offline/package implementation -> CP5 -> CP-PY live-device integration -> CP6 (C/C++/C# and Python listening) -> CP4 -> CP7. Preserve the existing phase IDs; CP-WIN and CP-PY are additional milestones. Prioritize Linux and Python usability/listening before Android integration because Linux is the maintainer's available review platform, while Windows native behavior is validated in CI. Begin the native artifact CLI in CP2 and add scenarios with each feature; add C# and Python scenarios as their APIs land. CP6 is the full listening gate for the applicable bindings. A thin PCM-only Android smoke app can validate JNI/Oboe earlier, but must not be presented as the complete SDK.
 
 Use focused conventional commits and update the untracked phase ledger after every commit. The verified CP1 Linux slice now provides CMake targets, C-clean header coverage, and `pe_step`/`pe_render` parity coverage with variable bounded callback sizes. Finish the detailed CP0 inventory/toolchain checks and obtain the Apple baseline separately; missing Apple hardware is an explicit verification gap, not a reason to skip Linux native progress or declare Apple tests passed. Discover the reported Swift installation, and add the Android NDK cross-build when that toolchain is available. Do not treat Linux Swift as a substitute for macOS/Xcode testing. Python implementation remains the later CP-PY milestone.
 
