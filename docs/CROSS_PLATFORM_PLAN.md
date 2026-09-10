@@ -175,9 +175,10 @@ Kotlin-facing `ParsoNative` declaration uses direct `ByteBuffer` planes for boun
 and exposes create/destroy/play/pause over the public C ABI. `ParsoEngine` adds the source-level
 closeable wrapper: it validates direct native-order buffers and max-frame bounds, serializes
 ownership by contract, retains direct deck PCM buffers until replacement/close, and makes close
-idempotent. This remains a JNI compile/lifetime seam only:
-Gradle/AAR packaging, JVM tests, device output, capture, audio focus, and route-change behavior
-remain required before Android support can be advertised.
+idempotent. `Bindings/ParsoAudioAndroid` now builds a release AAR containing the Kotlin classes,
+`libparso.so`, and `libparso_android.so` for arm64-v8a and x86_64. JVM lifetime tests, device
+output, capture, audio focus, and route-change behavior remain required before Android support can
+be advertised.
 
 Gate: JVM API/lifetime tests, JNI instrumentation, AAR consumer build, 16 KB page-size validation, and real-device playback/capture/route-change/underrun tests. Emulator tests do not establish latency performance.
 

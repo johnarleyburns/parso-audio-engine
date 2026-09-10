@@ -53,8 +53,8 @@ source of truth and the test suite remains the executable specification.
 
 - **Swift 6** toolchain (Xcode 16+). The package sets `swiftLanguageModes: [.v6]` (strict concurrency).
 - Apple API: **iOS 17+, iPadOS 17+, macCatalyst 17+, macOS 14+, watchOS 10+** (see `Package.swift`).
-- Planned native API: Linux x86_64/aarch64 with a documented glibc baseline; Android API 26+ with
-  arm64-v8a and x86_64 emulator artifacts. These portable targets are not yet shipping.
+- Native preview API: Linux x86_64/aarch64 with a documented glibc baseline; Android API 26+ with
+  arm64-v8a and x86_64 AAR artifacts. These portable targets are not yet shipping.
 - To run the real-audio fixture tests: `curl` + `python3` (both come with the Xcode command-line tools).
 
 ## Install (Swift Package Manager)
@@ -71,7 +71,7 @@ targets: [
 ]
 ```
 
-## Planned native SDKs
+## Portable native SDK preview
 
 The cross-platform work starts with the existing C/C++ real-time targets and a versioned, C-clean
 facade. Linux will get a C11/C++17 SDK built with CMake and a host-callback render example before
@@ -86,9 +86,10 @@ integration tests, installed-package consumer builds, and Linux human-listening 
 [cross-platform plan](docs/CROSS_PLATFORM_PLAN.md) for phase gates and the
 [matrix](docs/CROSS_PLATFORM_MATRIX.md) for support status.
 
-The Android source seam also includes a closeable `ParsoEngine` wrapper around direct native-order
-`ByteBuffer` planes. It requires serialized ownership and callback shutdown before `close`; it is
-not yet an AAR or device-output implementation.
+The Android source seam includes a closeable `ParsoEngine` wrapper around direct native-order
+`ByteBuffer` planes and is packaged by `Bindings/ParsoAudioAndroid` into a release AAR for
+arm64-v8a and x86_64. It requires serialized ownership and callback shutdown before `close`;
+device output, capture, and route handling remain separate acceptance gates.
 
 The native CP1 smoke build is available through CMake:
 
