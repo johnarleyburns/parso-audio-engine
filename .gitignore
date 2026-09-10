@@ -7,6 +7,9 @@ build-native-sanitize/
 build-linux/
 build-windows-cross/
 build-android-*/
+Bindings/ParsoAudioAndroid/.cxx/
+Bindings/ParsoAudioAndroid/.gradle/
+Bindings/ParsoAudioAndroid/build/
 *.xcodeproj
 DerivedData/
 .DS_Store

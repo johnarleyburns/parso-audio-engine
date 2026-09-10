@@ -201,6 +201,47 @@ jobs:
             --symbol Java_com_parsoaudio_ParsoNative_nativeRender \
             --output "android-abi-${{ matrix.abi }}.json"
 
+  build-android-aar:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java for Android and Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install pinned Android packaging toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager --install \
+            'platforms;android-35' \
+            'ndk;27.2.12479018' \
+            'cmake;3.22.1'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build release AAR
+        run: |
+          gradle --project-dir Bindings/ParsoAudioAndroid \
+            -PparsoNdkVersion=27.2.12479018 \
+            -PparsoCmakeVersion=3.22.1 \
+            assembleRelease
+      - name: Inspect AAR contents
+        run: |
+          aar='Bindings/ParsoAudioAndroid/build/outputs/aar/parso-audio-android-release.aar'
+          test -f "$aar"
+          unzip -l "$aar" | tee aar-contents.txt
+          for entry in \
+            'jni/arm64-v8a/libparso.so' \
+            'jni/arm64-v8a/libparso_android.so' \
+            'jni/x86_64/libparso.so' \
+            'jni/x86_64/libparso_android.so'; do
+            unzip -l "$aar" | grep -F " $entry"
+          done
+
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
     # image because windows-latest now resolves to the Visual Studio 2026
