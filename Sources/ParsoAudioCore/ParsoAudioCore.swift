@@ -143,7 +143,7 @@ public enum AudioContainer: Sendable, Equatable {
     case flac          // libFLAC (Cflac)
     case oggVorbis     // stb_vorbis (Cvorbis)
     case opus          // libopusfile (Copus)
-    case wav, aiff, caf, mp3, aac, m4a  // AVFoundation-native containers
+    case wav, aiff, caf, mp3, aac, m4a, m4b  // AVFoundation-native containers
     case auto
 }
 
@@ -159,7 +159,8 @@ private extension AudioContainer {
         case "caf": return .caf
         case "mp3": return .mp3
         case "aac": return .aac
-        case "m4a", "m4b", "alac": return .m4a
+        case "m4a", "alac": return .m4a
+        case "m4b": return .m4b
         default: return .wav
         }
     }
@@ -263,7 +264,7 @@ public struct AudioFileReader: Sendable {
             return try decodeOpus(url: url)
         case .wav:
             return try decodeWAV(url: url)
-        case .mp3, .aac, .aiff, .caf, .m4a:
+        case .mp3, .aac, .aiff, .caf, .m4a, .m4b:
             return try decodeApple(url: url)
         case .auto:
             throw AudioFileError.unsupportedContainer(container)
@@ -277,7 +278,9 @@ public struct AudioFileReader: Sendable {
     /// are reported instead of being silently treated as audio metadata.
     public static func readMetadata(from url: URL, container: AudioContainer = .auto) throws -> AudioFileMetadata {
         let resolved = container.resolved(for: url)
-        guard resolved == .m4a else { throw AudioFileError.unsupportedContainer(resolved) }
+        guard resolved == .m4a || resolved == .m4b else {
+            throw AudioFileError.unsupportedContainer(resolved)
+        }
         let data: Data
         do { data = try Data(contentsOf: url) }
         catch { throw AudioFileError.invalidFile(error.localizedDescription) }
@@ -304,7 +307,7 @@ public struct AudioFileReader: Sendable {
         switch container.resolved(for: url) {
         case .flac:
             return try decodeFLACRange(url: url, range: range)
-        case .wav, .aiff, .caf, .mp3, .aac, .m4a:
+        case .wav, .aiff, .caf, .mp3, .aac, .m4a, .m4b:
             return try decodeAppleRange(url: url, range: range)
         case .oggVorbis, .opus:
             throw RangeDecodeError.notSeekable
@@ -542,6 +545,7 @@ public enum ExportCodec: Sendable, Equatable {
     case flac(compression: Int)  // via libFLAC (Cflac) — PFLT float-preserving, 32-bit
     case aac(bitrate: Int)       // via AudioToolbox
     case alac                    // via AudioToolbox (lossless)
+    case m4b(bitrate: Int)       // AAC-LC audiobook container via AudioToolbox
     case mp3(bitrate: Int)       // via Glint (AudioToolbox has no MP3 encoder)
     /// Standard delivery FLAC: caller bit depth (16/24), Vorbis-comment tags,
     /// no PFLT block — the file other tools expect. `bitDepth` clamps to 16/24.
@@ -619,6 +623,8 @@ public struct AudioFileWriter {
             try writeApple(buffer, formatID: kAudioFormatMPEG4AAC, bitrate: bitrate)
         case .alac:
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
+        case .m4b(let bitrate):
+            try writeApple(buffer, formatID: kAudioFormatMPEG4AAC, bitrate: bitrate)
         case .mp3(let bitrate):
             if let mp3Encoder {
                 let data = try mp3Encoder.encode(buffer, bitrateKbps: bitrate)

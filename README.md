@@ -33,8 +33,10 @@ source of truth and the test suite remains the executable specification.
   Stretch, delay, Freeverb reverb, look-ahead limiter, lock-free SPSC ring) and `CParsoEngine`
   (allocation-free two-deck render graph) are real. `pe_render` (device) and `pe_step` (tests)
   share one DSP implementation.
-- **Codecs:** the native containers (WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A) go through
-  AVFoundation / AudioToolbox. FLAC, Ogg Vorbis and Opus use vendored permissive C
+- **Codecs:** Apple targets cover WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A, and AAC-in-M4B
+  audiobook output through AVFoundation / AudioToolbox. Native portable targets cover WAV plus
+  fixture-gated FLAC, Ogg Vorbis, Opus, MP3, and AAC paths; portable ALAC/M4A/M4B remain explicitly
+  gated pending a permissive codec/container implementation. FLAC, Ogg Vorbis and Opus use vendored permissive C
   (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
   uses `CGlint` by default, because AudioToolbox has no MP3 encoder — an app under a
   compatible license can supply its own encoder (e.g. LAME) instead via
@@ -100,7 +102,7 @@ are advertised, so the current native capability mask leaves FLAC, Ogg Vorbis, O
 ALAC, AIFF, and CAF unset until their native gates pass. Independent C11 and C++17 consumer tests
 exercise the PCM, SRC, and loudness contracts through `ctest`.
 
-This currently exercises the shared C++ headless render core. CI builds and tests these native CMake
+This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated
 C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows-targeted assembly, while

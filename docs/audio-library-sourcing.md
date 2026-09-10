@@ -22,13 +22,14 @@ as much of the behavior as possible independently testable.
 | Decode FLAC | libFLAC | BSD-3 | native FLAC, no libogg |
 | Decode Ogg Vorbis | stb_vorbis | PD / MIT-0 | single-file decoder |
 | Decode Opus | libogg + libopus + libopusfile | BSD-3 | `op_open_file` / `op_read_float` |
-| Decode MP3/AAC/ALAC/WAV/AIFF | AVAudioFile / AudioToolbox | Apple | native |
+| Decode MP3/AAC/ALAC/WAV/AIFF/M4B | AVAudioFile / AudioToolbox | Apple | native |
 | Encode WAV | AVAudioFile / ExtAudioFile | Apple | PCM |
 | Encode FLAC | libFLAC | BSD-3 | lossless |
 | Encode lossy | AAC (AudioToolbox) | Apple | **no MP3 encoder exists permissively** |
+| Encode ALAC / audiobook M4B | AVAudioFile / AudioToolbox | Apple | lossless ALAC and AAC-in-M4B paths are tested on Apple |
 | MP3 encode | Glint | MIT | The only MP3 encoder on every platform — AudioToolbox has none; pinned and covered by round-trip tests |
-| Portable M4A container (candidate) | minimp4 | CC0 | ISO BMFF demux/mux only; not an AAC/ALAC codec |
-| Portable ALAC codec | None currently | — | Apple public-source implementation removed after legal review; independently authored BSD-only replacement pending |
+| Portable M4A/M4B container | minimp4 candidate | CC0 | ISO BMFF demux/mux only; not an AAC/ALAC codec; not yet vendored |
+| Portable ALAC codec | None approved currently | — | ALAC remains required for the serious-library matrix, but portable support is gated on an independently auditable permissive encoder/decoder; Apple-source-derived code is not used |
 | Sample-rate conversion (offline) | libsamplerate ≥ 0.2.2 | BSD-2 | never < 0.1.9 (GPL) |
 | Time-stretch + pitch (key-lock) | Signalsmith Stretch | MIT | Accelerate FFT flag |
 | Varispeed / scratch | custom Hermite / windowed-sinc | — | RT-safe, in `CParsoDSP` |
@@ -63,9 +64,19 @@ decision, cleanly isolated behind the `TimePitch` type.
 ## Platform contract
 
 macOS GitHub Actions is the correctness host: it builds Swift 6 and runs every analysis, DSP,
-headless-engine and vendored-codec test, as well as the native Apple framework paths — AAC/ALAC
-and device-style audio output. iOS and watchOS simulator builds are compile and integration gates,
+headless-engine and vendored-codec test, as well as the native Apple framework paths — AAC/ALAC,
+AAC-in-M4B audiobook output, and device-style audio output. iOS and watchOS simulator builds are compile and integration gates,
 not a substitute for the deterministic test run.
+
+### ALAC decision
+
+ALAC is in scope because it is lossless and materially useful for music libraries and audiobook
+archives. Apple platforms use AVFoundation/AudioToolbox for ALAC-in-M4A and M4B decode/encode,
+and the Swift package has round-trip tests for both the ALAC codec and AAC-in-M4B output. The native
+portable matrix does not claim ALAC or M4A/M4B yet: the historical Apple-source-derived
+implementation was removed after legal review, while the permissive portable candidates audited so
+far are either decoder-only or stale. A portable claim requires a fresh license audit, an ISO-BMFF
+demux/mux gate, ALAC decode and encode vectors, and real M4A/M4B fixtures.
 
 Note what retiring Linux cost: there is no longer a second, non-Apple implementation of the decode
 and analysis paths to disagree with the AVFoundation ones. The deterministic `HeadlessDJEngine`

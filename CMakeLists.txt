@@ -8,6 +8,11 @@ project(parso_audio_engine
 
 option(PARSO_BUILD_TESTS "Build native CTest smoke tests" ON)
 option(PARSO_BUILD_SHARED_API "Build the shared parso C ABI library" ON)
+option(PARSO_BUILD_CODEC_BRIDGES "Build the vendored FLAC/Vorbis/Opus bridge targets" ON)
+option(PARSO_BUILD_CODEC_FIXTURE_TESTS "Build native codec fixture smoke tests" ON)
+
+set(PARSO_NATIVE_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/Tests/Fixtures/audio" CACHE PATH
+    "Directory containing downloaded native codec fixtures")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -95,6 +100,128 @@ if(NOT MSVC)
     target_compile_options(Cebur128 PRIVATE -Wno-unused-but-set-variable)
 endif()
 set_target_properties(Cebur128 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(PARSO_BUILD_CODEC_BRIDGES)
+    # These source lists mirror the SwiftPM vendor targets. The source files
+    # remain unmodified upstream code; the SYSTEM include boundary keeps their
+    # diagnostics from changing the first-party warning policy.
+    file(GLOB_RECURSE Cflac_sources CONFIGURE_DEPENDS
+        Sources/Cflac/src/*.c
+    )
+    list(FILTER Cflac_sources EXCLUDE REGEX "/deduplication/")
+    add_library(Cflac STATIC ${Cflac_sources})
+    target_include_directories(Cflac
+        SYSTEM PUBLIC Sources/Cflac/include
+        SYSTEM PRIVATE Sources/Cflac/src Sources/Cflac/src/include
+    )
+    target_compile_definitions(Cflac PRIVATE
+        FLAC__NO_DLL
+        HAVE_STDINT_H
+        FLAC__HAS_OGG=0
+        HAVE_LROUND
+        HAVE_FSEEKO
+        HAVE_INTTYPES_H
+        HAVE_SYS_PARAM_H
+        PACKAGE_VERSION="1.4.3"
+    )
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        # GCC's optimized build diagnoses an upstream C99 empty initializer as
+        # a pedantic error. Keep the exception on the unchanged vendor target.
+        target_compile_options(Cflac PRIVATE -Wno-pedantic)
+    endif()
+    if(UNIX)
+        target_link_libraries(Cflac PUBLIC m)
+    endif()
+    set_target_properties(Cflac PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    add_library(CflacBridge STATIC Sources/CflacBridge/src/parso_flac.c)
+    target_include_directories(CflacBridge PUBLIC Sources/CflacBridge/include)
+    target_link_libraries(CflacBridge PUBLIC Cflac)
+    set_target_properties(CflacBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    add_library(Cvorbis STATIC Sources/Cvorbis/src/stb_vorbis_impl.c)
+    target_include_directories(Cvorbis SYSTEM PUBLIC Sources/Cvorbis/include)
+    set_target_properties(Cvorbis PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    add_library(CvorbisBridge STATIC Sources/CvorbisBridge/src/parso_vorbis.c)
+    target_include_directories(CvorbisBridge PUBLIC Sources/CvorbisBridge/include)
+    target_link_libraries(CvorbisBridge PUBLIC Cvorbis)
+    set_target_properties(CvorbisBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    file(GLOB_RECURSE Copus_sources CONFIGURE_DEPENDS
+        Sources/Copus/celt/*.c
+        Sources/Copus/silk/*.c
+        Sources/Copus/src/*.c
+    )
+    list(FILTER Copus_sources EXCLUDE REGEX "/silk/float/")
+    add_library(Copus STATIC ${Copus_sources})
+    target_include_directories(Copus
+        SYSTEM PUBLIC Sources/Copus/include
+        SYSTEM PRIVATE
+            Sources/Copus/src
+            Sources/Copus/src/opusfile
+            Sources/Copus/celt
+            Sources/Copus/silk
+            Sources/Copus/silk/fixed
+            Sources/Copus/silk/float
+            Sources/Copus/include/ogg
+            Sources/Copus/include/opus
+    )
+    target_compile_definitions(Copus PRIVATE
+        HAVE_CONFIG_H
+        OPUS_BUILD
+        OPUS_DISABLE_INTRINSICS
+        FIXED_POINT
+        USE_ALLOCA
+    )
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        # These are optimizer diagnostics in the unchanged libopus/libopusfile
+        # sources; they are not emitted by the first-party bridge or tests.
+        target_compile_options(Copus PRIVATE
+            -Wno-maybe-uninitialized
+            -Wno-stringop-overflow
+            -Wno-unused-variable
+        )
+    endif()
+    if(UNIX)
+        target_link_libraries(Copus PUBLIC m)
+    endif()
+    set_target_properties(Copus PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    add_library(CopusBridge STATIC Sources/CopusBridge/src/parso_opus.c)
+    target_include_directories(CopusBridge PUBLIC Sources/CopusBridge/include)
+    target_link_libraries(CopusBridge PUBLIC Copus)
+    set_target_properties(CopusBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    # CGlint is the portable MP3/AAC codec path. Keep its complete C-clean
+    # surface in one target so the native fixture gate exercises the same
+    # implementation used by the SwiftPM target.
+    file(GLOB_RECURSE CGlint_sources CONFIGURE_DEPENDS
+        Sources/CGlint/src/*.cpp
+    )
+    add_library(CGlint STATIC ${CGlint_sources})
+    target_include_directories(CGlint
+        PUBLIC Sources/CGlint/include
+        PRIVATE Sources/CGlint/src
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # Glint is vendored unchanged under its MIT license. Its upstream
+        # release has a few intentionally dormant code paths and optimizer
+        # false positives under the repository's global -Werror policy.
+        target_compile_options(CGlint PRIVATE
+            -Wno-unused-parameter
+            -Wno-maybe-uninitialized
+            -Wno-stringop-overflow
+            -Wno-unused-variable
+            -Wno-unused-but-set-variable
+            -Wno-unused-function
+        )
+    endif()
+    if(UNIX)
+        target_link_libraries(CGlint PUBLIC m)
+    endif()
+    set_target_properties(CGlint PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
 add_library(CParsoAPI STATIC
     Sources/CParsoAPI/src/parso_api.cpp
@@ -231,5 +358,31 @@ if(PARSO_BUILD_TESTS)
         set_tests_properties(public_cpp_services_consumer PROPERTIES
             LABELS "native;public-api;consumer;offline;services;cxx17"
         )
+
+        if(PARSO_BUILD_CODEC_BRIDGES AND PARSO_BUILD_CODEC_FIXTURE_TESTS)
+            add_executable(parso_native_codec_fixture_smoke
+                Tests/Native/native_codec_fixture_smoke.c
+            )
+            target_include_directories(parso_native_codec_fixture_smoke PRIVATE
+                Sources/CflacBridge/include
+                Sources/CvorbisBridge/include
+                Sources/CopusBridge/include
+                Sources/CGlint/include
+            )
+            target_link_libraries(parso_native_codec_fixture_smoke PRIVATE
+                CflacBridge CvorbisBridge CopusBridge CGlint
+            )
+            add_test(NAME native_codec_fixture_smoke
+                COMMAND parso_native_codec_fixture_smoke
+                    "${PARSO_NATIVE_FIXTURES_DIR}/wikipedia_chanukah.flac"
+                    "${PARSO_NATIVE_FIXTURES_DIR}/audial_waking_up.ogg"
+                    "${PARSO_NATIVE_FIXTURES_DIR}/razrfish_mocassins.opus"
+                    "${PARSO_NATIVE_FIXTURES_DIR}/gostreyshen_world.mp3"
+            )
+            set_tests_properties(native_codec_fixture_smoke PROPERTIES
+                LABELS "native;codec;fixtures;flac;vorbis;opus;mp3;aac;wav"
+                SKIP_RETURN_CODE 77
+            )
+        endif()
     endif()
 endif()

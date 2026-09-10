@@ -122,6 +122,22 @@ struct CodecRoundtripTests {
         #expect(back.frameCount == src.frameCount)
     }
 
+    @Test func alacRoundtripIsLossless() throws {
+        let src = SignalGenerators.sine(frequency: 330, seconds: 0.5, channels: 2)
+        let url = tempURL("m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try AudioFileWriter(url: url, format: src.format, codec: .alac)
+        try writer.write(src); try writer.finish()
+        let back = try AudioFileReader(url: url, container: .m4a).readAll()
+        #expect(back.frameCount == src.frameCount)
+        #expect(back.channelCount == src.channelCount)
+        for c in 0..<src.channelCount {
+            for i in 0..<src.frameCount {
+                #expect(abs(src.channel(c)[i] - back.channel(c)[i]) < 1.0e-6)
+            }
+        }
+    }
+
     @Test func aacRoundtripIsBounded() throws {
         let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
         let url = tempURL("m4a")
@@ -129,6 +145,19 @@ struct CodecRoundtripTests {
         try w.write(src); try w.finish()
         let back = try AudioFileReader(url: url, container: .m4a).readAll()
         // Lossy: allow codec/priming delay; assert the tone survives, not sample-exactness.
+        #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
+    }
+
+    @Test func m4bAACRoundtripIsBounded() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 1)
+        let url = tempURL("m4b")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try AudioFileWriter(
+            url: url, format: src.format, codec: .m4b(bitrate: 128_000)
+        )
+        try writer.write(src); try writer.finish()
+        let back = try AudioFileReader(url: url, container: .m4b).readAll()
+        #expect(back.frameCount > 0)
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
 
