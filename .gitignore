@@ -1,5 +1,7 @@
 .build/
 .swiftpm/
+**/bin/
+**/obj/
 build-native/
 build-android-*/
 *.xcodeproj

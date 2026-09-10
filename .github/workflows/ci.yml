@@ -84,6 +84,12 @@ jobs:
           cmake --build build-native --parallel
       - name: Test native CMake targets
         run: ctest --test-dir build-native --output-on-failure
+      - name: Set up .NET for Windows-targeted C# compilation
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Cross-compile C# API on Linux
+        run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release
 
   build-native-windows:
     runs-on: windows-latest
@@ -100,6 +106,17 @@ jobs:
         run: cmake --build build-native --config Release --parallel
       - name: Test native CMake targets
         run: ctest --test-dir build-native -C Release --output-on-failure
+      - name: Set up .NET for native C# consumer
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build C# native consumer
+        run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release
+      - name: Run C# native consumer
+        shell: pwsh
+        run: |
+          $env:PATH = "$pwd\build-native\Release;$env:PATH"
+          dotnet run --project Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release --no-build
 
   build-watchos:
     runs-on: macos-14

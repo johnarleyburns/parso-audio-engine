@@ -7,6 +7,7 @@ project(parso_audio_engine
 )
 
 option(PARSO_BUILD_TESTS "Build native CTest smoke tests" ON)
+option(PARSO_BUILD_SHARED_API "Build the shared parso C ABI library" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -39,6 +40,9 @@ target_include_directories(CParsoEngine
     PRIVATE Sources/CParsoDSP/include
 )
 target_link_libraries(CParsoEngine PUBLIC CParsoDSP)
+set_target_properties(CParsoDSP CParsoEngine PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
 
 add_library(CParsoAPI STATIC
     Sources/CParsoAPI/src/parso_api.cpp
@@ -49,6 +53,22 @@ target_include_directories(CParsoAPI
 )
 target_link_libraries(CParsoAPI PUBLIC CParsoEngine)
 
+if(PARSO_BUILD_SHARED_API)
+    add_library(ParsoAPI SHARED
+        Sources/CParsoAPI/src/parso_api.cpp
+    )
+    target_include_directories(ParsoAPI
+        PUBLIC Sources/CParsoAPI/include
+        PRIVATE Sources/CParsoEngine/include
+    )
+    target_compile_definitions(ParsoAPI PRIVATE
+        PARSO_BUILD_SHARED
+        PARSO_BUILDING_LIBRARY
+    )
+    target_link_libraries(ParsoAPI PRIVATE CParsoEngine)
+    set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
+endif()
+
 if(MSVC)
     target_compile_options(CParsoDSP PRIVATE /W4)
     target_compile_options(CParsoEngine PRIVATE /W4)
@@ -56,6 +76,9 @@ else()
     target_compile_options(CParsoDSP PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(CParsoEngine PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(CParsoAPI PRIVATE -Wall -Wextra -Wpedantic)
+    if(PARSO_BUILD_SHARED_API)
+        target_compile_options(ParsoAPI PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
 endif()
 
 include(CTest)
@@ -88,7 +111,11 @@ if(PARSO_BUILD_TESTS)
         add_executable(parso_public_c_consumer
             Tests/Native/public_c_consumer.c
         )
-        target_link_libraries(parso_public_c_consumer PRIVATE CParsoAPI)
+        if(PARSO_BUILD_SHARED_API)
+            target_link_libraries(parso_public_c_consumer PRIVATE ParsoAPI)
+        else()
+            target_link_libraries(parso_public_c_consumer PRIVATE CParsoAPI)
+        endif()
         target_include_directories(parso_public_c_consumer PRIVATE
             Sources/CParsoAPI/include
         )

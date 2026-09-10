@@ -94,9 +94,11 @@ ctest --test-dir build-native --output-on-failure
 
 This currently exercises the shared C++ headless render core. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
-The C API is portable across those targets, while a C# wrapper and Windows-specific packaging remain
-future slices. This does not claim complete Linux codec, device, Python, Android, or Apple-framework
-support; those require the later gates in the plan.
+The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated
+C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows-targeted assembly, while
+the native Windows job builds and runs the C# consumer against the MSVC-built DLL. This does not claim
+complete Linux codec, device, Python, Android, or Apple-framework support; those require the later gates
+in the plan.
 
 For the Android native toolchain on Debian/Ubuntu Linux or macOS, run:
 
