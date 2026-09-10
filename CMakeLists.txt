@@ -403,7 +403,13 @@ if(NOT PARSO_BUILD_SHARED_API)
     else()
         set(PARSO_CXX_RUNTIME "")
     endif()
-    set(PARSO_PKGCONFIG_LIBS "-lCParsoAPI -lCParsoEngine -lCParsoDSP -lCGlintWav -lCsrc -lCebur128 ${PARSO_CXX_RUNTIME} -lm")
+    set(PARSO_PKGCONFIG_LIBS "-lCParsoAPI -lCParsoEngine -lCParsoDSP -lCGlintWav -lCsrc -lCebur128")
+    if(PARSO_BUILD_CODEC_BRIDGES)
+        set(PARSO_PKGCONFIG_LIBS
+            "${PARSO_PKGCONFIG_LIBS} -lCGlint -lCflacBridge -lCflac -lCvorbisBridge -lCvorbis -lCopusBridge -lCopus -lCogg"
+        )
+    endif()
+    set(PARSO_PKGCONFIG_LIBS "${PARSO_PKGCONFIG_LIBS} ${PARSO_CXX_RUNTIME} -lm")
 endif()
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/parso-audio-engine.pc.in
