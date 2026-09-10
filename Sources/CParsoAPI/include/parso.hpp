@@ -159,6 +159,23 @@ public:
         return parso_engine_get_stats(handle_, stats);
     }
 
+    parso_status_t setRecordActive(bool active) noexcept {
+        return parso_engine_record_set_active(handle_, active ? 1u : 0u);
+    }
+
+    parso_status_t drainRecord(float *left, float *right, uint32_t maxFrames,
+                               uint32_t *outFrames) noexcept {
+        return parso_engine_record_drain(handle_, left, right, maxFrames, outFrames);
+    }
+
+    parso_status_t recordDroppedFrames(uint64_t *outFrames) const noexcept {
+        return parso_engine_record_dropped_frames(handle_, outFrames);
+    }
+
+    parso_status_t resetRecord() noexcept {
+        return parso_engine_record_reset(handle_);
+    }
+
 private:
     parso_engine_t *handle_ = nullptr;
 };

@@ -50,6 +50,25 @@ int main() {
         return 1;
     }
 
+    if (engine.resetRecord() != PARSO_STATUS_OK ||
+        engine.setRecordActive(true) != PARSO_STATUS_OK ||
+        engine.render(output) != PARSO_STATUS_OK) {
+        std::fprintf(stderr, "public_cpp_consumer: record activation failed: %s\n",
+                     parso_last_error());
+        return 1;
+    }
+    uint32_t recordedFrames = 0;
+    uint64_t droppedFrames = 0;
+    if (engine.drainRecord(outputLeft, outputRight, frames, &recordedFrames) != PARSO_STATUS_OK ||
+        recordedFrames != frames ||
+        engine.recordDroppedFrames(&droppedFrames) != PARSO_STATUS_OK || droppedFrames != 0 ||
+        engine.resetRecord() != PARSO_STATUS_OK ||
+        engine.setRecordActive(false) != PARSO_STATUS_OK) {
+        std::fprintf(stderr, "public_cpp_consumer: invalid record result: %s\n",
+                     parso_last_error());
+        return 1;
+    }
+
     bool signal = false;
     for (uint32_t index = 0; index < frames; ++index) {
         if (std::fabs(outputLeft[index]) > 1.0e-5f || std::fabs(outputRight[index]) > 1.0e-5f) {
