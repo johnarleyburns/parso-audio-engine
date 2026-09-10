@@ -60,6 +60,10 @@ jobs:
         # current_status.md); in release the full suite is minutes. Debug
         # compilation is still covered by the iOS/watchOS xcodebuild jobs.
         run: swift test -c release -v
+      - name: Validate repository scripts and whitespace
+        run: |
+          bash -n scripts/setup-linux.sh
+          git diff --check
       - name: SPDX copyleft guard
         run: |
           if grep -R -n -E "GNU (Lesser )?General Public License|GPL-2|GPL-3|LGPL|AGPL" \
@@ -78,18 +82,38 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate repository scripts and whitespace
+        run: |
+          bash -n scripts/setup-linux.sh
+          git diff --check
       - name: Build native CMake targets
         run: |
           cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build-native --parallel
       - name: Test native CMake targets
         run: ctest --test-dir build-native --output-on-failure
+      - name: Install Windows GNU cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends ninja-build mingw-w64
+      - name: Cross-build Windows GNU shared library
+        run: |
+          cmake -S . -B build-windows-cross -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/windows-mingw-x86_64.cmake \
+            -DPARSO_BUILD_TESTS=OFF \
+            -DPARSO_BUILD_SHARED_API=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-windows-cross --parallel
+          test -f build-windows-cross/libparso.dll || test -f build-windows-cross/parso.dll
+          file build-windows-cross/libparso.dll 2>/dev/null || file build-windows-cross/parso.dll
       - name: Set up .NET for Windows-targeted C# compilation
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Cross-compile C# API on Linux
-        run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release
+      - name: Build C# binding on Linux
+        run: dotnet build Bindings/ParsoAudioSharp/ParsoAudioSharp.csproj --configuration Release --warnaserror
+      - name: Cross-compile C# native consumer on Linux
+        run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release --warnaserror
 
   build-native-windows:
     runs-on: windows-latest
