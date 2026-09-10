@@ -2,19 +2,47 @@ using System.Runtime.InteropServices;
 
 namespace ParsoAudioSharp;
 
+/// <summary>Reports a non-zero status returned by the Parso native API.</summary>
 public sealed class ParsoException : Exception
 {
+    /// <summary>Creates an exception for a failed native operation.</summary>
+    /// <param name="status">The native status code.</param>
+    /// <param name="operation">A human-readable description of the operation.</param>
     public ParsoException(int status, string operation)
         : base($"{operation} failed with native status {status}.")
     {
         Status = status;
     }
 
+    /// <summary>Gets the native status code returned by the failed operation.</summary>
     public int Status { get; }
 }
 
-public readonly record struct EngineStats(ulong MasterFrame, ulong StarvedFrames, uint DeckCount);
+/// <summary>Provides counters and topology information for a native engine.</summary>
+public readonly record struct EngineStats
+{
+    /// <summary>Creates an engine statistics snapshot.</summary>
+    /// <param name="masterFrame">The number of master frames rendered.</param>
+    /// <param name="starvedFrames">The number of frames rendered without sufficient source data.</param>
+    /// <param name="deckCount">The number of decks allocated by the engine.</param>
+    public EngineStats(ulong masterFrame, ulong starvedFrames, uint deckCount)
+    {
+        MasterFrame = masterFrame;
+        StarvedFrames = starvedFrames;
+        DeckCount = deckCount;
+    }
 
+    /// <summary>Gets the number of master frames rendered.</summary>
+    public ulong MasterFrame { get; }
+
+    /// <summary>Gets the number of frames rendered without sufficient source data.</summary>
+    public ulong StarvedFrames { get; }
+
+    /// <summary>Gets the number of decks allocated by the engine.</summary>
+    public uint DeckCount { get; }
+}
+
+/// <summary>Owns a Parso native engine and exposes its basic control and render operations.</summary>
 public sealed class Engine : IDisposable
 {
     private readonly NativeEngineHandle handle;
@@ -26,6 +54,11 @@ public sealed class Engine : IDisposable
         this.maxFrames = maxFrames;
     }
 
+    /// <summary>Creates a native engine with the requested render configuration.</summary>
+    /// <param name="sampleRateHz">The engine sample rate in hertz.</param>
+    /// <param name="maxFrames">The maximum number of frames accepted by one render call.</param>
+    /// <param name="deckCount">The number of decks to allocate.</param>
+    /// <returns>A disposable managed handle for the native engine.</returns>
     public static Engine Create(uint sampleRateHz = 48_000, uint maxFrames = 512, uint deckCount = 2)
     {
         var options = NativeMethods.DefaultOptions(sampleRateHz, maxFrames, deckCount);
@@ -34,6 +67,8 @@ public sealed class Engine : IDisposable
         return new Engine(new NativeEngineHandle(nativeHandle), maxFrames);
     }
 
+    /// <summary>Sets the master output level used by subsequent renders.</summary>
+    /// <param name="level">The linear master gain.</param>
     public void SetMasterLevel(float level)
     {
         var control = NativeMethods.DefaultControl();
@@ -42,6 +77,10 @@ public sealed class Engine : IDisposable
         ThrowIfFailed(status, "setting control");
     }
 
+    /// <summary>Renders one block of non-interleaved stereo output into caller-owned spans.</summary>
+    /// <param name="left">The destination span for the left channel.</param>
+    /// <param name="right">The destination span for the right channel.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the spans differ in length, are empty, or exceed the configured block size.</exception>
     public unsafe void Render(Span<float> left, Span<float> right)
     {
         if (left.Length != right.Length || left.Length == 0 || left.Length > maxFrames)
@@ -63,6 +102,7 @@ public sealed class Engine : IDisposable
         }
     }
 
+    /// <summary>Gets a snapshot of native render counters and engine topology.</summary>
     public EngineStats GetStats()
     {
         var stats = new NativeMethods.Stats
@@ -75,6 +115,7 @@ public sealed class Engine : IDisposable
         return new EngineStats(stats.MasterFrame, stats.StarvedFrames, stats.DeckCount);
     }
 
+    /// <summary>Releases the native engine handle.</summary>
     public void Dispose()
     {
         handle.Dispose();
