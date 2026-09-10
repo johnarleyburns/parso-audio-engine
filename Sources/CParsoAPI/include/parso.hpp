@@ -85,6 +85,8 @@ public:
     uint64_t frames() const noexcept { return value_.frames; }
     uint32_t channels() const noexcept { return value_.channel_count; }
     uint32_t sampleRate() const noexcept { return value_.sample_rate_hz; }
+    parso_pcm_buffer_t *cHandle() noexcept { return &value_; }
+    const parso_pcm_buffer_t *cHandle() const noexcept { return &value_; }
 
 private:
     parso_pcm_buffer_t value_{};

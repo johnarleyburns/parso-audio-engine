@@ -53,6 +53,10 @@ extern "C" {
 #define PARSO_PCM_FORMAT_F32_LE UINT64_C(16)
 #define PARSO_PCM_FORMAT_F64_LE UINT64_C(32)
 
+/* Offline service capability bits. */
+#define PARSO_OFFLINE_SERVICE_SRC UINT64_C(1)
+#define PARSO_OFFLINE_SERVICE_LOUDNESS UINT64_C(2)
+
 typedef int32_t parso_status_t;
 enum {
     PARSO_STATUS_OK = 0,
@@ -76,7 +80,8 @@ typedef struct {
     uint64_t pcm_write_formats;
     uint32_t max_channels;
     uint32_t max_sample_rate_hz;
-    uint32_t reserved[2];
+    /* Reuses the original eight-byte reserved tail without changing layout. */
+    uint64_t offline_services;
 } parso_capabilities_t;
 
 /* Interleaved float32 PCM owned by the native library after a read. The
@@ -108,6 +113,38 @@ typedef struct {
     uint32_t deck_count;
     uint32_t reserved;
 } parso_engine_options_t;
+
+enum {
+    PARSO_SRC_QUALITY_BEST = 0u,
+    PARSO_SRC_QUALITY_MEDIUM = 1u,
+    PARSO_SRC_QUALITY_FASTEST = 2u
+};
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint32_t source_sample_rate_hz;      /* 0: use the input buffer rate */
+    uint32_t destination_sample_rate_hz;
+    uint32_t channel_count;              /* 0: use the input buffer channels */
+    uint32_t quality;                    /* one of PARSO_SRC_QUALITY_* */
+    uint32_t reserved[2];
+} parso_src_options_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    double target_lufs;
+    uint32_t reserved[2];
+} parso_loudness_options_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    double integrated_lufs;
+    double true_peak_dbtp;
+    double gain_to_target_db;
+    double loudness_range_lu;
+} parso_loudness_result_t;
 
 typedef struct {
     uint32_t size;
@@ -196,6 +233,23 @@ PARSO_API parso_status_t parso_wav_write(
 PARSO_API parso_status_t parso_pcm_write(
     const parso_pcm_buffer_t *buffer, uint32_t bits_per_sample,
     parso_bytes_t *out_bytes
+);
+
+/* Offline sample-rate conversion. The input is borrowed; the output owns its
+ * interleaved float32 samples and is released with parso_pcm_buffer_release. */
+PARSO_API parso_status_t parso_src_options_init(parso_src_options_t *options);
+PARSO_API parso_status_t parso_src_convert(
+    const parso_pcm_buffer_t *input, const parso_src_options_t *options,
+    parso_pcm_buffer_t *out_buffer
+);
+
+/* Offline EBU R128 loudness measurement. Negative infinity represents a
+ * measurement with no gated loudness, such as digital silence. */
+PARSO_API parso_status_t parso_loudness_options_init(parso_loudness_options_t *options);
+PARSO_API parso_status_t parso_loudness_result_init(parso_loudness_result_t *result);
+PARSO_API parso_status_t parso_loudness_measure(
+    const parso_pcm_buffer_t *input, const parso_loudness_options_t *options,
+    parso_loudness_result_t *result
 );
 
 PARSO_API parso_status_t parso_engine_options_init(parso_engine_options_t *options);

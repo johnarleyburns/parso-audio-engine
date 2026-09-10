@@ -65,14 +65,46 @@ add_library(CGlintWav STATIC
 target_include_directories(CGlintWav PUBLIC Sources/CGlint/src)
 set_target_properties(CGlintWav PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(Csrc STATIC
+    Sources/Csrc/src/samplerate.c
+    Sources/Csrc/src/src_linear.c
+    Sources/Csrc/src/src_sinc.c
+    Sources/Csrc/src/src_zoh.c
+)
+target_include_directories(Csrc PUBLIC Sources/Csrc/include)
+target_compile_definitions(Csrc PRIVATE
+    HAVE_STDBOOL_H
+    ENABLE_SINC_BEST_CONVERTER
+    ENABLE_SINC_MEDIUM_CONVERTER
+    ENABLE_SINC_FAST_CONVERTER
+    PACKAGE="libsamplerate"
+    VERSION="0.2.2"
+)
+set_target_properties(Csrc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(UNIX)
+    target_link_libraries(Csrc PUBLIC m)
+endif()
+
+add_library(Cebur128 STATIC
+    Sources/Cebur128/src/ebur128.c
+)
+target_include_directories(Cebur128 PUBLIC Sources/Cebur128/include)
+if(NOT MSVC)
+    # Upstream 1.2.6 carries an intentionally unused error scratch variable in
+    # one allocation path; keep the warning boundary limited to that vendor.
+    target_compile_options(Cebur128 PRIVATE -Wno-unused-but-set-variable)
+endif()
+set_target_properties(Cebur128 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(CParsoAPI STATIC
     Sources/CParsoAPI/src/parso_api.cpp
 )
 target_include_directories(CParsoAPI
     PUBLIC Sources/CParsoAPI/include
     PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
+            Sources/Csrc/include Sources/Cebur128/include
 )
-target_link_libraries(CParsoAPI PUBLIC CParsoEngine PRIVATE CGlintWav)
+target_link_libraries(CParsoAPI PUBLIC CParsoEngine PRIVATE CGlintWav Csrc Cebur128)
 
 if(PARSO_BUILD_SHARED_API)
     add_library(ParsoAPI SHARED
@@ -81,12 +113,13 @@ if(PARSO_BUILD_SHARED_API)
     target_include_directories(ParsoAPI
         PUBLIC Sources/CParsoAPI/include
         PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
+                Sources/Csrc/include Sources/Cebur128/include
     )
     target_compile_definitions(ParsoAPI PRIVATE
         PARSO_BUILD_SHARED
         PARSO_BUILDING_LIBRARY
     )
-    target_link_libraries(ParsoAPI PRIVATE CParsoEngine CGlintWav)
+    target_link_libraries(ParsoAPI PRIVATE CParsoEngine CGlintWav Csrc Cebur128)
     set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
 endif()
 
@@ -170,6 +203,33 @@ if(PARSO_BUILD_TESTS)
         add_test(NAME public_cpp_offline_consumer COMMAND parso_public_cpp_offline_consumer)
         set_tests_properties(public_cpp_offline_consumer PROPERTIES
             LABELS "native;public-api;consumer;offline;cxx17"
+        )
+
+        add_executable(parso_public_c_services_consumer
+            Tests/Native/public_c_services_consumer.c
+        )
+        target_link_libraries(parso_public_c_services_consumer PRIVATE
+            $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+            $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        )
+        target_include_directories(parso_public_c_services_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_c_services_consumer COMMAND parso_public_c_services_consumer)
+        set_tests_properties(public_c_services_consumer PROPERTIES
+            LABELS "native;public-api;consumer;offline;services;c11"
+        )
+
+        add_executable(parso_public_cpp_services_consumer
+            Tests/Native/public_cpp_services_consumer.cpp
+        )
+        target_link_libraries(parso_public_cpp_services_consumer PRIVATE CParsoAPI)
+        target_include_directories(parso_public_cpp_services_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_cpp_services_consumer COMMAND parso_public_cpp_services_consumer)
+        set_tests_properties(public_cpp_services_consumer PROPERTIES
+            LABELS "native;public-api;consumer;offline;services;cxx17"
         )
     endif()
 endif()

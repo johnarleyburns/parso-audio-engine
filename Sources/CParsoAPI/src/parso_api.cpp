@@ -1,8 +1,11 @@
 #include "parso.h"
 
+#include "ebur128.h"
 #include "parso_engine.h"
+#include "samplerate.h"
 #include "wav_io.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -23,6 +26,11 @@ constexpr uint32_t kMinimumStatsSize = static_cast<uint32_t>(sizeof(parso_stats_
 constexpr uint32_t kMinimumCapabilitiesSize = static_cast<uint32_t>(sizeof(parso_capabilities_t));
 constexpr uint32_t kMinimumPCMBufferSize = static_cast<uint32_t>(sizeof(parso_pcm_buffer_t));
 constexpr uint32_t kMinimumBytesSize = static_cast<uint32_t>(sizeof(parso_bytes_t));
+constexpr uint32_t kMinimumSRCOptionsSize = static_cast<uint32_t>(sizeof(parso_src_options_t));
+constexpr uint32_t kMinimumLoudnessOptionsSize =
+    static_cast<uint32_t>(sizeof(parso_loudness_options_t));
+constexpr uint32_t kMinimumLoudnessResultSize =
+    static_cast<uint32_t>(sizeof(parso_loudness_result_t));
 
 thread_local const char *lastError = "ok";
 
@@ -48,6 +56,10 @@ bool validBits(uint32_t bits) noexcept {
 bool validWavBits(uint32_t bits, uint32_t isFloat) noexcept {
     if (isFloat > 1) return false;
     return isFloat ? (bits == 32 || bits == 64) : validBits(bits);
+}
+
+bool validSRCQuality(uint32_t quality) noexcept {
+    return quality <= PARSO_SRC_QUALITY_FASTEST;
 }
 
 bool multiplicationFits(uint64_t left, uint64_t right, uint64_t limit) noexcept {
@@ -99,6 +111,38 @@ parso_status_t validateEmptyBytes(const parso_bytes_t *bytes) noexcept {
         return fail(PARSO_STATUS_INVALID_ARGUMENT, "output bytes must be empty");
     }
     return PARSO_STATUS_OK;
+}
+
+parso_status_t validateSRCOptions(const parso_src_options_t *options) noexcept {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC options are null");
+    const parso_status_t status = checkHeader(
+        options->size, options->abi_version, kMinimumSRCOptionsSize
+    );
+    if (status != PARSO_STATUS_OK) return status;
+    if (!finitePositive(options->destination_sample_rate_hz) ||
+        options->destination_sample_rate_hz > static_cast<uint32_t>(INT_MAX) ||
+        options->source_sample_rate_hz > static_cast<uint32_t>(INT_MAX) ||
+        options->channel_count > 2 || !validSRCQuality(options->quality)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "invalid SRC options");
+    }
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t validateLoudnessOptions(const parso_loudness_options_t *options) noexcept {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "loudness options are null");
+    const parso_status_t status = checkHeader(
+        options->size, options->abi_version, kMinimumLoudnessOptionsSize
+    );
+    if (status != PARSO_STATUS_OK) return status;
+    if (!std::isfinite(options->target_lufs)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "loudness target is not finite");
+    }
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t validateLoudnessResult(parso_loudness_result_t *result) noexcept {
+    if (!result) return fail(PARSO_STATUS_INVALID_ARGUMENT, "loudness result is null");
+    return checkHeader(result->size, result->abi_version, kMinimumLoudnessResultSize);
 }
 
 parso_status_t copyPCM(const std::vector<float> &samples, uint32_t sampleRate,
@@ -309,8 +353,8 @@ PARSO_API parso_status_t parso_capabilities_get(parso_capabilities_t *capabiliti
     capabilities->pcm_write_formats = capabilities->pcm_read_formats;
     capabilities->max_channels = 2;
     capabilities->max_sample_rate_hz = static_cast<uint32_t>(INT32_MAX);
-    capabilities->reserved[0] = 0;
-    capabilities->reserved[1] = 0;
+    capabilities->offline_services = PARSO_OFFLINE_SERVICE_SRC |
+                                     PARSO_OFFLINE_SERVICE_LOUDNESS;
     lastError = "ok";
     return PARSO_STATUS_OK;
 }
@@ -471,6 +515,155 @@ PARSO_API parso_status_t parso_pcm_write(
         return fail(PARSO_STATUS_OUT_OF_MEMORY, "raw PCM encode allocation failed");
     } catch (...) {
         return fail(PARSO_STATUS_INTERNAL, "exception caught while writing raw PCM");
+    }
+}
+
+PARSO_API parso_status_t parso_src_options_init(parso_src_options_t *options) {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC options are null");
+    std::memset(options, 0, sizeof(*options));
+    options->size = sizeof(*options);
+    options->abi_version = PARSO_ABI_VERSION;
+    options->destination_sample_rate_hz = 48000;
+    options->quality = PARSO_SRC_QUALITY_BEST;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_src_convert(
+    const parso_pcm_buffer_t *input, const parso_src_options_t *options,
+    parso_pcm_buffer_t *outBuffer
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyPCMBuffer(outBuffer);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        const parso_status_t inputStatus = validatePCMBuffer(input);
+        if (inputStatus != PARSO_STATUS_OK) return inputStatus;
+        const parso_status_t optionsStatus = validateSRCOptions(options);
+        if (optionsStatus != PARSO_STATUS_OK) return optionsStatus;
+        const uint32_t sourceRate = options->source_sample_rate_hz != 0
+            ? options->source_sample_rate_hz : input->sample_rate_hz;
+        const uint32_t channels = options->channel_count != 0
+            ? options->channel_count : input->channel_count;
+        if (sourceRate != input->sample_rate_hz || channels != input->channel_count) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC options do not match input PCM");
+        }
+        if (input->frames > static_cast<uint64_t>(std::numeric_limits<long>::max())) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC input is too large");
+        }
+        const double ratio = static_cast<double>(options->destination_sample_rate_hz) /
+                             static_cast<double>(sourceRate);
+        if (src_is_valid_ratio(ratio) == 0) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC ratio is outside supported limits");
+        }
+        if (input->frames == 0) {
+            outBuffer->channel_count = channels;
+            outBuffer->sample_rate_hz = options->destination_sample_rate_hz;
+            lastError = "ok";
+            return PARSO_STATUS_OK;
+        }
+        const double estimated = std::ceil(static_cast<double>(input->frames) * ratio) + 256.0;
+        if (!std::isfinite(estimated) ||
+            estimated > static_cast<double>(std::numeric_limits<long>::max()) ||
+            estimated > static_cast<double>(std::numeric_limits<size_t>::max() / sizeof(float) /
+                                             channels)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC output is too large");
+        }
+        const long outputCapacity = static_cast<long>(estimated);
+        const uint64_t sampleCount = static_cast<uint64_t>(outputCapacity) * channels;
+        std::vector<float> samples(static_cast<size_t>(sampleCount));
+        SRC_DATA data{};
+        data.data_in = input->samples;
+        data.data_out = samples.data();
+        data.input_frames = static_cast<long>(input->frames);
+        data.output_frames = outputCapacity;
+        data.end_of_input = 1;
+        data.src_ratio = ratio;
+        const int error = src_simple(&data, static_cast<int>(options->quality),
+                                     static_cast<int>(channels));
+        if (error != 0) return fail(PARSO_STATUS_INTERNAL, src_strerror(error));
+        samples.resize(static_cast<size_t>(data.output_frames_gen) * channels);
+        const parso_status_t copyStatus = copyPCM(
+            samples, options->destination_sample_rate_hz, channels, outBuffer
+        );
+        if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+        return copyStatus;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "SRC allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while converting sample rate");
+    }
+}
+
+PARSO_API parso_status_t parso_loudness_options_init(parso_loudness_options_t *options) {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "loudness options are null");
+    std::memset(options, 0, sizeof(*options));
+    options->size = sizeof(*options);
+    options->abi_version = PARSO_ABI_VERSION;
+    options->target_lufs = -14.0;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_loudness_result_init(parso_loudness_result_t *result) {
+    if (!result) return fail(PARSO_STATUS_INVALID_ARGUMENT, "loudness result is null");
+    std::memset(result, 0, sizeof(*result));
+    result->size = sizeof(*result);
+    result->abi_version = PARSO_ABI_VERSION;
+    result->integrated_lufs = -HUGE_VAL;
+    result->true_peak_dbtp = -HUGE_VAL;
+    result->gain_to_target_db = HUGE_VAL;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_loudness_measure(
+    const parso_pcm_buffer_t *input, const parso_loudness_options_t *options,
+    parso_loudness_result_t *result
+) {
+    try {
+        const parso_status_t resultStatus = validateLoudnessResult(result);
+        if (resultStatus != PARSO_STATUS_OK) return resultStatus;
+        const parso_status_t inputStatus = validatePCMBuffer(input);
+        if (inputStatus != PARSO_STATUS_OK) return inputStatus;
+        const parso_status_t optionsStatus = validateLoudnessOptions(options);
+        if (optionsStatus != PARSO_STATUS_OK) return optionsStatus;
+        const int mode = EBUR128_MODE_I | EBUR128_MODE_LRA | EBUR128_MODE_TRUE_PEAK;
+        ebur128_state *state = ebur128_init(
+            input->channel_count, input->sample_rate_hz, mode
+        );
+        if (!state) return fail(PARSO_STATUS_OUT_OF_MEMORY, "loudness state allocation failed");
+        const int addStatus = ebur128_add_frames_float(
+            state, input->samples, static_cast<size_t>(input->frames)
+        );
+        if (addStatus != EBUR128_SUCCESS) {
+            ebur128_destroy(&state);
+            return fail(PARSO_STATUS_INTERNAL, "loudness frame processing failed");
+        }
+        double integrated = -HUGE_VAL;
+        if (ebur128_loudness_global(state, &integrated) != EBUR128_SUCCESS) {
+            ebur128_destroy(&state);
+            return fail(PARSO_STATUS_INTERNAL, "integrated loudness measurement failed");
+        }
+        double peak = 0.0;
+        for (uint32_t channel = 0; channel < input->channel_count; ++channel) {
+            double channelPeak = 0.0;
+            if (ebur128_true_peak(state, channel, &channelPeak) != EBUR128_SUCCESS) {
+                ebur128_destroy(&state);
+                return fail(PARSO_STATUS_INTERNAL, "true peak measurement failed");
+            }
+            peak = std::max(peak, channelPeak);
+        }
+        double range = 0.0;
+        if (ebur128_loudness_range(state, &range) != EBUR128_SUCCESS ||
+            !std::isfinite(range) || range < 0.0) {
+            range = 0.0;
+        }
+        ebur128_destroy(&state);
+        result->integrated_lufs = integrated;
+        result->true_peak_dbtp = peak > 0.0 ? 20.0 * std::log10(peak) : -HUGE_VAL;
+        result->gain_to_target_db = options->target_lufs - integrated;
+        result->loudness_range_lu = range;
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while measuring loudness");
     }
 }
 
