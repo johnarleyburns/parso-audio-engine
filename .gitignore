@@ -11,6 +11,9 @@ Bindings/ParsoAudioAndroid/.cxx/
 Bindings/ParsoAudioAndroid/.gradle/
 Bindings/ParsoAudioAndroid/.kotlin/
 Bindings/ParsoAudioAndroid/build/
+Bindings/ParsoAudioAndroidConsumer/.gradle/
+Bindings/ParsoAudioAndroidConsumer/.kotlin/
+Bindings/ParsoAudioAndroidConsumer/build/
 *.xcodeproj
 DerivedData/
 .DS_Store

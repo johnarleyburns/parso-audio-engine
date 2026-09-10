@@ -244,6 +244,18 @@ jobs:
           done
           test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/0.1.0/parso-audio-android-0.1.0.pom'
           test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/0.1.0/parso-audio-android-0.1.0.aar'
+      - name: Build external Android AAR consumer
+        run: |
+          gradle --project-dir Bindings/ParsoAudioAndroidConsumer assembleDebug
+          apk='Bindings/ParsoAudioAndroidConsumer/build/outputs/apk/debug/parso-audio-android-consumer-debug.apk'
+          test -f "$apk"
+          for entry in \
+            'lib/arm64-v8a/libparso.so' \
+            'lib/arm64-v8a/libparso_android.so' \
+            'lib/x86_64/libparso.so' \
+            'lib/x86_64/libparso_android.so'; do
+            unzip -l "$apk" | grep -F " $entry"
+          done
 
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
