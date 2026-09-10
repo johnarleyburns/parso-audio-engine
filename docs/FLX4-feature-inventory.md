@@ -70,3 +70,17 @@ the controller (replicate the behavior) · `[HW]` hardware/physical only — **N
 **Bottom line:** ~80% of the FLX4's feature list is rekordbox Performance mode; the equivalence
 target is *"rekordbox Performance mode, 2-deck scope"* + the two Smart macros. Analysis (BPM, key,
 structure) has no permissive library and is implemented in-house per `docs/SPEC.md §5`.
+
+## Platform and evidence requirements
+
+The feature rows above describe behavior, not language bindings. Each advertised platform must map
+the same behavior to its own API and pass the corresponding tests. Swift/Apple is the current
+implementation. Linux C/C++ and Kotlin/Android are planned consumers of the shared native engine;
+they may not claim a row from a forwarding wrapper without native integration evidence.
+
+For each row, acceptance evidence must include applicable unit tests, an end-to-end integration
+scenario, an installed-package consumer build, and platform device checks. Linux additionally needs a
+human listening artifact: the actual rendered WAV, matching JSON event sidecar, and (where reviewable)
+the MP4 overlay. Effects, transitions, cue/loop boundaries, and recording must be audible in the
+artifact; labels cannot be placed over an unchanged source. Android hardware listening and route
+validation remain pending until a device is available and are tracked separately from Linux sign-off.

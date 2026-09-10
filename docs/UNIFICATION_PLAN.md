@@ -251,6 +251,16 @@ contains only libraries, and the whole-package scheme builds for every destinati
   tree exactly equal to the shipping products.
 
 
+## 4d. Native expansion proposal (supersedes the platform scope, not the migration history)
+
+The Linux retirement above was correct for the two Swift app migrations and remains historical
+record. A later product requirement now calls for a portable C/C++ SDK on Linux and a Kotlin/Android
+wrapper. That work is specified separately in `docs/CROSS_PLATFORM_PLAN.md` and begins with CP0
+contract reconciliation. It must not reintroduce Linux Swift targets, Apple framework dependencies,
+or duplicate the render graph. The shared native implementation is the seam; Swift, C/C++, and Kotlin
+bindings are consumers with separate packaging and device adapters. `docs/CROSS_PLATFORM_MATRIX.md`
+is the source of truth for which surfaces are actually supported.
+
 ## 5. Cross-cutting issues to settle before Phase 1
 
 - **watchOS.** PAE has no watchOS platform and the DSP/codec C targets have never been

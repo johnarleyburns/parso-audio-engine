@@ -1,7 +1,7 @@
 # parso-audio-engine — Engineering Specification
 
-**Repository:** `parso-audio-engine` (public) · **License:** MIT · **Language:** Swift 6 (strict concurrency)
-**Deliverable:** three SPM library products — `ParsoAudioCore`, `ParsoAudioAnalysis`, `ParsoDJEngine` —
+**Repository:** `parso-audio-engine` (public) · **License:** MIT · **Primary language:** Swift 6 (strict concurrency)
+**Deliverable:** layered Swift products plus a shared native C/C++ API and Kotlin/Android binding,
 that together provide **complete software functional equivalence of the Pioneer DDJ-FLX4** (as used
 with rekordbox), with **no copyleft dependencies**.
 
@@ -21,8 +21,13 @@ with rekordbox), with **no copyleft dependencies**.
    vendored Glint encoder — AudioToolbox has no MP3 encoder, so Glint is the MP3 path on every
    supported platform.
 
-6. **Real-time DSP core is C/C++**; Swift is the API/orchestration skin. Apple-native (Accelerate/AVFoundation/AudioToolbox) where it is the best free option.
-7. **Targets:** iOS 17+, iPadOS 17+, macCatalyst 17+, macOS 14+, watchOS 10+. Apple platforms only.
+6. **Real-time DSP core is C/C++**; Swift is the current Apple API/orchestration skin. Portable APIs
+   must reuse the native implementation; Apple-native (Accelerate/AVFoundation/AudioToolbox) remains
+   an Apple adapter where it is the best free option.
+7. **Targets:** Apple remains supported at iOS 17+, iPadOS 17+, macCatalyst 17+, macOS 14+, watchOS 10+.
+   The cross-platform workstream additionally targets Linux x86_64/aarch64 and Android API 26+
+   arm64-v8a/x86_64, subject to the gates in `docs/CROSS_PLATFORM_PLAN.md`; these are planned until
+   their matrix rows are green.
 8. **Goal:** replicate the *audio + DJ* functionality of a DDJ-FLX4 in software. Physical-only aspects (jog motor, jacks, soundcard, USB, Bluetooth-in) are **N/A** (§15).
 
 ---
@@ -217,11 +222,14 @@ Streaming-service integration, library/browser UI, DVS timecode, external-MIDI/c
 ## 19. Phased plan
 1. Skeleton + CI green (**done** in scaffold). 2. Vendor Cflac/Cvorbis/Copus/Cebur128/Csrc; decode+encode+loudness+SRC tests pass. 3. `CParsoDSP` kernels + Signalsmith; Core DSP tests pass. 4. `ParsoAudioCore` IO/encode/SRC/loudness green. 5. `ParsoAudioAnalysis` tempo→key→structure→waveform; synthetic + real-fixture green. 6. `CParsoEngine` RT graph + plumbing + headless. 7. `ParsoDJEngine` decks/mixer/pads/FX/sampler/mic/monitoring/sync, then Smart Fader/CFX. 8. `MixRecorder`. 9. Acceptance pass over §15.
 
-**Definition of done:** all three products build for iOS + macOS; `swift test` green (all suites
-enabled); every §15 gate has a passing test; NOTICE/SPDX clean; public C headers C-clean;
-`pe_render` asserts zero allocations.
+**Definition of done:** Apple products build for iOS + macOS and `swift test` is green (all suites
+enabled); every §15 gate has a passing test; NOTICE/SPDX is clean; public C headers are C-clean;
+`pe_render` asserts zero allocations. The cross-platform release additionally requires the native
+unit/integration/packaging gates, Linux listening sign-off, and Android device gates listed in
+`docs/CROSS_PLATFORM_PLAN.md`; a planned platform is never represented as supported before those
+checks pass.
 
-### 19.1 Linux Swift compatibility workstream — retired
+### 19.1 Linux Swift compatibility workstream — historical retirement
 
 Retired in Phase 1b (2026-09-02): the package targets Apple platforms only — iOS, macCatalyst,
 macOS and watchOS. See `docs/UNIFICATION_PLAN.md` §4b for the keep/delete analysis and for the
@@ -232,3 +240,9 @@ Two of its items survived on their own merits and are now unconditional: `CGlint
 encoder on every platform (item 2), and no implementation code from Apple's public-source ALAC
 repository is used (item 4). The `Calac` placeholder, the portable ALAC and ISO-BMFF container
 work, and Linux CI are gone.
+
+This historical retirement describes the 2026-09-02 app-unification decision. It does not block the
+separate native expansion now proposed in `docs/CROSS_PLATFORM_PLAN.md`: that work builds the C/C++
+engine and portable services without restoring Linux Swift or Apple framework dependencies. The
+historical app migration remains complete; the native workstream starts at CP0 and must update this
+section again when a real CMake target and Linux test gate land.

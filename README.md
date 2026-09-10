@@ -1,24 +1,30 @@
 # parso-audio-engine
 
-A permissively-licensed (MIT) Swift 6 package suite that reproduces the **full software
+A permissively-licensed (MIT) audio engine that reproduces the **full software
 functionality of a Pioneer DDJ-FLX4** — two decks, a two-channel mixer, hot cues, loops, all eight
 performance-pad modes, Beat FX / Color FX, Smart Fader / Smart CFX, a sampler, mic, monitoring, sync,
 recording, and offline track analysis (BPM, key, waveform, structure, loudness) — with **no copyleft
-dependencies** and Apple-native audio where it's the best free option.
+dependencies**. Swift is the current Apple API; a portable C/C++ API for Linux and a Kotlin/Android
+wrapper are planned over the same native render and DSP core. See
+[`docs/CROSS_PLATFORM_PLAN.md`](docs/CROSS_PLATFORM_PLAN.md) and the support
+[`docs/CROSS_PLATFORM_MATRIX.md`](docs/CROSS_PLATFORM_MATRIX.md). Portable support is not complete
+until the matrix rows have passed their stated tests and Linux listening review.
 
-It ships as three layered products so you can take only what you need:
+The current Swift package ships these layered products:
 
 | Product | What it gives you | Depends on |
 |---|---|---|
 | **ParsoAudioCore** | Buffers, file decode/encode, sample-rate conversion, loudness, DSP wrappers | — |
 | **ParsoAudioAnalysis** | Offline BPM / key / structure / waveform | ParsoAudioCore |
 | **ParsoDJEngine** | The complete two-deck DJ engine (FLX4-equivalent) | Core + Analysis |
+| **ParsoAudioPlayback / Streaming / Neural** | Playback, streaming, and optional neural services | Core (and Analysis where applicable) |
 
 ---
 
-## Status: implemented
+## Status: Apple implementation complete; portable expansion in progress
 
-All three layers are implemented and the full `swift test` suite is green, including the
+The Apple layers are implemented and the full `swift test` suite is green on the supported Apple
+toolchain, including the
 real-audio fixture suites (FLAC / Ogg Vorbis / Opus / MP3 decode + BPM/key/structure/loudness
 analysis) once `./scripts/download-fixtures.sh` has run. `docs/SPEC.md` remains the design
 source of truth and the test suite remains the executable specification.
@@ -44,7 +50,9 @@ source of truth and the test suite remains the executable specification.
 ## Requirements
 
 - **Swift 6** toolchain (Xcode 16+). The package sets `swiftLanguageModes: [.v6]` (strict concurrency).
-- Platforms: **iOS 15+, iPadOS 15+, macCatalyst 15+, macOS 13+**.
+- Apple API: **iOS 17+, iPadOS 17+, macCatalyst 17+, macOS 14+, watchOS 10+** (see `Package.swift`).
+- Planned native API: Linux x86_64/aarch64 with a documented glibc baseline; Android API 26+ with
+  arm64-v8a and x86_64 emulator artifacts. These portable targets are not yet shipping.
 - To run the real-audio fixture tests: `curl` + `python3` (both come with the Xcode command-line tools).
 
 ## Install (Swift Package Manager)
@@ -60,6 +68,21 @@ targets: [
     ])
 ]
 ```
+
+## Planned native SDKs
+
+The cross-platform work starts with the existing C/C++ real-time targets and a versioned, C-clean
+facade. Linux will get a C11/C++17 SDK built with CMake and a host-callback render example before
+an optional device backend. Android will package the same native library in an AAR with a small JNI
+bridge and Oboe device adapter. Control and offline work move into shared native services gradually;
+Swift remains a compatibility API during that migration. No Swift runtime or Apple framework will be
+required by the native artifacts.
+
+The first portable examples are intentionally headless: a C renderer and a C++ mixer/recorder on
+Linux, plus a Kotlin PCM/JNI smoke app on Android. They will be accompanied by unit tests, native
+integration tests, installed-package consumer builds, and Linux human-listening artifacts. See the
+[cross-platform plan](docs/CROSS_PLATFORM_PLAN.md) for phase gates and the
+[matrix](docs/CROSS_PLATFORM_MATRIX.md) for support status.
 
 ## Repository layout
 
@@ -119,6 +142,11 @@ python3 scripts/render-acceptance-video.py \
   --analysis artifacts/acceptance/gostreyshen_world/gostreyshen_world-waveform.json \
   --output artifacts/acceptance/gostreyshen_world/gostreyshen_world-waveform.mp4
 ```
+
+Linux portable acceptance will use the same WAV + JSON + MP4 contract through a native CMake CLI.
+It requires at least 30 seconds per artifact and a full-track review for phrase/structure scenarios;
+the reviewer records audible results in a manifest. Android hardware listening remains pending until
+a device is available.
 
 ---
 
