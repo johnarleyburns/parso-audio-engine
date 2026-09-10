@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: parso-audio-engine
+Description: Portable native DSP, DJ render, and offline audio services
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} @PARSO_PKGCONFIG_LIBS@
+Cflags: -I${includedir}

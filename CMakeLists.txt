@@ -34,7 +34,9 @@ add_library(CParsoDSP STATIC
     Sources/CParsoDSP/src/parso_dsp_stub.cpp
 )
 target_include_directories(CParsoDSP
-    PUBLIC Sources/CParsoDSP/include
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CParsoDSP/include>
+        $<INSTALL_INTERFACE:include>
     PRIVATE Sources/CParsoDSP/src
 )
 target_include_directories(CParsoDSP SYSTEM PRIVATE
@@ -53,7 +55,9 @@ add_library(CParsoEngine STATIC
     Sources/CParsoEngine/src/parso_engine_stub.cpp
 )
 target_include_directories(CParsoEngine
-    PUBLIC Sources/CParsoEngine/include
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CParsoEngine/include>
+        $<INSTALL_INTERFACE:include>
     PRIVATE Sources/CParsoDSP/include
 )
 target_link_libraries(CParsoEngine PUBLIC CParsoDSP)
@@ -64,10 +68,11 @@ set_target_properties(CParsoDSP CParsoEngine PROPERTIES
 # Reuse the permissively licensed, clean-room WAV/PCM implementation already
 # shipped for the SwiftPM Glint target. Only its container-independent parser
 # is needed by this native CP3 slice; no platform codec is implied by linking it.
-add_library(CGlintWav STATIC
-    Sources/CGlint/src/wav_io.cpp
+add_library(CGlintWav STATIC Sources/CGlint/src/wav_io.cpp)
+target_include_directories(CGlintWav PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CGlint/src>
+    $<INSTALL_INTERFACE:include>
 )
-target_include_directories(CGlintWav PUBLIC Sources/CGlint/src)
 set_target_properties(CGlintWav PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(Csrc STATIC
@@ -76,7 +81,10 @@ add_library(Csrc STATIC
     Sources/Csrc/src/src_sinc.c
     Sources/Csrc/src/src_zoh.c
 )
-target_include_directories(Csrc PUBLIC Sources/Csrc/include)
+target_include_directories(Csrc PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Csrc/include>
+    $<INSTALL_INTERFACE:include>
+)
 target_compile_definitions(Csrc PRIVATE
     HAVE_STDBOOL_H
     ENABLE_SINC_BEST_CONVERTER
@@ -93,7 +101,10 @@ endif()
 add_library(Cebur128 STATIC
     Sources/Cebur128/src/ebur128.c
 )
-target_include_directories(Cebur128 PUBLIC Sources/Cebur128/include)
+target_include_directories(Cebur128 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cebur128/include>
+    $<INSTALL_INTERFACE:include>
+)
 if(NOT MSVC)
     # Upstream 1.2.6 carries an intentionally unused error scratch variable in
     # one allocation path; keep the warning boundary limited to that vendor.
@@ -109,7 +120,10 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         Sources/Cogg/src/bitwise.c
         Sources/Cogg/src/framing.c
     )
-    target_include_directories(Cogg SYSTEM PUBLIC Sources/Cogg/include)
+    target_include_directories(Cogg SYSTEM PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cogg/include>
+        $<INSTALL_INTERFACE:include>
+    )
     set_target_properties(Cogg PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     file(GLOB_RECURSE Cflac_sources CONFIGURE_DEPENDS
@@ -117,9 +131,11 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     )
     list(FILTER Cflac_sources EXCLUDE REGEX "/deduplication/")
     add_library(Cflac STATIC ${Cflac_sources})
-    target_include_directories(Cflac
-        SYSTEM PUBLIC Sources/Cflac/include
-        SYSTEM PRIVATE Sources/Cflac/src Sources/Cflac/src/include
+    target_include_directories(Cflac SYSTEM
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cflac/include>
+            $<INSTALL_INTERFACE:include>
+        PRIVATE Sources/Cflac/src Sources/Cflac/src/include
     )
     target_compile_definitions(Cflac PRIVATE
         FLAC__NO_DLL
@@ -142,7 +158,10 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     set_target_properties(Cflac PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(CflacBridge STATIC Sources/CflacBridge/src/parso_flac.c)
-    target_include_directories(CflacBridge PUBLIC Sources/CflacBridge/include)
+    target_include_directories(CflacBridge PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CflacBridge/include>
+        $<INSTALL_INTERFACE:include>
+    )
     target_link_libraries(CflacBridge PUBLIC Cflac)
     set_target_properties(CflacBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -151,9 +170,12 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     )
     list(FILTER Cvorbis_sources EXCLUDE REGEX "/psytune\\.c$")
     add_library(Cvorbis STATIC ${Cvorbis_sources})
-    target_include_directories(Cvorbis
-        SYSTEM PUBLIC Sources/Cvorbis/xiph/include Sources/Cogg/include
-        SYSTEM PRIVATE Sources/Cvorbis/xiph/src
+    target_include_directories(Cvorbis SYSTEM
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cvorbis/xiph/include>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cogg/include>
+            $<INSTALL_INTERFACE:include>
+        PRIVATE Sources/Cvorbis/xiph/src
     )
     target_compile_definitions(Cvorbis PRIVATE HAVE_CONFIG_H)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -172,7 +194,9 @@ if(PARSO_BUILD_CODEC_BRIDGES)
 
     add_library(CvorbisBridge STATIC Sources/CvorbisBridge/src/parso_vorbis.c)
     target_include_directories(CvorbisBridge
-        PUBLIC Sources/CvorbisBridge/include
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CvorbisBridge/include>
+            $<INSTALL_INTERFACE:include>
         PRIVATE Sources/Cvorbis/xiph/include Sources/Cogg/include
     )
     target_link_libraries(CvorbisBridge PUBLIC Cvorbis)
@@ -186,9 +210,12 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     list(FILTER Copus_sources EXCLUDE REGEX "/src/(bitwise|framing)\\.c$")
     list(FILTER Copus_sources EXCLUDE REGEX "/silk/float/")
     add_library(Copus STATIC ${Copus_sources})
-    target_include_directories(Copus
-        SYSTEM PUBLIC Sources/Copus/include
-        SYSTEM PRIVATE
+    target_include_directories(Copus SYSTEM
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Copus/include>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cogg/include>
+            $<INSTALL_INTERFACE:include>
+        PRIVATE
             Sources/Copus/src
             Sources/Copus/src/opusfile
             Sources/Copus/celt
@@ -223,7 +250,10 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     set_target_properties(Copus PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(CopusBridge STATIC Sources/CopusBridge/src/parso_opus.c)
-    target_include_directories(CopusBridge PUBLIC Sources/CopusBridge/include)
+    target_include_directories(CopusBridge PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CopusBridge/include>
+        $<INSTALL_INTERFACE:include>
+    )
     target_link_libraries(CopusBridge PUBLIC Copus)
     set_target_properties(CopusBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -235,7 +265,9 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     )
     add_library(CGlint STATIC ${CGlint_sources})
     target_include_directories(CGlint
-        PUBLIC Sources/CGlint/include
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CGlint/include>
+            $<INSTALL_INTERFACE:include>
         PRIVATE Sources/CGlint/src
     )
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -261,11 +293,18 @@ add_library(CParsoAPI STATIC
     Sources/CParsoAPI/src/parso_api.cpp
 )
 target_include_directories(CParsoAPI
-    PUBLIC Sources/CParsoAPI/include
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CParsoAPI/include>
+        $<INSTALL_INTERFACE:include>
     PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
             Sources/CGlint/include Sources/Csrc/include Sources/Cebur128/include
 )
 target_link_libraries(CParsoAPI PUBLIC CParsoEngine PRIVATE CGlintWav Csrc Cebur128)
+if(APPLE)
+    target_link_libraries(CParsoAPI PUBLIC c++)
+elseif(UNIX OR MINGW)
+    target_link_libraries(CParsoAPI PUBLIC stdc++)
+endif()
 if(PARSO_BUILD_CODEC_BRIDGES)
     target_compile_definitions(CParsoAPI PRIVATE PARSO_CODEC_BRIDGES_AVAILABLE)
     target_include_directories(CParsoAPI PRIVATE Sources/CflacBridge/include)
@@ -277,7 +316,9 @@ if(PARSO_BUILD_SHARED_API)
         Sources/CParsoAPI/src/parso_api.cpp
     )
     target_include_directories(ParsoAPI
-        PUBLIC Sources/CParsoAPI/include
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CParsoAPI/include>
+            $<INSTALL_INTERFACE:include>
         PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
                 Sources/CGlint/include Sources/Csrc/include Sources/Cebur128/include
     )
@@ -293,6 +334,85 @@ if(PARSO_BUILD_SHARED_API)
     endif()
     set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
 endif()
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+set(PARSO_INSTALL_TARGETS
+    CParsoDSP CParsoEngine CGlintWav Csrc Cebur128 CParsoAPI
+)
+if(PARSO_BUILD_CODEC_BRIDGES)
+    list(APPEND PARSO_INSTALL_TARGETS
+        Cogg Cflac CflacBridge Cvorbis CvorbisBridge Copus CopusBridge CGlint
+    )
+endif()
+if(PARSO_BUILD_SHARED_API)
+    list(APPEND PARSO_INSTALL_TARGETS ParsoAPI)
+endif()
+
+install(TARGETS ${PARSO_INSTALL_TARGETS}
+    EXPORT ParsoAudioEngineTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(FILES
+    Sources/CParsoAPI/include/parso.h
+    Sources/CParsoAPI/include/parso.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY Sources/CParsoDSP/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/CParsoEngine/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/Csrc/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/Cebur128/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/Cogg/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/Cflac/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/Cvorbis/xiph/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/Copus/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/CflacBridge/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/CvorbisBridge/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/CopusBridge/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY Sources/CGlint/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES Sources/CGlint/src/wav_io.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT ParsoAudioEngineTargets
+    FILE ParsoAudioEngineTargets.cmake
+    NAMESPACE ParsoAudioEngine::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ParsoAudioEngine
+)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ParsoAudioEngineConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/ParsoAudioEngineConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ParsoAudioEngine
+)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/ParsoAudioEngineConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/ParsoAudioEngineConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/ParsoAudioEngineConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ParsoAudioEngine
+)
+set(PARSO_PKGCONFIG_LIBS "-lparso")
+if(NOT PARSO_BUILD_SHARED_API)
+    if(APPLE)
+        set(PARSO_CXX_RUNTIME "-lc++")
+    elseif(UNIX OR MINGW)
+        set(PARSO_CXX_RUNTIME "-lstdc++")
+    else()
+        set(PARSO_CXX_RUNTIME "")
+    endif()
+    set(PARSO_PKGCONFIG_LIBS "-lCParsoAPI -lCParsoEngine -lCParsoDSP -lCGlintWav -lCsrc -lCebur128 ${PARSO_CXX_RUNTIME} -lm")
+endif()
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/parso-audio-engine.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/parso-audio-engine.pc
+    @ONLY
+)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/parso-audio-engine.pc
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+)
 
 include(CTest)
 if(PARSO_BUILD_TESTS)
@@ -458,5 +578,16 @@ if(PARSO_BUILD_TESTS)
                 SKIP_RETURN_CODE 77
             )
         endif()
+
+        add_test(NAME installed_c_consumer
+            COMMAND ${CMAKE_COMMAND}
+                -DPARSO_PACKAGE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+                -DPARSO_PACKAGE_BINARY_DIR=${CMAKE_BINARY_DIR}
+                -DPARSO_PACKAGE_INSTALL_DIR=${CMAKE_BINARY_DIR}/installed-package
+                -P ${CMAKE_SOURCE_DIR}/cmake/run-installed-consumer.cmake
+        )
+        set_tests_properties(installed_c_consumer PROPERTIES
+            LABELS "native;public-api;consumer;packaging;c11"
+        )
     endif()
 endif()

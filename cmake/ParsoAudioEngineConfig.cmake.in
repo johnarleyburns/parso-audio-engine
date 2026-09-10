@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/ParsoAudioEngineTargets.cmake")
+
+# Keep the public package target stable when the producer selected the
+# static-only configuration, where the implementation target is CParsoAPI.
+if(NOT TARGET ParsoAudioEngine::ParsoAPI)
+    add_library(ParsoAudioEngine::ParsoAPI INTERFACE IMPORTED)
+    set_property(TARGET ParsoAudioEngine::ParsoAPI PROPERTY
+        INTERFACE_LINK_LIBRARIES ParsoAudioEngine::CParsoAPI)
+endif()
+
+check_required_components(ParsoAudioEngine)
