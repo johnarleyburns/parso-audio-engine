@@ -86,6 +86,10 @@ integration tests, installed-package consumer builds, and Linux human-listening 
 [cross-platform plan](docs/CROSS_PLATFORM_PLAN.md) for phase gates and the
 [matrix](docs/CROSS_PLATFORM_MATRIX.md) for support status.
 
+The Android source seam also includes a closeable `ParsoEngine` wrapper around direct native-order
+`ByteBuffer` planes. It requires serialized ownership and callback shutdown before `close`; it is
+not yet an AAR or device-output implementation.
+
 The native CP1 smoke build is available through CMake:
 
 ```bash
