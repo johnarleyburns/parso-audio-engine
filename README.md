@@ -115,6 +115,9 @@ skip Android installation, or pin versions with `PARSO_ANDROID_NDK_PACKAGE` and
 
 The Linux setup also installs CMake/Ninja, the MinGW-w64 x86_64 toolchain, and the .NET 8 SDK, then
 verifies the Linux CTest targets, Windows-targeted C# project, and Windows GNU shared-library build.
+On Ubuntu, it uses the Ubuntu .NET backports repository when the requested SDK is not in the built-in
+feed (including Ubuntu 26.04, where Microsoft's feed no longer publishes .NET packages); Debian uses
+Microsoft's package repository as the fallback.
 Native Windows/MSVC validation remains in GitHub Actions and `scripts/setup-windows.ps1`.
 
 On Windows 10/11, run an elevated PowerShell prompt:

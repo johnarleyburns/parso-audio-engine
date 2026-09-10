@@ -126,6 +126,19 @@ install_dotnet_repository() {
     trap - RETURN
 }
 
+install_ubuntu_dotnet_backports() {
+    if ! command -v add-apt-repository >/dev/null 2>&1; then
+        log "Installing Ubuntu repository management tools"
+        apt_install software-properties-common
+    fi
+    if ! grep -RqsE 'ppa\.launchpadcontent\.net/dotnet/backports|ppa:dotnet/backports' \
+        /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+        log "Installing the Ubuntu .NET backports repository"
+        "${APT_PREFIX[@]}" add-apt-repository -y ppa:dotnet/backports
+    fi
+    "${APT_PREFIX[@]}" apt-get update
+}
+
 install_dependencies() {
     command -v apt-get >/dev/null 2>&1 || die "apt-get is required"
     log "Updating Debian/Ubuntu package indexes"
@@ -148,14 +161,23 @@ install_dependencies() {
         binutils-mingw-w64-x86-64
 
     if ! command -v dotnet >/dev/null 2>&1; then
-        # Prefer the distribution feed when it already provides the requested
-        # SDK. Microsoft documents this path for supported Ubuntu releases;
-        # add Microsoft's feed only when Debian or an older Ubuntu lacks it.
-        if ! apt-cache show "dotnet-sdk-${DOTNET_CHANNEL}" >/dev/null 2>&1; then
+        local dotnet_package="dotnet-sdk-${DOTNET_CHANNEL}"
+        # Ubuntu 26.04 no longer publishes .NET packages through Microsoft's
+        # feed. Ubuntu's backports PPA is the supported source for .NET 8 and
+        # other SDKs not present in the built-in Ubuntu feed.
+        if ! apt-cache show "$dotnet_package" >/dev/null 2>&1 && [ "$ID" = ubuntu ]; then
+            install_ubuntu_dotnet_backports
+        fi
+        # Debian uses Microsoft's package repository. Keep this fallback for
+        # Ubuntu releases where the requested SDK is not in Ubuntu feeds or
+        # backports, too.
+        if ! apt-cache show "$dotnet_package" >/dev/null 2>&1; then
             install_dotnet_repository "$ID" "${VERSION_ID:?VERSION_ID is required}"
             "${APT_PREFIX[@]}" apt-get update
         fi
-        apt_install "dotnet-sdk-${DOTNET_CHANNEL}"
+        apt-cache show "$dotnet_package" >/dev/null 2>&1 || die \
+            "${dotnet_package} is unavailable from the configured Debian/Ubuntu feeds; set PARSO_DOTNET_CHANNEL to an available SDK or install .NET manually"
+        apt_install "$dotnet_package"
     fi
 }
 
