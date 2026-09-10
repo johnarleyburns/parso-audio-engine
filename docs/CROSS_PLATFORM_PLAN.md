@@ -98,6 +98,11 @@ Gate: independent C11 and C++17 consumer builds; lifetime, double-close protecti
 
 Gate: Linux host build passes; the reproducible Linux-to-Windows cross-build passes when its audited toolchain is available; GitHub Actions native macOS, Linux, and Windows jobs are green; native Windows C11/C++17 and C# consumers load and exercise the same ABI; and Windows-specific device/runtime tests pass without weakening the portable tests.
 
+The managed codec slice now provides `CodecServices.GetCapabilities`, `Encode`, and `Decode` over
+the same versioned ABI. Decode results are copied before the native owned buffer is released, and
+the Windows consumer exercises an Xiph Ogg Vorbis encode/decode round trip. Linux verifies the
+Windows-targeted assembly; native DLL loading remains a Windows-only gate.
+
 ### CP3 — Shared offline services and DJ behavior
 
 1. Expose native buffers, SRC, loudness, FLAC/Xiph-Vorbis/Opus bridges, and WAV IO. Audit CGlint's current decode/encode paths with real fixtures before advertising portable MP3 support.

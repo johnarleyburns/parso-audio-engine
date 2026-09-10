@@ -98,8 +98,8 @@ The versioned native C ABI also exposes the first CP3 offline service slice: cap
 WAV read/write, raw little-endian integer PCM read/write, sample-rate conversion, and EBU R128
 loudness measurement. PCM reads and SRC produce owned interleaved float32 buffers; writers produce
 owned byte buffers; all owned results have idempotent release functions. Only implemented formats
-are advertised, so the current native capability mask leaves FLAC, Ogg Vorbis, Opus, MP3, AAC,
-ALAC, AIFF, and CAF unset until their native gates pass. Independent C11 and C++17 consumer tests
+are advertised: the current native capability mask includes WAV, FLAC, Ogg Vorbis, Opus, MP3, and
+AAC. ALAC, AIFF, and CAF remain unset until their native gates pass. Independent C11 and C++17 consumer tests
 exercise the PCM, SRC, and loudness contracts through `ctest`.
 
 This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
@@ -109,6 +109,18 @@ C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows
 the native Windows job builds and runs the C# consumer against the MSVC-built DLL. This does not claim
 complete Linux codec, device, Python, Android, or Apple-framework support; those require the later gates
 in the plan.
+
+The Windows-targeted C# binding exposes the same capability and byte-codec contract through
+`CodecServices`. It copies native-owned decode results into managed arrays and releases native
+buffers deterministically. For example:
+
+```csharp
+var caps = CodecServices.GetCapabilities();
+if (!caps.EncodeContainers.HasFlag(ContainerCapability.OggVorbis))
+    throw new InvalidOperationException("Ogg Vorbis is unavailable in this native build.");
+var encoded = CodecServices.Encode(samples, 48_000, 2, AudioCodec.OggVorbis);
+var decoded = CodecServices.Decode(encoded, AudioCodec.OggVorbis);
+```
 
 For the Linux native, Windows cross-build, and Android native toolchains on Debian/Ubuntu x86_64, run:
 

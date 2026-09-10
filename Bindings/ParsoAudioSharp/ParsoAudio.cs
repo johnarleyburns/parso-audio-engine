@@ -18,6 +18,221 @@ public sealed class ParsoException : Exception
     public int Status { get; }
 }
 
+/// <summary>Identifies a byte-oriented codec exposed by the native API.</summary>
+public enum AudioCodec : uint
+{
+    /// <summary>RIFF/WAVE PCM.</summary>
+    Wav = 1,
+    /// <summary>FLAC.</summary>
+    Flac = 2,
+    /// <summary>Xiph Ogg Vorbis.</summary>
+    OggVorbis = 3,
+    /// <summary>Ogg Opus.</summary>
+    Opus = 4,
+    /// <summary>MP3.</summary>
+    Mp3 = 5,
+    /// <summary>ADTS AAC.</summary>
+    Aac = 6
+}
+
+/// <summary>Describes the byte containers available in a native build.</summary>
+[Flags]
+public enum ContainerCapability : ulong
+{
+    /// <summary>RIFF/WAVE.</summary>
+    Wav = 1,
+    /// <summary>FLAC.</summary>
+    Flac = 2,
+    /// <summary>Xiph Ogg Vorbis.</summary>
+    OggVorbis = 4,
+    /// <summary>Ogg Opus.</summary>
+    Opus = 8,
+    /// <summary>MP3.</summary>
+    Mp3 = 16,
+    /// <summary>ADTS AAC.</summary>
+    Aac = 32,
+    /// <summary>Apple Lossless.</summary>
+    Alac = 64,
+    /// <summary>AIFF.</summary>
+    Aiff = 128,
+    /// <summary>CAF.</summary>
+    Caf = 256
+}
+
+/// <summary>Options shared by the native offline codec services.</summary>
+public readonly record struct CodecOptions
+{
+    /// <summary>Gets the FLAC compression level, from zero through eight.</summary>
+    public uint CompressionLevel { get; init; }
+
+    /// <summary>Gets the target bitrate in kilobits per second.</summary>
+    public uint BitrateKbps { get; init; }
+
+    /// <summary>Gets the integer output depth for FLAC or WAV.</summary>
+    public uint BitsPerSample { get; init; }
+
+    /// <summary>Gets whether WAV output is IEEE float rather than integer PCM.</summary>
+    public bool WavIsFloat { get; init; }
+
+    /// <summary>Gets the Glint quality mode, from zero through two.</summary>
+    public uint Quality { get; init; }
+
+    /// <summary>Gets the VBR quality, from zero through nine, or null for CBR.</summary>
+    public uint? VbrQuality { get; init; }
+
+    /// <summary>Gets the native defaults used by the public codec helpers.</summary>
+    public static CodecOptions Default => new()
+    {
+        CompressionLevel = 5,
+        BitrateKbps = 192,
+        BitsPerSample = 16,
+        VbrQuality = null
+    };
+}
+
+/// <summary>Reports native codec and PCM capabilities.</summary>
+public readonly record struct CodecCapabilities(
+    ContainerCapability DecodeContainers,
+    ContainerCapability EncodeContainers,
+    ulong ReadPcmFormats,
+    ulong WritePcmFormats,
+    uint MaxChannels,
+    uint MaxSampleRateHz,
+    ulong OfflineServices);
+
+/// <summary>Owns managed interleaved float32 PCM copied from a native read.</summary>
+public readonly record struct DecodedPcm(
+    float[] Samples,
+    ulong Frames,
+    uint ChannelCount,
+    uint SampleRateHz);
+
+/// <summary>Provides ownership-safe managed access to native offline codec services.</summary>
+public static unsafe class CodecServices
+{
+    /// <summary>Reads the capabilities reported by the loaded native library.</summary>
+    public static CodecCapabilities GetCapabilities()
+    {
+        var native = new NativeMethods.Capabilities
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.Capabilities>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        var status = NativeMethods.CapabilitiesInit(ref native);
+        ThrowIfFailed(status, "capability initialization");
+        status = NativeMethods.CapabilitiesGet(ref native);
+        ThrowIfFailed(status, "capability query");
+        return new CodecCapabilities(
+            (ContainerCapability)native.DecodeContainers,
+            (ContainerCapability)native.EncodeContainers,
+            native.ReadPcmFormats,
+            native.WritePcmFormats,
+            native.MaxChannels,
+            native.MaxSampleRateHz,
+            native.OfflineServices);
+    }
+
+    /// <summary>Encodes borrowed interleaved float32 PCM and returns an owned managed byte array.</summary>
+    /// <param name="samples">Interleaved samples. The native call borrows this span only during the call.</param>
+    /// <param name="sampleRateHz">The PCM sample rate.</param>
+    /// <param name="channelCount">The number of interleaved channels, one or two.</param>
+    /// <param name="codec">The target codec.</param>
+    /// <param name="options">Optional codec settings.</param>
+    public static byte[] Encode(
+        ReadOnlySpan<float> samples, uint sampleRateHz, uint channelCount,
+        AudioCodec codec, CodecOptions options = default)
+    {
+        if (samples.IsEmpty) throw new ArgumentException("Samples cannot be empty.", nameof(samples));
+        if (channelCount is < 1 or > 2 || sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("PCM format must have one or two channels and a valid sample rate.");
+
+        var nativeOptions = ToNativeOptions(options);
+        var input = new NativeMethods.PcmBuffer
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.PcmBuffer>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Frames = checked((ulong)(samples.Length / (int)channelCount)),
+            ChannelCount = channelCount,
+            SampleRateHz = sampleRateHz
+        };
+        var output = new NativeMethods.Bytes();
+        var status = NativeMethods.BytesInit(ref output);
+        ThrowIfFailed(status, "byte-buffer initialization");
+        try
+        {
+            fixed (float* samplePointer = samples)
+            {
+                input.Samples = (nint)samplePointer;
+                status = NativeMethods.CodecWrite(ref input, (uint)codec,
+                    ref nativeOptions, ref output);
+            }
+            ThrowIfFailed(status, "codec encoding");
+            if (output.SizeBytes > int.MaxValue)
+                throw new ParsoException(NativeMethods.InvalidArgument, "codec encoding");
+            var managed = new byte[(int)output.SizeBytes];
+            if (managed.Length != 0) Marshal.Copy(output.Data, managed, 0, managed.Length);
+            return managed;
+        }
+        finally
+        {
+            NativeMethods.BytesRelease(ref output);
+        }
+    }
+
+    /// <summary>Decodes borrowed codec bytes and returns managed interleaved float32 PCM.</summary>
+    /// <param name="encoded">Complete bytes for the selected codec.</param>
+    /// <param name="codec">The source codec.</param>
+    /// <param name="options">Optional codec settings.</param>
+    public static DecodedPcm Decode(
+        ReadOnlySpan<byte> encoded, AudioCodec codec, CodecOptions options = default)
+    {
+        if (encoded.IsEmpty) throw new ArgumentException("Encoded data cannot be empty.", nameof(encoded));
+
+        var nativeOptions = ToNativeOptions(options);
+        var output = new NativeMethods.PcmBuffer();
+        var status = NativeMethods.PcmBufferInit(ref output);
+        ThrowIfFailed(status, "PCM-buffer initialization");
+        try
+        {
+            fixed (byte* dataPointer = encoded)
+            {
+                status = NativeMethods.CodecRead((nint)dataPointer, (ulong)encoded.Length,
+                    (uint)codec, ref nativeOptions, ref output);
+            }
+            ThrowIfFailed(status, "codec decoding");
+            var sampleCount = checked((int)(output.Frames * output.ChannelCount));
+            var samples = new float[sampleCount];
+            if (sampleCount != 0) Marshal.Copy(output.Samples, samples, 0, sampleCount);
+            return new DecodedPcm(samples, output.Frames, output.ChannelCount, output.SampleRateHz);
+        }
+        finally
+        {
+            NativeMethods.PcmBufferRelease(ref output);
+        }
+    }
+
+    private static NativeMethods.CodecOptions ToNativeOptions(CodecOptions options)
+    {
+        var defaults = CodecOptions.Default;
+        return new NativeMethods.CodecOptions
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.CodecOptions>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            CompressionLevel = options.CompressionLevel == 0 ? defaults.CompressionLevel : options.CompressionLevel,
+            BitrateKbps = options.BitrateKbps == 0 ? defaults.BitrateKbps : options.BitrateKbps,
+            BitsPerSample = options.BitsPerSample == 0 ? defaults.BitsPerSample : options.BitsPerSample,
+            WavIsFloat = options.WavIsFloat ? 1u : 0u,
+            Quality = options.Quality,
+            VbrQuality = options.VbrQuality ?? uint.MaxValue
+        };
+    }
+
+    private static void ThrowIfFailed(int status, string operation)
+    {
+        if (status != NativeMethods.Ok) throw new ParsoException(status, operation);
+    }
+}
+
 /// <summary>Provides counters and topology information for a native engine.</summary>
 public readonly record struct EngineStats
 {
@@ -150,7 +365,59 @@ internal sealed class NativeEngineHandle : SafeHandle
 internal static unsafe partial class NativeMethods
 {
     internal const int Ok = 0;
+    internal const int InvalidArgument = -1;
     internal const uint AbiVersion = 1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Capabilities
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal ulong DecodeContainers;
+        internal ulong EncodeContainers;
+        internal ulong ReadPcmFormats;
+        internal ulong WritePcmFormats;
+        internal uint MaxChannels;
+        internal uint MaxSampleRateHz;
+        internal ulong OfflineServices;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct PcmBuffer
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal nint Samples;
+        internal ulong Frames;
+        internal uint ChannelCount;
+        internal uint SampleRateHz;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Bytes
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal nint Data;
+        internal ulong SizeBytes;
+        internal uint Reserved0;
+        internal uint Reserved1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CodecOptions
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint CompressionLevel;
+        internal uint BitrateKbps;
+        internal uint BitsPerSample;
+        internal uint WavIsFloat;
+        internal uint Quality;
+        internal uint VbrQuality;
+        internal uint Reserved0;
+        internal uint Reserved1;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct EngineOptions
@@ -227,6 +494,32 @@ internal static unsafe partial class NativeMethods
         }
         return control;
     }
+
+    [LibraryImport("parso", EntryPoint = "parso_capabilities_init")]
+    internal static partial int CapabilitiesInit(ref Capabilities capabilities);
+
+    [LibraryImport("parso", EntryPoint = "parso_capabilities_get")]
+    internal static partial int CapabilitiesGet(ref Capabilities capabilities);
+
+    [LibraryImport("parso", EntryPoint = "parso_pcm_buffer_init")]
+    internal static partial int PcmBufferInit(ref PcmBuffer buffer);
+
+    [LibraryImport("parso", EntryPoint = "parso_pcm_buffer_release")]
+    internal static partial int PcmBufferRelease(ref PcmBuffer buffer);
+
+    [LibraryImport("parso", EntryPoint = "parso_bytes_init")]
+    internal static partial int BytesInit(ref Bytes bytes);
+
+    [LibraryImport("parso", EntryPoint = "parso_bytes_release")]
+    internal static partial int BytesRelease(ref Bytes bytes);
+
+    [LibraryImport("parso", EntryPoint = "parso_codec_read")]
+    internal static partial int CodecRead(
+        nint data, ulong sizeBytes, uint codec, ref CodecOptions options, ref PcmBuffer output);
+
+    [LibraryImport("parso", EntryPoint = "parso_codec_write")]
+    internal static partial int CodecWrite(
+        ref PcmBuffer input, uint codec, ref CodecOptions options, ref Bytes output);
 
     [LibraryImport("parso", EntryPoint = "parso_engine_create")]
     internal static partial int Create(ref EngineOptions options, out nint engine);

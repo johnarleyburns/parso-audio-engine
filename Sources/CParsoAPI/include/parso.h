@@ -242,9 +242,8 @@ PARSO_API parso_status_t parso_bytes_release(parso_bytes_t *bytes);
 
 /* Byte-oriented codec services. Input bytes and PCM samples are borrowed for
  * the duration of the call. Results own their storage and must be released by
- * the matching idempotent release function. Ogg Vorbis is decode-only because
- * this native dependency set has no permissive encoder. AAC is ADTS and Opus
- * is Ogg Opus. */
+ * the matching idempotent release function. Ogg Vorbis uses Xiph libvorbisenc.
+ * AAC is ADTS and Opus is Ogg Opus. */
 PARSO_API parso_status_t parso_codec_options_init(parso_codec_options_t *options);
 PARSO_API parso_status_t parso_codec_read(
     const uint8_t *data, uint64_t size_bytes, uint32_t codec,
