@@ -3,6 +3,7 @@
 **/bin/
 **/obj/
 build-native/
+build-native-sanitize/
 build-linux/
 build-windows-cross/
 build-android-*/
