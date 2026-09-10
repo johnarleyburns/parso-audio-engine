@@ -138,7 +138,12 @@ configure_java() {
             java_home="$(brew --prefix openjdk@17 2>/dev/null || true)/libexec/openjdk.jdk/Contents/Home"
         fi
     elif command -v java >/dev/null 2>&1; then
-        java_home="$(cd "$(dirname "$(command -v java)")/.." && pwd)"
+        local java_bin
+        java_bin="$(command -v java)"
+        if command -v readlink >/dev/null 2>&1; then
+            java_bin="$(readlink -f "$java_bin" 2>/dev/null || printf '%s' "$java_bin")"
+        fi
+        java_home="$(cd "$(dirname "$java_bin")/.." && pwd)"
     fi
 
     [ -n "$java_home" ] && [ -d "$java_home" ] || die "JDK 17 could not be located"
