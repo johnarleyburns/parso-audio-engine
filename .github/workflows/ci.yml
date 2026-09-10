@@ -228,7 +228,7 @@ jobs:
           gradle --project-dir Bindings/ParsoAudioAndroid \
             -PparsoNdkVersion=27.2.12479018 \
             -PparsoCmakeVersion=3.22.1 \
-            assembleRelease
+            testReleaseUnitTest assembleRelease
       - name: Inspect AAR contents
         run: |
           aar='Bindings/ParsoAudioAndroid/build/outputs/aar/parso-audio-android-release.aar'
