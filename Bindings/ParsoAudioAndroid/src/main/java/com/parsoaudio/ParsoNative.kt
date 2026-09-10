@@ -16,6 +16,7 @@ object ParsoNative {
         frames: Int, sampleRateHz: Int, channelCount: Int
     ): Boolean
     @JvmStatic external fun nativePlay(handle: Long, deck: Int): Boolean
+    @JvmStatic external fun nativePause(handle: Long, deck: Int): Boolean
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int
     ): Int

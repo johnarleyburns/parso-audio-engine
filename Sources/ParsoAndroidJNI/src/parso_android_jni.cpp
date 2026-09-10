@@ -83,6 +83,18 @@ JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativePlay(
         ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativePause(
+    JNIEnv *, jclass, jlong handle, jint deck
+) {
+    if (!fromHandle(handle) || deck < 0 || deck >= 4) return JNI_FALSE;
+    parso_command_t command{};
+    if (parso_command_init(&command) != PARSO_STATUS_OK) return JNI_FALSE;
+    command.type = PARSO_COMMAND_PAUSE;
+    command.deck = deck;
+    return parso_engine_post_command(fromHandle(handle), &command) == PARSO_STATUS_OK
+        ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRender(
     JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint frames
 ) {

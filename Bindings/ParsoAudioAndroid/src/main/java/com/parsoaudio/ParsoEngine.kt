@@ -59,6 +59,13 @@ class ParsoEngine(
         check(ParsoNative.nativePlay(handle, deck)) { "native play command was rejected" }
     }
 
+    /** Queue a pause command for one of the configured decks. */
+    fun pause(deck: Int) {
+        val handle = requireOpen()
+        require(deck in 0 until deckCount) { "deck is out of range" }
+        check(ParsoNative.nativePause(handle, deck)) { "native pause command was rejected" }
+    }
+
     /** Fill caller-owned stereo direct buffers and return the rendered frame count. */
     fun render(left: ByteBuffer, right: ByteBuffer, frames: Int): Int {
         val handle = requireOpen()

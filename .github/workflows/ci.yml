@@ -197,6 +197,7 @@ jobs:
             --symbol Java_com_parsoaudio_ParsoNative_nativeDestroy \
             --symbol Java_com_parsoaudio_ParsoNative_nativeSetDeckBuffer \
             --symbol Java_com_parsoaudio_ParsoNative_nativePlay \
+            --symbol Java_com_parsoaudio_ParsoNative_nativePause \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRender \
             --output "android-abi-${{ matrix.abi }}.json"
 
