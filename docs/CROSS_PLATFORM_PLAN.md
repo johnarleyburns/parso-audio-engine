@@ -106,6 +106,11 @@ Gate: Linux host build passes; the reproducible Linux-to-Windows cross-build pas
 4. Port analysis in order: FFT/STFT, onsets, tempo/beatgrid, key, structure, waveform, full analysis. Preserve SPEC algorithms, normalization, frame conventions, and deterministic behavior. Evaluate the existing portable FFT facilities before adding a dependency.
 5. Move recording orchestration into an off-thread native service consuming the existing record ring. Start with WAV/FLAC, expose dropped-frame accounting, then add supported platform codecs. No MP3 mix recording.
 
+The first CP3 native slice is now the versioned C ABI's offline PCM contract: `parso_capabilities_get`
+reports only WAV and raw little-endian integer PCM support, `parso_wav_*` and `parso_pcm_*` provide
+owned-buffer read/write operations, and independent C11/C++17 consumers cover round trips, clamping,
+malformed input, and idempotent release. No unsupported container is advertised by this slice.
+
 Gate: shared scenario vectors and real fixtures pass through native and Swift APIs. Cross-backend tolerances are justified per measurement. Missing formats remain explicit capability gaps and block any claim of full codec parity.
 
 ### CP4 — Kotlin/Android SDK and device output

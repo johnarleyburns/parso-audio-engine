@@ -1,11 +1,16 @@
 #include "parso.h"
 
 #include "parso_engine.h"
+#include "wav_io.hpp"
 
+#include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <new>
+#include <vector>
 
 namespace {
 
@@ -15,6 +20,9 @@ constexpr uint32_t kMinimumPCMViewSize = static_cast<uint32_t>(sizeof(parso_pcm_
 constexpr uint32_t kMinimumOutputSize = static_cast<uint32_t>(sizeof(parso_output_view_t));
 constexpr uint32_t kMinimumCommandSize = static_cast<uint32_t>(sizeof(parso_command_t));
 constexpr uint32_t kMinimumStatsSize = static_cast<uint32_t>(sizeof(parso_stats_t));
+constexpr uint32_t kMinimumCapabilitiesSize = static_cast<uint32_t>(sizeof(parso_capabilities_t));
+constexpr uint32_t kMinimumPCMBufferSize = static_cast<uint32_t>(sizeof(parso_pcm_buffer_t));
+constexpr uint32_t kMinimumBytesSize = static_cast<uint32_t>(sizeof(parso_bytes_t));
 
 thread_local const char *lastError = "ok";
 
@@ -31,6 +39,171 @@ parso_status_t checkHeader(uint32_t size, uint32_t version, uint32_t minimum) no
 
 bool finitePositive(uint32_t value) noexcept {
     return value > 0;
+}
+
+bool validBits(uint32_t bits) noexcept {
+    return bits == 8 || bits == 16 || bits == 24 || bits == 32;
+}
+
+bool validWavBits(uint32_t bits, uint32_t isFloat) noexcept {
+    if (isFloat > 1) return false;
+    return isFloat ? (bits == 32 || bits == 64) : validBits(bits);
+}
+
+bool multiplicationFits(uint64_t left, uint64_t right, uint64_t limit) noexcept {
+    return right == 0 || left <= limit / right;
+}
+
+parso_status_t validateCapabilities(const parso_capabilities_t *capabilities) noexcept {
+    if (!capabilities) return fail(PARSO_STATUS_INVALID_ARGUMENT, "capabilities is null");
+    return checkHeader(capabilities->size, capabilities->abi_version, kMinimumCapabilitiesSize);
+}
+
+parso_status_t validatePCMBuffer(const parso_pcm_buffer_t *buffer) noexcept {
+    if (!buffer) return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM buffer is null");
+    const parso_status_t headerStatus = checkHeader(
+        buffer->size, buffer->abi_version, kMinimumPCMBufferSize
+    );
+    if (headerStatus != PARSO_STATUS_OK) return headerStatus;
+    if (buffer->channel_count < 1 || buffer->channel_count > 2 ||
+        !finitePositive(buffer->sample_rate_hz)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM buffer format is invalid");
+    }
+    if (buffer->frames > 0 && !buffer->samples) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM buffer samples are null");
+    }
+    if (!multiplicationFits(buffer->frames, buffer->channel_count,
+                            static_cast<uint64_t>(std::numeric_limits<size_t>::max()) /
+                            sizeof(float))) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM buffer is too large");
+    }
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t validateEmptyPCMBuffer(const parso_pcm_buffer_t *buffer) noexcept {
+    if (!buffer) return fail(PARSO_STATUS_INVALID_ARGUMENT, "output PCM buffer is null");
+    const parso_status_t status = checkHeader(buffer->size, buffer->abi_version, kMinimumPCMBufferSize);
+    if (status != PARSO_STATUS_OK) return status;
+    if (buffer->samples || buffer->frames != 0 || buffer->channel_count != 0 ||
+        buffer->sample_rate_hz != 0) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "output PCM buffer must be empty");
+    }
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t validateEmptyBytes(const parso_bytes_t *bytes) noexcept {
+    if (!bytes) return fail(PARSO_STATUS_INVALID_ARGUMENT, "output bytes are null");
+    const parso_status_t status = checkHeader(bytes->size, bytes->abi_version, kMinimumBytesSize);
+    if (status != PARSO_STATUS_OK) return status;
+    if (bytes->data || bytes->size_bytes != 0) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "output bytes must be empty");
+    }
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t copyPCM(const std::vector<float> &samples, uint32_t sampleRate,
+                       uint32_t channels, parso_pcm_buffer_t *out) noexcept {
+    if (channels < 1 || channels > 2 || sampleRate == 0 ||
+        samples.size() % channels != 0) {
+        return fail(PARSO_STATUS_INTERNAL, "decoded PCM has an invalid format");
+    }
+    if (samples.size() > std::numeric_limits<uint64_t>::max() / sizeof(float)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "decoded PCM is too large");
+    }
+    const size_t allocationSize = samples.size() * sizeof(float);
+    float *owned = nullptr;
+    if (allocationSize > 0) {
+        owned = static_cast<float *>(std::malloc(allocationSize));
+        if (!owned) return fail(PARSO_STATUS_OUT_OF_MEMORY, "PCM allocation failed");
+        std::memcpy(owned, samples.data(), allocationSize);
+    }
+    out->samples = owned;
+    out->frames = static_cast<uint64_t>(samples.size() / channels);
+    out->channel_count = channels;
+    out->sample_rate_hz = sampleRate;
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t copyBytes(const std::vector<uint8_t> &bytes, parso_bytes_t *out) noexcept {
+    uint8_t *owned = nullptr;
+    if (!bytes.empty()) {
+        owned = static_cast<uint8_t *>(std::malloc(bytes.size()));
+        if (!owned) return fail(PARSO_STATUS_OUT_OF_MEMORY, "byte allocation failed");
+        std::memcpy(owned, bytes.data(), bytes.size());
+    }
+    out->data = owned;
+    out->size_bytes = static_cast<uint64_t>(bytes.size());
+    return PARSO_STATUS_OK;
+}
+
+void appendLE16(std::vector<uint8_t> &bytes, uint16_t value) {
+    bytes.push_back(static_cast<uint8_t>(value));
+    bytes.push_back(static_cast<uint8_t>(value >> 8));
+}
+
+void appendLE24(std::vector<uint8_t> &bytes, uint32_t value) {
+    bytes.push_back(static_cast<uint8_t>(value));
+    bytes.push_back(static_cast<uint8_t>(value >> 8));
+    bytes.push_back(static_cast<uint8_t>(value >> 16));
+}
+
+void appendLE32(std::vector<uint8_t> &bytes, uint32_t value) {
+    bytes.push_back(static_cast<uint8_t>(value));
+    bytes.push_back(static_cast<uint8_t>(value >> 8));
+    bytes.push_back(static_cast<uint8_t>(value >> 16));
+    bytes.push_back(static_cast<uint8_t>(value >> 24));
+}
+
+void appendPCMInteger(std::vector<uint8_t> &bytes, float sample, uint32_t bits) {
+    double value = std::isfinite(sample) ? static_cast<double>(sample) : 0.0;
+    if (value > 1.0) value = 1.0;
+    if (value < -1.0) value = -1.0;
+    switch (bits) {
+        case 8: {
+            int value8 = static_cast<int>(value * 127.0 + (value >= 0 ? 0.5 : -0.5));
+            if (value8 > 127) value8 = 127;
+            if (value8 < -128) value8 = -128;
+            bytes.push_back(static_cast<uint8_t>(value8 + 128));
+            break;
+        }
+        case 16: {
+            int value16 = static_cast<int>(value * 32767.0 + (value >= 0 ? 0.5 : -0.5));
+            if (value16 > 32767) value16 = 32767;
+            if (value16 < -32768) value16 = -32768;
+            appendLE16(bytes, static_cast<uint16_t>(static_cast<int16_t>(value16)));
+            break;
+        }
+        case 24: {
+            int64_t value24 = static_cast<int64_t>(value * 8388607.0 + (value >= 0 ? 0.5 : -0.5));
+            if (value24 > 8388607) value24 = 8388607;
+            if (value24 < -8388608) value24 = -8388608;
+            appendLE24(bytes, static_cast<uint32_t>(value24));
+            break;
+        }
+        case 32: {
+            double scaled = value * 2147483647.0 + (value >= 0 ? 0.5 : -0.5);
+            int64_t value32 = static_cast<int64_t>(scaled);
+            if (value32 > 2147483647) value32 = 2147483647;
+            if (value32 < -2147483648LL) value32 = -2147483648LL;
+            appendLE32(bytes, static_cast<uint32_t>(value32));
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+parso_status_t validateWriteSize(const parso_pcm_buffer_t *buffer, uint32_t bits,
+                                 uint64_t headerBytes, uint64_t maxBytes) noexcept {
+    const parso_status_t bufferStatus = validatePCMBuffer(buffer);
+    if (bufferStatus != PARSO_STATUS_OK) return bufferStatus;
+    if (!validBits(bits)) return fail(PARSO_STATUS_INVALID_ARGUMENT, "unsupported PCM bit depth");
+    const uint64_t samples = buffer->frames * buffer->channel_count;
+    const uint64_t bytesPerSample = bits / 8;
+    if (!multiplicationFits(samples, bytesPerSample, maxBytes - headerBytes)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "encoded PCM is too large");
+    }
+    return PARSO_STATUS_OK;
 }
 
 struct EngineHandle {
@@ -113,6 +286,191 @@ PARSO_API const char *parso_status_string(parso_status_t status) {
         case PARSO_STATUS_CLOSED: return "closed";
         case PARSO_STATUS_INTERNAL: return "internal error";
         default: return "unknown status";
+    }
+}
+
+PARSO_API parso_status_t parso_capabilities_init(parso_capabilities_t *capabilities) {
+    if (!capabilities) return fail(PARSO_STATUS_INVALID_ARGUMENT, "capabilities is null");
+    std::memset(capabilities, 0, sizeof(*capabilities));
+    capabilities->size = sizeof(*capabilities);
+    capabilities->abi_version = PARSO_ABI_VERSION;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_capabilities_get(parso_capabilities_t *capabilities) {
+    const parso_status_t status = validateCapabilities(capabilities);
+    if (status != PARSO_STATUS_OK) return status;
+    capabilities->decode_containers = PARSO_CONTAINER_WAV;
+    capabilities->encode_containers = PARSO_CONTAINER_WAV;
+    capabilities->pcm_read_formats = PARSO_PCM_FORMAT_S8 |
+                                      PARSO_PCM_FORMAT_S16_LE |
+                                      PARSO_PCM_FORMAT_S24_LE |
+                                      PARSO_PCM_FORMAT_S32_LE;
+    capabilities->pcm_write_formats = capabilities->pcm_read_formats;
+    capabilities->max_channels = 2;
+    capabilities->max_sample_rate_hz = static_cast<uint32_t>(INT32_MAX);
+    capabilities->reserved[0] = 0;
+    capabilities->reserved[1] = 0;
+    lastError = "ok";
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_pcm_buffer_init(parso_pcm_buffer_t *buffer) {
+    if (!buffer) return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM buffer is null");
+    std::memset(buffer, 0, sizeof(*buffer));
+    buffer->size = sizeof(*buffer);
+    buffer->abi_version = PARSO_ABI_VERSION;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_pcm_buffer_release(parso_pcm_buffer_t *buffer) {
+    if (!buffer) return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM buffer is null");
+    std::free(buffer->samples);
+    std::memset(buffer, 0, sizeof(*buffer));
+    buffer->size = sizeof(*buffer);
+    buffer->abi_version = PARSO_ABI_VERSION;
+    lastError = "ok";
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_bytes_init(parso_bytes_t *bytes) {
+    if (!bytes) return fail(PARSO_STATUS_INVALID_ARGUMENT, "bytes are null");
+    std::memset(bytes, 0, sizeof(*bytes));
+    bytes->size = sizeof(*bytes);
+    bytes->abi_version = PARSO_ABI_VERSION;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_bytes_release(parso_bytes_t *bytes) {
+    if (!bytes) return fail(PARSO_STATUS_INVALID_ARGUMENT, "bytes are null");
+    std::free(bytes->data);
+    std::memset(bytes, 0, sizeof(*bytes));
+    bytes->size = sizeof(*bytes);
+    bytes->abi_version = PARSO_ABI_VERSION;
+    lastError = "ok";
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_wav_read(
+    const uint8_t *data, uint64_t sizeBytes, parso_pcm_buffer_t *outBuffer
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyPCMBuffer(outBuffer);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        if (!data || sizeBytes == 0 || sizeBytes > std::numeric_limits<size_t>::max()) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "WAV input is empty or too large");
+        }
+        std::vector<float> samples;
+        int sampleRate = 0;
+        int channels = 0;
+        if (!glint::wav_read(data, static_cast<size_t>(sizeBytes), samples,
+                             sampleRate, channels)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "WAV input is malformed or unsupported");
+        }
+        if (sampleRate <= 0 || channels < 1 || channels > 2) {
+            return fail(PARSO_STATUS_UNSUPPORTED, "WAV format exceeds the native PCM contract");
+        }
+        const parso_status_t copyStatus = copyPCM(
+            samples, static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels), outBuffer
+        );
+        if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+        return copyStatus;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "WAV decode allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while reading WAV");
+    }
+}
+
+PARSO_API parso_status_t parso_pcm_read(
+    const uint8_t *data, uint64_t sizeBytes, uint32_t sampleRateHz,
+    uint32_t channelCount, uint32_t bitsPerSample, parso_pcm_buffer_t *outBuffer
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyPCMBuffer(outBuffer);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        if (!data || sizeBytes == 0 || sizeBytes > std::numeric_limits<size_t>::max() ||
+            !finitePositive(sampleRateHz) || sampleRateHz > static_cast<uint32_t>(INT_MAX) ||
+            channelCount < 1 || channelCount > 2 ||
+            !validBits(bitsPerSample)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "raw PCM arguments are invalid");
+        }
+        std::vector<float> samples;
+        if (!glint::pcm_read(data, static_cast<size_t>(sizeBytes),
+                             static_cast<int>(sampleRateHz), static_cast<int>(channelCount),
+                             static_cast<int>(bitsPerSample), samples)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "raw PCM input is malformed");
+        }
+        const parso_status_t copyStatus = copyPCM(samples, sampleRateHz, channelCount, outBuffer);
+        if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+        return copyStatus;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "raw PCM decode allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while reading raw PCM");
+    }
+}
+
+PARSO_API parso_status_t parso_wav_write(
+    const parso_pcm_buffer_t *buffer, uint32_t bitsPerSample,
+    uint32_t isFloat, parso_bytes_t *outBytes
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyBytes(outBytes);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        const parso_status_t bufferStatus = validatePCMBuffer(buffer);
+        if (bufferStatus != PARSO_STATUS_OK) return bufferStatus;
+        if (!validWavBits(bitsPerSample, isFloat)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "unsupported WAV sample format");
+        }
+        const uint64_t bytesPerSample = bitsPerSample / 8;
+        const uint64_t samples = buffer->frames * buffer->channel_count;
+        if (buffer->sample_rate_hz > static_cast<uint32_t>(INT_MAX) ||
+            !multiplicationFits(samples, bytesPerSample, UINT32_MAX - 36u) ||
+            buffer->frames > static_cast<uint64_t>(std::numeric_limits<long>::max())) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "WAV output is too large");
+        }
+        float zero = 0.0f;
+        const float *samplesPointer = buffer->samples ? buffer->samples : &zero;
+        const std::vector<uint8_t> bytes = glint::wav_write(
+            samplesPointer, static_cast<long>(buffer->frames),
+            static_cast<int>(buffer->channel_count), static_cast<int>(buffer->sample_rate_hz),
+            static_cast<int>(bitsPerSample), isFloat != 0
+        );
+        const parso_status_t copyStatus = copyBytes(bytes, outBytes);
+        if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+        return copyStatus;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "WAV encode allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while writing WAV");
+    }
+}
+
+PARSO_API parso_status_t parso_pcm_write(
+    const parso_pcm_buffer_t *buffer, uint32_t bitsPerSample, parso_bytes_t *outBytes
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyBytes(outBytes);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        const parso_status_t sizeStatus = validateWriteSize(
+            buffer, bitsPerSample, 0, static_cast<uint64_t>(std::numeric_limits<size_t>::max())
+        );
+        if (sizeStatus != PARSO_STATUS_OK) return sizeStatus;
+        const uint64_t sampleCount = buffer->frames * buffer->channel_count;
+        const size_t byteCount = static_cast<size_t>(sampleCount * (bitsPerSample / 8));
+        std::vector<uint8_t> bytes;
+        bytes.reserve(byteCount);
+        for (uint64_t index = 0; index < sampleCount; ++index) {
+            appendPCMInteger(bytes, buffer->samples[index], bitsPerSample);
+        }
+        const parso_status_t copyStatus = copyBytes(bytes, outBytes);
+        if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+        return copyStatus;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "raw PCM encode allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while writing raw PCM");
     }
 }
 

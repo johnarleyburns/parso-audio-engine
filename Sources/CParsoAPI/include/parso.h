@@ -30,6 +30,29 @@ extern "C" {
 #define PARSO_ABI_VERSION 1u
 #define PARSO_MAX_DECKS 4u
 
+/* Container capability bits. A bit is set only when that operation is
+ * implemented by the current native build; callers must handle missing bits
+ * as an explicit unsupported-format result. */
+#define PARSO_CONTAINER_WAV UINT64_C(1)
+#define PARSO_CONTAINER_FLAC UINT64_C(2)
+#define PARSO_CONTAINER_OGG_VORBIS UINT64_C(4)
+#define PARSO_CONTAINER_OPUS UINT64_C(8)
+#define PARSO_CONTAINER_MP3 UINT64_C(16)
+#define PARSO_CONTAINER_AAC UINT64_C(32)
+#define PARSO_CONTAINER_ALAC UINT64_C(64)
+#define PARSO_CONTAINER_AIFF UINT64_C(128)
+#define PARSO_CONTAINER_CAF UINT64_C(256)
+
+/* Raw PCM sample-format capability bits. PCM buffers exposed by this ABI are
+ * always interleaved float32; these bits describe the on-disk/raw byte forms
+ * accepted by the offline conversion functions. */
+#define PARSO_PCM_FORMAT_S8 UINT64_C(1)
+#define PARSO_PCM_FORMAT_S16_LE UINT64_C(2)
+#define PARSO_PCM_FORMAT_S24_LE UINT64_C(4)
+#define PARSO_PCM_FORMAT_S32_LE UINT64_C(8)
+#define PARSO_PCM_FORMAT_F32_LE UINT64_C(16)
+#define PARSO_PCM_FORMAT_F64_LE UINT64_C(32)
+
 typedef int32_t parso_status_t;
 enum {
     PARSO_STATUS_OK = 0,
@@ -43,6 +66,39 @@ enum {
 };
 
 typedef struct parso_engine parso_engine_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint64_t decode_containers;
+    uint64_t encode_containers;
+    uint64_t pcm_read_formats;
+    uint64_t pcm_write_formats;
+    uint32_t max_channels;
+    uint32_t max_sample_rate_hz;
+    uint32_t reserved[2];
+} parso_capabilities_t;
+
+/* Interleaved float32 PCM owned by the native library after a read. The
+ * caller must release it with parso_pcm_buffer_release. */
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    float *samples;
+    uint64_t frames;
+    uint32_t channel_count;
+    uint32_t sample_rate_hz;
+} parso_pcm_buffer_t;
+
+/* Byte storage returned by an offline writer. The caller must release it with
+ * parso_bytes_release; it is never borrowed from an input buffer. */
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint8_t *data;
+    uint64_t size_bytes;
+    uint32_t reserved[2];
+} parso_bytes_t;
 
 typedef struct {
     uint32_t size;
@@ -113,6 +169,34 @@ typedef struct {
 
 PARSO_API const char *parso_last_error(void);
 PARSO_API const char *parso_status_string(parso_status_t status);
+
+PARSO_API parso_status_t parso_capabilities_init(parso_capabilities_t *capabilities);
+PARSO_API parso_status_t parso_capabilities_get(parso_capabilities_t *capabilities);
+PARSO_API parso_status_t parso_pcm_buffer_init(parso_pcm_buffer_t *buffer);
+/* Idempotent; clears the buffer after releasing its owned samples. */
+PARSO_API parso_status_t parso_pcm_buffer_release(parso_pcm_buffer_t *buffer);
+PARSO_API parso_status_t parso_bytes_init(parso_bytes_t *bytes);
+/* Idempotent; clears the byte buffer after releasing its owned storage. */
+PARSO_API parso_status_t parso_bytes_release(parso_bytes_t *bytes);
+
+/* Offline WAV/PCM services. Input bytes and writer input samples are borrowed
+ * for the duration of the call. Raw PCM uses little-endian integer PCM with
+ * 8/16/24/32 bits; 8-bit PCM is unsigned as required by RIFF/WAVE. */
+PARSO_API parso_status_t parso_wav_read(
+    const uint8_t *data, uint64_t size_bytes, parso_pcm_buffer_t *out_buffer
+);
+PARSO_API parso_status_t parso_pcm_read(
+    const uint8_t *data, uint64_t size_bytes, uint32_t sample_rate_hz,
+    uint32_t channel_count, uint32_t bits_per_sample, parso_pcm_buffer_t *out_buffer
+);
+PARSO_API parso_status_t parso_wav_write(
+    const parso_pcm_buffer_t *buffer, uint32_t bits_per_sample,
+    uint32_t is_float, parso_bytes_t *out_bytes
+);
+PARSO_API parso_status_t parso_pcm_write(
+    const parso_pcm_buffer_t *buffer, uint32_t bits_per_sample,
+    parso_bytes_t *out_bytes
+);
 
 PARSO_API parso_status_t parso_engine_options_init(parso_engine_options_t *options);
 PARSO_API parso_status_t parso_control_init(parso_control_t *control);

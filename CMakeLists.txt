@@ -56,14 +56,23 @@ set_target_properties(CParsoDSP CParsoEngine PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Reuse the permissively licensed, clean-room WAV/PCM implementation already
+# shipped for the SwiftPM Glint target. Only its container-independent parser
+# is needed by this native CP3 slice; no platform codec is implied by linking it.
+add_library(CGlintWav STATIC
+    Sources/CGlint/src/wav_io.cpp
+)
+target_include_directories(CGlintWav PUBLIC Sources/CGlint/src)
+set_target_properties(CGlintWav PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(CParsoAPI STATIC
     Sources/CParsoAPI/src/parso_api.cpp
 )
 target_include_directories(CParsoAPI
     PUBLIC Sources/CParsoAPI/include
-    PRIVATE Sources/CParsoEngine/include
+    PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
 )
-target_link_libraries(CParsoAPI PUBLIC CParsoEngine)
+target_link_libraries(CParsoAPI PUBLIC CParsoEngine PRIVATE CGlintWav)
 
 if(PARSO_BUILD_SHARED_API)
     add_library(ParsoAPI SHARED
@@ -71,13 +80,13 @@ if(PARSO_BUILD_SHARED_API)
     )
     target_include_directories(ParsoAPI
         PUBLIC Sources/CParsoAPI/include
-        PRIVATE Sources/CParsoEngine/include
+        PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
     )
     target_compile_definitions(ParsoAPI PRIVATE
         PARSO_BUILD_SHARED
         PARSO_BUILDING_LIBRARY
     )
-    target_link_libraries(ParsoAPI PRIVATE CParsoEngine)
+    target_link_libraries(ParsoAPI PRIVATE CParsoEngine CGlintWav)
     set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
 endif()
 
@@ -134,6 +143,33 @@ if(PARSO_BUILD_TESTS)
         add_test(NAME public_cpp_consumer COMMAND parso_public_cpp_consumer)
         set_tests_properties(public_cpp_consumer PROPERTIES
             LABELS "native;public-api;consumer;cxx17"
+        )
+
+        add_executable(parso_public_c_offline_consumer
+            Tests/Native/public_c_offline_consumer.c
+        )
+        target_link_libraries(parso_public_c_offline_consumer PRIVATE
+            $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+            $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        )
+        target_include_directories(parso_public_c_offline_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_c_offline_consumer COMMAND parso_public_c_offline_consumer)
+        set_tests_properties(public_c_offline_consumer PROPERTIES
+            LABELS "native;public-api;consumer;offline;c11"
+        )
+
+        add_executable(parso_public_cpp_offline_consumer
+            Tests/Native/public_cpp_offline_consumer.cpp
+        )
+        target_link_libraries(parso_public_cpp_offline_consumer PRIVATE CParsoAPI)
+        target_include_directories(parso_public_cpp_offline_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_cpp_offline_consumer COMMAND parso_public_cpp_offline_consumer)
+        set_tests_properties(public_cpp_offline_consumer PROPERTIES
+            LABELS "native;public-api;consumer;offline;cxx17"
         )
     endif()
 endif()

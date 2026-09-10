@@ -9,6 +9,87 @@
 
 namespace parso {
 
+class Bytes final {
+public:
+    Bytes() noexcept { parso_bytes_init(&value_); }
+    ~Bytes() { parso_bytes_release(&value_); }
+
+    Bytes(const Bytes &) = delete;
+    Bytes &operator=(const Bytes &) = delete;
+    Bytes(Bytes &&other) noexcept : value_(other.value_) {
+        other.value_.data = nullptr;
+        other.value_.size_bytes = 0;
+    }
+    Bytes &operator=(Bytes &&other) noexcept {
+        if (this != &other) {
+            parso_bytes_release(&value_);
+            value_ = other.value_;
+            other.value_.data = nullptr;
+            other.value_.size_bytes = 0;
+        }
+        return *this;
+    }
+
+    uint8_t *data() noexcept { return value_.data; }
+    const uint8_t *data() const noexcept { return value_.data; }
+    uint64_t size() const noexcept { return value_.size_bytes; }
+    parso_bytes_t *cHandle() noexcept { return &value_; }
+
+private:
+    parso_bytes_t value_{};
+};
+
+class PcmBuffer final {
+public:
+    PcmBuffer() noexcept { parso_pcm_buffer_init(&value_); }
+    ~PcmBuffer() { parso_pcm_buffer_release(&value_); }
+
+    PcmBuffer(const PcmBuffer &) = delete;
+    PcmBuffer &operator=(const PcmBuffer &) = delete;
+    PcmBuffer(PcmBuffer &&other) noexcept : value_(other.value_) {
+        other.value_.samples = nullptr;
+        other.value_.frames = 0;
+    }
+    PcmBuffer &operator=(PcmBuffer &&other) noexcept {
+        if (this != &other) {
+            parso_pcm_buffer_release(&value_);
+            value_ = other.value_;
+            other.value_.samples = nullptr;
+            other.value_.frames = 0;
+        }
+        return *this;
+    }
+
+    static parso_status_t readWav(const uint8_t *data, uint64_t size, PcmBuffer *out) noexcept {
+        return out ? parso_wav_read(data, size, &out->value_) : PARSO_STATUS_INVALID_ARGUMENT;
+    }
+
+    static parso_status_t readPCM(const uint8_t *data, uint64_t size,
+                                  uint32_t sampleRate, uint32_t channels,
+                                  uint32_t bits, PcmBuffer *out) noexcept {
+        return out ? parso_pcm_read(data, size, sampleRate, channels, bits, &out->value_)
+                   : PARSO_STATUS_INVALID_ARGUMENT;
+    }
+
+    parso_status_t writeWav(uint32_t bits, bool isFloat, Bytes *out) const noexcept {
+        return out ? parso_wav_write(&value_, bits, isFloat ? 1u : 0u, out->cHandle())
+                   : PARSO_STATUS_INVALID_ARGUMENT;
+    }
+
+    parso_status_t writePCM(uint32_t bits, Bytes *out) const noexcept {
+        return out ? parso_pcm_write(&value_, bits, out->cHandle())
+                   : PARSO_STATUS_INVALID_ARGUMENT;
+    }
+
+    const float *samples() const noexcept { return value_.samples; }
+    uint64_t frames() const noexcept { return value_.frames; }
+    uint32_t channels() const noexcept { return value_.channel_count; }
+    uint32_t sampleRate() const noexcept { return value_.sample_rate_hz; }
+
+private:
+    parso_pcm_buffer_t value_{};
+};
+
 class Engine final {
 public:
     Engine() noexcept = default;

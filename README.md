@@ -92,6 +92,13 @@ cmake --build build-native
 ctest --test-dir build-native --output-on-failure
 ```
 
+The versioned native C ABI also exposes the first CP3 offline service slice: capability reporting,
+WAV read/write, and raw little-endian integer PCM read/write. Reads produce owned interleaved
+float32 buffers and writes produce owned byte buffers; both have idempotent release functions.
+Only implemented formats are advertised, so the current native capability mask leaves FLAC, Ogg
+Vorbis, Opus, MP3, AAC, ALAC, AIFF, and CAF unset until their native gates pass. The C11 and C++17
+consumer tests exercise this contract through `ctest`.
+
 This currently exercises the shared C++ headless render core. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated

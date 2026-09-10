@@ -9,7 +9,7 @@ This is the CP0 contract and inventory. “Planned” means the implementation a
 | DJ controls and state | Swift `ParsoDJEngine` | Planned shared native control module | Planned shared native control module | Planned C# API over shared control module | Planned Kotlin facade | Current control behavior identified as migration scope | CP3 / CP-WIN |
 | Analysis | Swift + Accelerate | Planned portable FFT/vector backend | Planned shared native backend | Planned managed result types and error mapping | Planned through native analysis API | Algorithms and result types specified in `SPEC.md` | CP3 / CP-WIN |
 | FLAC / Vorbis / Opus | Supported through vendored C | Planned after CMake build and fixture gates | Planned native MSVC and cross-build capability checks | Planned managed capability queries | Planned after NDK fixture gates | Vendor licenses and targets inventoried | CP1/CP3 / CP-WIN |
-| WAV / PCM | Supported | Public C ABI slice underway | Native C/C++ consumers planned in CI | C# buffer/marshaling consumer planned | Planned | PCM is the first cross-binding contract | CP2 / CP-WIN |
+| WAV / PCM | Supported | Supported through `parso_wav_*` / `parso_pcm_*` | Native C/C++ offline consumers pass with the shared ABI | C# buffer/marshaling consumer planned | Planned | CP3 native capability + ownership slice is covered by independent C11/C++17 CTest consumers; packaging remains pending | CP3 / CP-WIN |
 | MP3 / AAC / ALAC / AIFF / CAF | Apple-supported paths plus Glint MP3 encode | Capability-specific; no unsupported format is implied | Capability-specific; Windows codecs require explicit adapter validation | Capability-specific managed errors | Capability-specific; Android codec adapter requires device tests | Platform codec gaps called out in plan | CP3 / CP-WIN |
 | Recording | Swift `MixRecorder` | Planned native off-thread recorder | Planned native recorder and Windows consumer tests | Planned C# recording API | Planned native service with Kotlin lifecycle API | Existing record ring is the native seam | CP3 / CP-WIN |
 | Device playback / capture | Apple audio frameworks | Planned host callback, then optional device backend | Planned WASAPI adapter and native route tests | Planned C# device facade | Planned Oboe adapter | Device APIs deliberately isolated from engine | CP4/CP5 / CP-WIN |
@@ -48,3 +48,11 @@ Every supported row needs all applicable layers below. A forwarding test alone i
 | Human acceptance | Audible behavior | C/C++ and Python Linux scenario WAV/JSON/MP4, separate binding review results, A/B against Apple artifacts |
 
 The matrix is updated with the commit, test command, artifact path, and reviewer/date when a row changes state.
+
+### CP3 native offline slice
+
+The portable C ABI currently advertises only the formats implemented by the native build: WAV
+container read/write and raw little-endian integer PCM read/write at 8/16/24/32 bits. Reads return
+owned interleaved float32 buffers; writes return owned byte buffers. Both are released through
+idempotent ABI functions. FLAC, Ogg Vorbis, Opus, MP3, AAC, ALAC, AIFF, and CAF remain unset in the
+capability masks until native implementations and their fixture gates pass.
