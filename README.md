@@ -112,6 +112,14 @@ The sanitizer configuration intentionally omits the external installed-package p
 that consumer needs the sanitizer runtime injected by its host environment; the normal
 un-instrumented build retains the installed SDK gate.
 
+Check shared-library exports and ELF identity for a release artifact:
+
+```bash
+python3 scripts/check-native-abi.py \
+  --library build-native/libparso.so \
+  --output /tmp/parso-abi.json
+```
+
 The versioned native C ABI also exposes the first CP3 offline service slice: capability reporting,
 WAV read/write, raw little-endian integer PCM read/write, sample-rate conversion, and EBU R128
 loudness measurement. PCM reads and SRC produce owned interleaved float32 buffers; writers produce

@@ -230,6 +230,8 @@ consumer exercises both endpoints; native DLL execution remains a Windows CI gat
 The native CMake build now has an opt-in `PARSO_ENABLE_SANITIZERS=ON` path for AddressSanitizer
 and UndefinedBehaviorSanitizer. The portable core/public-API CTest subset has been run with that
 instrumentation; normal builds leave sanitizer flags disabled.
+`scripts/check-native-abi.py` records ELF class/machine, SHA-256, and required public C ABI exports;
+the same checker accepts explicit JNI symbol lists for Android shared libraries.
 
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 
