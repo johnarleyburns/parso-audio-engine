@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -22,7 +23,8 @@ bool requireOk(parso_status_t status, const char *operation) {
     return false;
 }
 
-bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds) {
+bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds,
+                   const std::string &scenario) {
     if (seconds < 30.0) {
         std::cerr << "acceptance artifacts require at least 30 seconds\n";
         return false;
@@ -33,7 +35,13 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
         return false;
     }
     const size_t frameCount = static_cast<size_t>(totalFrames);
+    const bool crossfaderSweep = scenario == "crossfader-sweep";
+    if (!crossfaderSweep && scenario != "native-headless-tone") {
+        std::cerr << "unsupported acceptance scenario: " << scenario << "\n";
+        return false;
+    }
     std::vector<float> source(frameCount);
+    std::vector<float> sourceB(crossfaderSweep ? frameCount : 0);
     std::vector<float> renderedLeft(frameCount);
     std::vector<float> renderedRight(frameCount);
     std::vector<float> interleaved(frameCount * 2);
@@ -41,8 +49,13 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
         const double frequency = index < frameCount / 2 ? 220.0 : 330.0;
         source[index] = static_cast<float>(0.18 * std::sin(
             2.0 * kPi * frequency * static_cast<double>(index) / kSampleRate));
+        if (crossfaderSweep) {
+            sourceB[index] = static_cast<float>(0.18 * std::sin(
+                2.0 * kPi * (frequency * 1.5) * static_cast<double>(index) / kSampleRate));
+        }
     }
     const float *planes[] = {source.data()};
+    const float *planesB[] = {sourceB.data()};
 
     parso_engine_options_t engineOptions{};
     parso_control_t control{};
@@ -62,20 +75,47 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
     view.channel_count = 1;
     view.sample_rate_hz = kSampleRate;
     control.master_level = 0.8f;
-    control.xfade_assign[0] = 2.0f;
+    control.xfade_assign[0] = crossfaderSweep ? 0.0f : 2.0f;
     control.fader[0] = 1.0f;
     control.trim[0] = 1.0f;
+    if (crossfaderSweep) {
+        control.xfade_assign[1] = 1.0f;
+        control.fader[1] = 1.0f;
+        control.trim[1] = 1.0f;
+    }
     command.type = PARSO_COMMAND_PLAY;
     command.deck = 0;
     ok = requireOk(parso_engine_create(&engineOptions, &engine), "engine create");
     if (ok) ok = requireOk(parso_engine_set_control(engine, &control), "set control");
     if (ok) ok = requireOk(parso_engine_set_deck_buffer(engine, 0, &view), "set deck buffer");
     if (ok) ok = requireOk(parso_engine_post_command(engine, &command), "post play");
+    if (ok && crossfaderSweep) {
+        view.planes = planesB;
+        ok = requireOk(parso_engine_set_deck_buffer(engine, 1, &view), "set deck B buffer");
+        command.deck = 1;
+        if (ok) ok = requireOk(parso_engine_post_command(engine, &command), "post deck B play");
+        view.planes = planes;
+        command.deck = 0;
+    }
     if (ok) ok = requireOk(parso_engine_record_reset(engine), "record reset");
     if (ok) ok = requireOk(parso_engine_record_set_active(engine, 1), "record activate");
+    std::vector<std::pair<double, std::string>> events;
+    events.emplace_back(0.0, "play-deck-a");
+    if (crossfaderSweep) {
+        events.emplace_back(0.0, "play-deck-b");
+        events.emplace_back(0.0, "crossfader-start-minus-one");
+        events.emplace_back(seconds, "crossfader-end-plus-one");
+    }
     for (uint64_t offset = 0; ok && offset < totalFrames; offset += kBlockSize) {
         const uint32_t frames = static_cast<uint32_t>(
             std::min<uint64_t>(kBlockSize, totalFrames - offset));
+        if (crossfaderSweep) {
+            control.crossfader = totalFrames > 1
+                ? -1.0f + 2.0f * static_cast<float>(offset) /
+                    static_cast<float>(totalFrames - 1)
+                : -1.0f;
+            ok = requireOk(parso_engine_set_control(engine, &control), "set crossfader");
+        }
         output.left = renderedLeft.data() + offset;
         output.right = renderedRight.data() + offset;
         output.frames = frames;
@@ -122,7 +162,8 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
                    "waveform generate") &&
          requireOk(parso_codec_write(&pcm, PARSO_CODEC_WAV, &codecOptions, &encoded), "WAV encode");
     std::filesystem::create_directories(outputDirectory);
-    const auto stem = outputDirectory / "native-headless-tone";
+    const auto stem = outputDirectory / (scenario == "native-headless-tone"
+        ? "native-headless-tone" : "native-crossfader-sweep");
     if (ok) {
         std::ofstream wav(stem.string() + ".wav", std::ios::binary);
         wav.write(reinterpret_cast<const char *>(encoded.data),
@@ -135,8 +176,10 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
     if (!ok) return false;
     std::ofstream sidecar(stem.string() + ".json");
     sidecar << "{\n"
-            << "  \"fixtureID\": \"generated-native-tone\",\n"
-            << "  \"scenario\": \"native-headless-tone\",\n"
+            << "  \"fixtureID\": \""
+            << (crossfaderSweep ? "generated-native-crossfader" : "generated-native-tone")
+            << "\",\n"
+            << "  \"scenario\": \"" << scenario << "\",\n"
             << "  \"audioDuration\": " << seconds << ",\n"
             << "  \"analysisDuration\": " << seconds << ",\n"
             << "  \"sampleRateHz\": " << kSampleRate << ",\n"
@@ -157,8 +200,13 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
         sidecar << waveformMax[index];
     }
     sidecar << "]},\n"
-            << "  \"events\": [{\"time\": 0.0, \"type\": \"play\"}]\n"
-            << "}\n";
+            << "  \"events\": [";
+    for (size_t index = 0; index < events.size(); ++index) {
+        if (index != 0) sidecar << ", ";
+        sidecar << "{\"time\": " << events[index].first
+                << ", \"type\": \"" << events[index].second << "\"}";
+    }
+    sidecar << "]\n}\n";
     return sidecar.good();
 }
 
@@ -167,14 +215,18 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
 int main(int argc, char **argv) {
     std::filesystem::path outputDirectory;
     double seconds = 30.0;
+    std::string scenario = "native-headless-tone";
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--output-dir" && index + 1 < argc) {
             outputDirectory = argv[++index];
         } else if (argument == "--seconds" && index + 1 < argc) {
             seconds = std::stod(argv[++index]);
+        } else if (argument == "--scenario" && index + 1 < argc) {
+            scenario = argv[++index];
         } else {
-            std::cerr << "usage: " << argv[0] << " --output-dir PATH [--seconds N]\n";
+            std::cerr << "usage: " << argv[0]
+                      << " --output-dir PATH [--seconds N] [--scenario NAME]\n";
             return 2;
         }
     }
@@ -182,5 +234,5 @@ int main(int argc, char **argv) {
         std::cerr << "--output-dir is required\n";
         return 2;
     }
-    return writeArtifact(outputDirectory, seconds) ? 0 : 1;
+    return writeArtifact(outputDirectory, seconds, scenario) ? 0 : 1;
 }

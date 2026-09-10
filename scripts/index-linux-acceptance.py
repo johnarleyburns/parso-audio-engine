@@ -73,11 +73,14 @@ def git_commit() -> str:
         return "unknown"
 
 
-def index(root: Path) -> dict:
+def index(root: Path, excluded: set[Path] | None = None) -> dict:
     root = root.resolve()
+    excluded = excluded or set()
     artifacts = []
     errors = []
     for sidecar in sorted(root.rglob("*.json")):
+        if sidecar.resolve() in excluded or sidecar.name in {"manifest.json", "review-manifest.json"}:
+            continue
         wav = sidecar.with_suffix(".wav")
         item_errors: list[str] = []
         try:
@@ -145,7 +148,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.root.is_dir():
         parser.error(f"artifact root does not exist: {args.root}")
-    manifest = index(args.root)
+    manifest = index(args.root, {args.output.resolve()})
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     for error in manifest["errors"]:

@@ -606,6 +606,14 @@ if(PARSO_BUILD_TESTS)
         set_tests_properties(native_acceptance_artifacts PROPERTIES
             LABELS "native;acceptance;offline;recording;cxx17"
         )
+        add_test(NAME native_acceptance_crossfader
+            COMMAND parso_native_acceptance_artifacts
+                --output-dir "${CMAKE_CURRENT_BINARY_DIR}/native-crossfader-artifacts"
+                --scenario crossfader-sweep
+        )
+        set_tests_properties(native_acceptance_crossfader PROPERTIES
+            LABELS "native;acceptance;offline;engine;crossfader;cxx17"
+        )
 
         if(PARSO_BUILD_CODEC_BRIDGES)
             add_executable(parso_public_codec_consumer

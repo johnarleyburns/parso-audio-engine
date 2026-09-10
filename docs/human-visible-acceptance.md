@@ -57,7 +57,8 @@ Swift analyzer remains Apple-only:
 cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-native --target parso_native_acceptance_artifacts
 ./build-native/parso_native_acceptance_artifacts \
-  --output-dir /tmp/parso-native-acceptance --seconds 30
+  --output-dir /tmp/parso-native-acceptance --seconds 30 \
+  --scenario native-headless-tone
 ```
 
 This produces `native-headless-tone.wav` and its JSON duration/event sidecar
@@ -77,6 +78,18 @@ The indexer rejects missing pairs, malformed WAV headers, durations below 30 sec
 duration mismatches. Every valid artifact starts with `reviewStatus: "pending"`; only a human
 listening pass should change that field in a review copy. Generated manifests and media remain
 outside the repository.
+
+The first engine-control review timeline renders two resident decks and sweeps the crossfader over
+the full 30 seconds:
+
+```bash
+./build-native/parso_native_acceptance_artifacts \
+  --output-dir /tmp/parso-crossfader-acceptance --seconds 30 \
+  --scenario crossfader-sweep
+python3 scripts/index-linux-acceptance.py \
+  --root /tmp/parso-crossfader-acceptance \
+  --output /tmp/parso-crossfader-acceptance/manifest.json
+```
 
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
