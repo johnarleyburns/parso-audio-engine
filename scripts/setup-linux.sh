@@ -340,8 +340,13 @@ build_windows_cross() {
         -DPARSO_BUILD_SHARED_API=ON \
         -DCMAKE_BUILD_TYPE=Release
     cmake --build "$WINDOWS_BUILD_DIR" --parallel
-    [ -f "$WINDOWS_BUILD_DIR/parso.dll" ] || die "cross-build did not produce parso.dll"
-    file "$WINDOWS_BUILD_DIR/parso.dll" 2>/dev/null || true
+    local windows_library="$WINDOWS_BUILD_DIR/parso.dll"
+    if [ ! -f "$windows_library" ]; then
+        # MinGW prefixes shared-library output names with lib; MSVC does not.
+        windows_library="$WINDOWS_BUILD_DIR/libparso.dll"
+    fi
+    [ -f "$windows_library" ] || die "cross-build did not produce parso.dll or libparso.dll"
+    file "$windows_library" 2>/dev/null || true
 }
 
 build_dotnet_cross() {

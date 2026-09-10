@@ -15,6 +15,8 @@ namespace {
 
 constexpr uint32_t kCommandCapacity = 256;
 constexpr uint32_t kEventCapacity = 1024;
+constexpr float kPi = 3.14159265358979323846f;
+constexpr float kHalfPi = kPi * 0.5f;
 
 // Per-deck 4-voice stem overlay (Phase 6b item 1). When armed, the deck's
 // source sample is the gain-weighted sum of the present voices instead of the
@@ -312,10 +314,10 @@ static float processColorFX(DeckState& deck, float input, double sampleRate, int
     // 0.5 is neutral (×1.0), so a default engine matches pre-C4 output exactly.
     const float param = control.colorParam[deckIndex].load(std::memory_order_relaxed);
     const float wet = std::min(1.0f, std::fabs(amount) * (param / 0.5f));
-    const float lowAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 250.0f /
-                                             static_cast<float>(sampleRate));
-    const float highAlpha = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 1800.0f /
-                                              static_cast<float>(sampleRate));
+    const float lowAlpha = 1.0f - std::exp(-2.0f * kPi * 250.0f /
+        static_cast<float>(sampleRate));
+    const float highAlpha = 1.0f - std::exp(-2.0f * kPi * 1800.0f /
+        static_cast<float>(sampleRate));
     deck.colorLowState += lowAlpha * (input - deck.colorLowState);
     deck.colorHighState += highAlpha * (input - deck.colorHighState);
     const uint32_t index = deck.colorDelayIndex;
@@ -825,7 +827,7 @@ static void crossfadeGains(float crossfader, float curve, float& gainA, float& g
     const float x = crossfader < -1.0f ? -1.0f : (crossfader > 1.0f ? 1.0f : crossfader);
     const float normalized = (x + 1.0f) * 0.5f;
     if (curve < 0.25f) {
-        const float angle = normalized * static_cast<float>(M_PI_2);
+        const float angle = normalized * kHalfPi;
         gainA = std::cos(angle);
         gainB = std::sin(angle);
     } else if (curve < 0.75f) {
@@ -862,7 +864,7 @@ static void crossfadeGains(float crossfader, float curve, float& gainA, float& g
 // the low-pass output; band-pass is kept in state for resonant sweeps.
 static float bfxSvfLowpass(pe_engine* e, float in, float cutoffHz, float res) {
     const float sr = static_cast<float>(e->sampleRate);
-    const float g = std::tan(static_cast<float>(M_PI) * std::min(cutoffHz, sr * 0.45f) / sr);
+    const float g = std::tan(kPi * std::min(cutoffHz, sr * 0.45f) / sr);
     const float k = 2.0f - 1.9f * std::min(1.0f, std::max(0.0f, res));   // damping
     const float a1 = 1.0f / (1.0f + g * (g + k));
     const float a2 = g * a1;
@@ -934,8 +936,8 @@ static float processBeatFX(pe_engine* engine, float input) {
     float fxIn = input;
     if (band != 0) {
         const float sr = static_cast<float>(engine->sampleRate);
-        const float aLo = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 250.0f / sr);
-        const float aHi = 1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 2000.0f / sr);
+        const float aLo = 1.0f - std::exp(-2.0f * kPi * 250.0f / sr);
+        const float aHi = 1.0f - std::exp(-2.0f * kPi * 2000.0f / sr);
         engine->beatFXBandLP += aLo * (input - engine->beatFXBandLP);
         engine->beatFXBandHP += aHi * (input - engine->beatFXBandHP);
         if (band == 1) fxIn = engine->beatFXBandLP;                       // low
@@ -1082,7 +1084,7 @@ static float processBeatFX(pe_engine* engine, float input) {
         case 11:   // Low-Cut Echo — echo whose feedback path is high-passed
                    // (~120 Hz), so repeats thin out instead of building mud.
             wet = delayed;
-            engine->bfxLowCutState += (1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * 120.0f / sr))
+            engine->bfxLowCutState += (1.0f - std::exp(-2.0f * kPi * 120.0f / sr))
                                       * (delayed - engine->bfxLowCutState);
             feed = fxIn + (delayed - engine->bfxLowCutState) * 0.62f;
             feedback = 0.0f;

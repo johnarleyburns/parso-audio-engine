@@ -352,7 +352,9 @@ struct pd_timepitch {
     double varispeedPhase = 0.0;
 
     pd_timepitch(double sr, int channelCount, int blockSize)
-        : stretch(0x504152534fULL), sampleRate(sr), channels(channelCount), maxBlock(blockSize) {
+        // Keep the seed within the 32-bit range of long on Windows/MinGW and
+        // use the same value on LP64 hosts for deterministic cross-builds.
+        : stretch(0x4152534fL), sampleRate(sr), channels(channelCount), maxBlock(blockSize) {
         // Signalsmith's process() keeps a temporary vector whose capacity is
         // established by configure(). Make its analysis block at least as
         // large as the host block, so normal render calls never grow it.
