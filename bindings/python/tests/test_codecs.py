@@ -71,6 +71,14 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(result.bpm, 118.0)
         self.assertLess(result.bpm, 122.0)
 
+    def test_waveform_min_max_summary(self) -> None:
+        samples = [math.sin(2.0 * math.pi * index / 32.0) for index in range(1_024)]
+        minimum, maximum = self.audio.waveform(samples, 48_000, 1, 32)
+        self.assertEqual(len(minimum), 32)
+        self.assertEqual(len(maximum), 32)
+        self.assertLess(minimum[0], -0.9)
+        self.assertGreater(maximum[0], 0.9)
+
     def test_real_ogg_fixture_decode(self) -> None:
         fixture = Path(__file__).parents[3] / "Tests" / "Fixtures" / "audio" / "audial_waking_up.ogg"
         if not fixture.exists():

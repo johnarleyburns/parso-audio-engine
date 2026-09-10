@@ -365,6 +365,37 @@ public static unsafe class CodecServices
             result.Bpm, result.BpmConfidence);
     }
 
+    /// <summary>Generates caller-sized mono min/max waveform envelopes.</summary>
+    public static unsafe (float[] Min, float[] Max) Waveform(
+        ReadOnlySpan<float> samples, uint sampleRateHz, uint channelCount, uint bucketCount)
+    {
+        if (samples.IsEmpty) throw new ArgumentException("Samples cannot be empty.", nameof(samples));
+        if (channelCount is < 1 or > 2 || sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("PCM format must have one or two channels and a valid sample rate.");
+        if (bucketCount == 0 || bucketCount > 1_000_000 || bucketCount > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(bucketCount));
+        var minimum = new float[(int)bucketCount];
+        var maximum = new float[(int)bucketCount];
+        var input = new NativeMethods.PcmBuffer
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.PcmBuffer>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Frames = checked((ulong)(samples.Length / (int)channelCount)),
+            ChannelCount = channelCount,
+            SampleRateHz = sampleRateHz
+        };
+        fixed (float* samplePointer = samples)
+        fixed (float* minimumPointer = minimum)
+        fixed (float* maximumPointer = maximum)
+        {
+            input.Samples = (nint)samplePointer;
+            var status = NativeMethods.WaveformGenerate(ref input, bucketCount,
+                minimumPointer, maximumPointer);
+            ThrowIfFailed(status, "waveform generation");
+        }
+        return (minimum, maximum);
+    }
+
     private static NativeMethods.CodecOptions ToNativeOptions(CodecOptions options)
     {
         var defaults = CodecOptions.Default;
@@ -986,6 +1017,10 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("parso", EntryPoint = "parso_analysis_measure")]
     internal static partial int AnalysisMeasure(ref PcmBuffer input, ref AnalysisOptions options,
         ref AnalysisResult result);
+
+    [LibraryImport("parso", EntryPoint = "parso_waveform_generate")]
+    internal static partial int WaveformGenerate(ref PcmBuffer input, uint bucketCount,
+        float* outputMin, float* outputMax);
 
     [LibraryImport("parso", EntryPoint = "parso_engine_create")]
     internal static partial int Create(ref EngineOptions options, out nint engine);

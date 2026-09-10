@@ -17,6 +17,10 @@ if (decoded.ChannelCount != 1 || decoded.SampleRateHz != 48_000 || decoded.Frame
 var analysis = CodecServices.Analyze(tone, 48_000, 1);
 if (analysis.DurationSeconds <= 0.0 || analysis.Peak <= 0.0)
     throw new InvalidOperationException("C# native consumer received invalid analysis summary.");
+var waveform = CodecServices.Waveform(tone, 48_000, 1, 8);
+if (waveform.Min.Length != 8 || waveform.Max.Length != 8 ||
+    waveform.Min.Zip(waveform.Max).Any(pair => pair.First > pair.Second))
+    throw new InvalidOperationException("C# native consumer received invalid waveform summary.");
 
 using var engine = Engine.Create(maxFrames: 256);
 var left = new float[256];

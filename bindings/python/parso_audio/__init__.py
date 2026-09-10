@@ -475,6 +475,11 @@ class CodecServices:
             ctypes.POINTER(_AnalysisResult),
         ]
         library.parso_analysis_measure.restype = ctypes.c_int32
+        library.parso_waveform_generate.argtypes = [
+            ctypes.POINTER(_PcmBuffer), ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+        ]
+        library.parso_waveform_generate.restype = ctypes.c_int32
 
     def close(self) -> None:
         """Close this facade; calling close repeatedly is safe."""
@@ -705,6 +710,38 @@ class CodecServices:
             result.duration_seconds, result.rms, result.peak,
             result.bpm, result.bpm_confidence,
         )
+
+    def waveform(
+        self, samples: Samples, sample_rate_hz: int, channel_count: int,
+        bucket_count: int,
+    ) -> tuple[array, array]:
+        """Generate caller-sized mono min/max waveform envelopes."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        if bucket_count <= 0 or bucket_count > 1_000_000:
+            raise ValueError("bucket_count must be between one and one million")
+        native_input = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer), abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=sample_rate_hz,
+        )
+        minimum = array("f", [0.0]) * bucket_count
+        maximum = array("f", [0.0]) * bucket_count
+        float_pointer = ctypes.POINTER(ctypes.c_float)
+        status = self._library.parso_waveform_generate(
+            ctypes.byref(native_input), bucket_count,
+            ctypes.cast(minimum.buffer_info()[0], float_pointer),
+            ctypes.cast(maximum.buffer_info()[0], float_pointer),
+        )
+        self._raise_for_status(status, "waveform generation")
+        return minimum, maximum
 
     def _native_options(self, options: Optional[CodecOptions]) -> _CodecOptions:
         selected = options or CodecOptions()

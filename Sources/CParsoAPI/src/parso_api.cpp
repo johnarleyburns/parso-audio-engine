@@ -1096,6 +1096,43 @@ PARSO_API parso_status_t parso_analysis_measure(
     }
 }
 
+PARSO_API parso_status_t parso_waveform_generate(
+    const parso_pcm_buffer_t *input, uint32_t bucketCount,
+    float *outMin, float *outMax
+) {
+    try {
+        const parso_status_t inputStatus = validatePCMBuffer(input);
+        if (inputStatus != PARSO_STATUS_OK) return inputStatus;
+        if (input->frames == 0 || bucketCount == 0 || bucketCount > 1'000'000 ||
+            !outMin || !outMax) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "waveform arguments are invalid");
+        }
+        for (uint32_t bucket = 0; bucket < bucketCount; ++bucket) {
+            const uint64_t start = static_cast<uint64_t>(bucket) * input->frames / bucketCount;
+            const uint64_t end = std::max<uint64_t>(start + 1,
+                static_cast<uint64_t>(bucket + 1) * input->frames / bucketCount);
+            float minimum = 1.0f;
+            float maximum = -1.0f;
+            for (uint64_t frame = start; frame < std::min(end, input->frames); ++frame) {
+                double mono = 0.0;
+                for (uint32_t channel = 0; channel < input->channel_count; ++channel) {
+                    const float sample = input->samples[frame * input->channel_count + channel];
+                    mono += std::isfinite(sample) ? static_cast<double>(sample) : 0.0;
+                }
+                const float value = static_cast<float>(mono / input->channel_count);
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
+            outMin[bucket] = minimum;
+            outMax[bucket] = maximum;
+        }
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while generating waveform");
+    }
+}
+
 PARSO_API parso_status_t parso_engine_options_init(parso_engine_options_t *options) {
     if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "options is null");
     std::memset(options, 0, sizeof(*options));

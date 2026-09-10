@@ -89,16 +89,25 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
     parso_pcm_buffer_t pcm{};
     parso_codec_options_t codecOptions{};
     parso_bytes_t encoded{};
+    parso_analysis_options_t analysisOptions{};
+    parso_analysis_result_t analysis{};
+    std::vector<float> waveformMin(32);
+    std::vector<float> waveformMax(32);
     ok = requireOk(parso_pcm_buffer_init(&pcm), "PCM buffer init") &&
          requireOk(parso_codec_options_init(&codecOptions), "codec options init") &&
-         requireOk(parso_bytes_init(&encoded), "byte buffer init");
+         requireOk(parso_bytes_init(&encoded), "byte buffer init") &&
+         requireOk(parso_analysis_options_init(&analysisOptions), "analysis options init") &&
+         requireOk(parso_analysis_result_init(&analysis), "analysis result init");
     if (!ok) return false;
     pcm.samples = interleaved.data();
     pcm.frames = totalFrames;
     pcm.channel_count = 2;
     pcm.sample_rate_hz = kSampleRate;
     codecOptions.bits_per_sample = 16;
-    ok = requireOk(parso_codec_write(&pcm, PARSO_CODEC_WAV, &codecOptions, &encoded), "WAV encode");
+    ok = requireOk(parso_analysis_measure(&pcm, &analysisOptions, &analysis), "analysis measure") &&
+         requireOk(parso_waveform_generate(&pcm, 32, waveformMin.data(), waveformMax.data()),
+                   "waveform generate") &&
+         requireOk(parso_codec_write(&pcm, PARSO_CODEC_WAV, &codecOptions, &encoded), "WAV encode");
     std::filesystem::create_directories(outputDirectory);
     const auto stem = outputDirectory / "native-headless-tone";
     if (ok) {
@@ -119,6 +128,22 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
             << "  \"analysisDuration\": " << seconds << ",\n"
             << "  \"sampleRateHz\": " << kSampleRate << ",\n"
             << "  \"channelCount\": 2,\n"
+            << "  \"analysis\": {\"durationSeconds\": " << analysis.duration_seconds
+            << ", \"rms\": " << analysis.rms
+            << ", \"peak\": " << analysis.peak
+            << ", \"bpm\": " << analysis.bpm
+            << ", \"bpmConfidence\": " << analysis.bpm_confidence << "},\n"
+            << "  \"waveform\": {\"min\": [";
+    for (size_t index = 0; index < waveformMin.size(); ++index) {
+        if (index != 0) sidecar << ", ";
+        sidecar << waveformMin[index];
+    }
+    sidecar << "], \"max\": [";
+    for (size_t index = 0; index < waveformMax.size(); ++index) {
+        if (index != 0) sidecar << ", ";
+        sidecar << waveformMax[index];
+    }
+    sidecar << "]},\n"
             << "  \"events\": [{\"time\": 0.0, \"type\": \"play\"}]\n"
             << "}\n";
     return sidecar.good();

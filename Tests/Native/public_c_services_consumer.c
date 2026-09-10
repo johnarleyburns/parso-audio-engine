@@ -31,6 +31,8 @@ int main(void) {
     parso_loudness_result_t loudness;
     parso_analysis_options_t analysis_options;
     parso_analysis_result_t analysis;
+    float waveform_min[4];
+    float waveform_max[4];
     if (!require_ok(parso_capabilities_init(&capabilities), "capabilities init") ||
         !require_ok(parso_capabilities_get(&capabilities), "capabilities get") ||
         (capabilities.offline_services & (PARSO_OFFLINE_SERVICE_SRC |
@@ -79,6 +81,15 @@ int main(void) {
         analysis.bpm_confidence < 0.5) {
         fprintf(stderr, "public_c_services_consumer: invalid analysis result bpm=%f confidence=%f\n",
                 analysis.bpm, analysis.bpm_confidence);
+        parso_pcm_buffer_release(&converted);
+        input.samples = NULL;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+    if (!require_ok(parso_waveform_generate(&analysis_input, 4, waveform_min, waveform_max),
+                    "waveform generate") || waveform_min[0] > waveform_max[0] ||
+        waveform_max[0] < 0.9f) {
+        fprintf(stderr, "public_c_services_consumer: invalid waveform result\n");
         parso_pcm_buffer_release(&converted);
         input.samples = NULL;
         parso_pcm_buffer_release(&input);

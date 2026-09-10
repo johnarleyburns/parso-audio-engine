@@ -34,8 +34,8 @@ The current offline gate covers WAV, FLAC, Xiph Ogg Vorbis, Opus, MP3, and AAC
 where the loaded native capability bits advertise them. `convert_sample_rate`
 and `measure_loudness` expose the native SRC and EBU R128 services. `analyze`
 provides the shared deterministic duration, RMS, peak, and energy-envelope BPM
-summary; key, structure, ALAC, AIFF, CAF, and device IO remain explicit future
-gates.
+summary, and `waveform` returns caller-sized min/max buckets. Key, structure,
+ALAC, AIFF, CAF, and device IO remain explicit future gates.
 
 `Engine` provides bounded stereo headless rendering and a master-level control;
 `set_deck_buffer` copies and retains planar channel storage until replacement or
@@ -69,5 +69,6 @@ Python distribution that includes `pip` and `venv`.
 `render_acceptance.py` is a small offline acceptance seam, not the completed
 FLX4 scenario runner: it renders the native engine for at least 30 seconds,
 drains the actual stereo output through the native record ring, encodes it as
-WAV through `CodecServices`, and writes the matching duration/event sidecar.
-Full analysis, DJ scenarios, and human review remain later acceptance work.
+WAV through `CodecServices`, decodes that WAV, and writes the matching
+duration/event/analysis/waveform sidecar. Full analysis, DJ scenarios, and
+human review remain later acceptance work.

@@ -52,6 +52,11 @@ def render(seconds: float, output_dir: Path, library_path: str | None) -> None:
             AudioCodec.WAV,
             CodecOptions(bits_per_sample=16),
         )
+        decoded = audio.decode(encoded, AudioCodec.WAV)
+        summary = audio.analyze(decoded.samples, decoded.sample_rate_hz, decoded.channel_count)
+        waveform_min, waveform_max = audio.waveform(
+            decoded.samples, decoded.sample_rate_hz, decoded.channel_count, 32
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = output_dir / "python-headless-tone"
@@ -63,6 +68,17 @@ def render(seconds: float, output_dir: Path, library_path: str | None) -> None:
         "analysisDuration": total_frames / sample_rate,
         "sampleRateHz": sample_rate,
         "channelCount": 2,
+        "analysis": {
+            "durationSeconds": summary.duration_seconds,
+            "rms": summary.rms,
+            "peak": summary.peak,
+            "bpm": summary.bpm,
+            "bpmConfidence": summary.bpm_confidence,
+        },
+        "waveform": {
+            "min": list(waveform_min),
+            "max": list(waveform_max),
+        },
         "events": [{"time": 0.0, "type": "play"}],
     }
     (stem.with_suffix(".json")).write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8")

@@ -375,6 +375,11 @@ PARSO_API parso_status_t parso_analysis_measure(
     const parso_pcm_buffer_t *input, const parso_analysis_options_t *options,
     parso_analysis_result_t *result
 );
+/* Generate bucketed mono min/max envelopes into caller-owned arrays. */
+PARSO_API parso_status_t parso_waveform_generate(
+    const parso_pcm_buffer_t *input, uint32_t bucket_count,
+    float *out_min, float *out_max
+);
 
 PARSO_API parso_status_t parso_engine_options_init(parso_engine_options_t *options);
 PARSO_API parso_status_t parso_control_init(parso_control_t *control);
