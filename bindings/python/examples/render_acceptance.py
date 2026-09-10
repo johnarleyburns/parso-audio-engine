@@ -29,10 +29,14 @@ def render(seconds: float, output_dir: Path, library_path: str | None) -> None:
         engine.set_master_level(0.8)
         engine.set_deck_buffer(0, source, sample_rate, 1)
         engine.play(0)
+        engine.set_record_active(True)
         remaining = total_frames
         while remaining:
             block = min(512, remaining)
-            block_left, block_right = engine.render(block)
+            engine.render(block)
+            block_left, block_right = engine.record_drain(block)
+            if len(block_left) != block or len(block_right) != block:
+                raise RuntimeError("native record ring returned an incomplete acceptance block")
             left.extend(block_left)
             right.extend(block_right)
             remaining -= block

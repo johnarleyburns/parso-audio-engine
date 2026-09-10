@@ -61,6 +61,6 @@ matrix work for CP-PY.
 
 `render_acceptance.py` is a small offline acceptance seam, not the completed
 FLX4 scenario runner: it renders the native engine for at least 30 seconds,
-encodes the actual stereo output as WAV through `CodecServices`, and writes the
-matching duration/event sidecar. Full analysis, DJ scenarios, and human review
-remain later acceptance work.
+drains the actual stereo output through the native record ring, encodes it as
+WAV through `CodecServices`, and writes the matching duration/event sidecar.
+Full analysis, DJ scenarios, and human review remain later acceptance work.

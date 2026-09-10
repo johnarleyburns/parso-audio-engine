@@ -114,8 +114,9 @@ engine output through the public WAV service plus a JSON duration/event sidecar.
 only the first acceptance artifact and does not claim full FLX4 scenario or analysis coverage.
 
 The native CMake target `parso_native_acceptance_artifacts` provides the matching framework-free
-C++ smoke artifact and is covered by CTest; both runners are initial acceptance seams, not the
-completed fixture-analysis/DJ scenario matrix.
+C++ smoke artifact and is covered by CTest. The Python runner drains the record ring while the
+C++ smoke currently captures its render output directly; both are initial acceptance seams, not
+the completed fixture-analysis/DJ scenario matrix.
 
 ### CP3 — Shared offline services and DJ behavior
 
