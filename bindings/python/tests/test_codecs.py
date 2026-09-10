@@ -10,6 +10,7 @@ from parso_audio import (
     Engine,
     EngineCommand,
     EngineEventType,
+    MixRecorder,
     ParsoError,
 )
 
@@ -139,6 +140,22 @@ class CodecServicesTests(unittest.TestCase):
             self.assertEqual(engine.record_dropped_frames(), 0)
             engine.record_reset()
             self.assertEqual(len(engine.record_drain(1)[0]), 0)
+
+    def test_mix_recorder_consumes_record_tap_and_encodes(self) -> None:
+        samples = [0.2] * 4_800
+        recorder = MixRecorder(self.audio, 48_000)
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_deck_buffer(0, samples, 48_000, 1)
+            engine.play(0)
+            engine.set_record_active(True)
+            engine.render(256)
+            self.assertEqual(recorder.append_engine(engine, 256), 256)
+        encoded = recorder.encode()
+        decoded = self.audio.decode(encoded, AudioCodec.WAV)
+        self.assertEqual(decoded.frames, 256)
+        self.assertEqual(decoded.channel_count, 2)
+        recorder.reset()
+        self.assertEqual(recorder.frames, 0)
 
     def test_headless_engine_exposes_shared_transport_command_payload(self) -> None:
         samples = [0.2 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0) for index in range(4_800)]

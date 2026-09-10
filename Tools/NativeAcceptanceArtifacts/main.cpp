@@ -71,6 +71,8 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
     if (ok) ok = requireOk(parso_engine_set_control(engine, &control), "set control");
     if (ok) ok = requireOk(parso_engine_set_deck_buffer(engine, 0, &view), "set deck buffer");
     if (ok) ok = requireOk(parso_engine_post_command(engine, &command), "post play");
+    if (ok) ok = requireOk(parso_engine_record_reset(engine), "record reset");
+    if (ok) ok = requireOk(parso_engine_record_set_active(engine, 1), "record activate");
     for (uint64_t offset = 0; ok && offset < totalFrames; offset += kBlockSize) {
         const uint32_t frames = static_cast<uint32_t>(
             std::min<uint64_t>(kBlockSize, totalFrames - offset));
@@ -78,7 +80,18 @@ bool writeArtifact(const std::filesystem::path &outputDirectory, double seconds)
         output.right = renderedRight.data() + offset;
         output.frames = frames;
         ok = requireOk(parso_engine_render(engine, &output), "render acceptance block");
+        uint32_t recordedFrames = 0;
+        if (ok) {
+            ok = requireOk(parso_engine_record_drain(
+                engine, renderedLeft.data() + offset, renderedRight.data() + offset,
+                frames, &recordedFrames), "record drain acceptance block");
+        }
+        if (ok && recordedFrames != frames) {
+            std::cerr << "record drain returned an incomplete acceptance block\n";
+            ok = false;
+        }
     }
+    if (engine) ok = requireOk(parso_engine_record_set_active(engine, 0), "record deactivate") && ok;
     if (engine) ok = requireOk(parso_engine_destroy(&engine), "engine destroy") && ok;
     if (!ok) return false;
 

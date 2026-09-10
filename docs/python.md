@@ -44,7 +44,12 @@ exposes the versioned command payload (`i0`/`i1`/`i2` and `f0`/`f1`) for the
 shared native transport, with convenience methods for absolute seek, key-lock,
 and slip. `poll_events()` drains copied state, playhead, peak, and end-of-track
 notifications from the bounded native event ring. Device IO,
-analysis, broader DJ controls, and recording remain explicit future gates.
+analysis, broader DJ controls, and device IO remain explicit future gates.
+
+`MixRecorder` is a control-side recording helper: call `append_engine` after
+each render block is drained, then `encode()` through the shared native WAV,
+FLAC, or AAC service. It never runs Python on the render callback, and it
+rejects unsupported MP3/Ogg recording selectors.
 
 ## Local verification
 

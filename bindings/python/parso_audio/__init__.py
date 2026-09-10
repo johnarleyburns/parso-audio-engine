@@ -1178,6 +1178,68 @@ class Engine:
         raise ParsoError(status, operation, detail)
 
 
+class MixRecorder:
+    """Control-side consumer that drains an engine record tap into a codec."""
+
+    _SUPPORTED_CODECS = frozenset((AudioCodec.WAV, AudioCodec.FLAC, AudioCodec.AAC))
+
+    def __init__(
+        self,
+        audio: CodecServices,
+        sample_rate_hz: int,
+        codec: Union[AudioCodec, int] = AudioCodec.WAV,
+        options: Optional[CodecOptions] = None,
+    ) -> None:
+        if sample_rate_hz <= 0:
+            raise ValueError("sample_rate_hz must be positive")
+        selected = AudioCodec(codec)
+        if selected not in self._SUPPORTED_CODECS:
+            raise ValueError("mix recording supports only WAV, FLAC, and AAC")
+        self._audio = audio
+        self._sample_rate_hz = sample_rate_hz
+        self._codec = selected
+        self._options = options
+        self._samples = array("f")
+
+    @property
+    def frames(self) -> int:
+        """Return the number of stereo frames collected so far."""
+
+        return len(self._samples) // 2
+
+    def append(self, left: Samples, right: Samples) -> None:
+        """Append one control-side stereo block."""
+
+        left_array = _as_float_array(left)
+        right_array = _as_float_array(right)
+        if not left_array or len(left_array) != len(right_array):
+            raise ValueError("left and right recording blocks must have equal non-zero lengths")
+        for left_sample, right_sample in zip(left_array, right_array):
+            self._samples.extend((left_sample, right_sample))
+
+    def append_engine(self, engine: Engine, max_frames: int) -> int:
+        """Drain one native record block and append it; return frames copied."""
+
+        left, right = engine.record_drain(max_frames)
+        if left:
+            self.append(left, right)
+        return len(left)
+
+    def encode(self) -> bytes:
+        """Encode the collected stereo stream through the shared codec service."""
+
+        if not self._samples:
+            raise ValueError("cannot encode an empty recording")
+        return self._audio.encode(
+            self._samples, self._sample_rate_hz, 2, self._codec, self._options
+        )
+
+    def reset(self) -> None:
+        """Discard collected frames while retaining the recorder configuration."""
+
+        self._samples = array("f")
+
+
 def _as_float_array(samples: Samples) -> array:
     """Copy one-dimensional float-compatible buffer data into native float storage."""
 
@@ -1210,6 +1272,7 @@ __all__ = [
     "EngineEventType",
     "EngineStats",
     "LoudnessResult",
+    "MixRecorder",
     "OfflineService",
     "ParsoError",
 ]
