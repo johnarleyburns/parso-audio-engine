@@ -26,7 +26,7 @@ Python initially targets CPython 3 on Linux x86_64/aarch64. Select and document 
 - The public surface now includes playback, streaming, neural features, multiple decks, and stems. The older three-product/two-deck description is not a complete inventory.
 - CP0 revised SPEC's Apple-only scope and preserved the historical Linux Swift retirement in `UNIFICATION_PLAN.md` §4b. Extend the contract/docs to Python as implementation begins.
 - The existing C interface exposes concrete control/command structs and caller-owned buffers. Treat it as an internal bridge until versioning, lifetime, and threading contracts are audited.
-- Tool check (2026-09-10): GCC 15.2.0, CMake 4.2.3, and Python 3.14.4 are available. The user reports Swift is now installed, but this session cannot locate `swift` in PATH or the usual installation locations checked. Linux Swift does not provide Apple's Accelerate/AVFoundation/AudioToolbox frameworks or Xcode; the full existing Swift package baseline still requires Apple hardware/CI. The CP1 Linux build and CTest gate passed with the portable Signalsmith path; Android NDK tooling was not found.
+- Tool check (2026-09-10): GCC 15.2.0, CMake 4.2.3, and Python 3.14.4 are available. The user reports Swift is now installed, but this session cannot locate `swift` in PATH or the usual installation locations checked. Linux Swift does not provide Apple's Accelerate/AVFoundation/AudioToolbox frameworks or Xcode; the full existing Swift package baseline still requires Apple hardware/CI. The CP1 Linux build and CTest gate passed with the portable Signalsmith path; the Android CLI is not on PATH, but the preconfigured NDK cross-builds pass for both advertised ABIs and CI now provides a pinned Android NDK gate.
 
 ## Intended architecture
 
