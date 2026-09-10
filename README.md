@@ -156,7 +156,9 @@ host application's callback can be added without changing the render ABI. The in
 consumer also checks this engine path, alongside the Xiph Ogg Vorbis encode/decode service.
 
 This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
-targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
+targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also
+builds the JNI shared library for `arm64-v8a` and `x86_64` and checks its exported symbols; Android Gradle/AAR, emulator, and device gates
+remain separate.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated
 C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows-targeted assembly, while
 the native Windows job builds and runs the C# consumer against the MSVC-built DLL. This does not claim

@@ -265,6 +265,11 @@ Gate: documented Python APIs, installed-wheel unit/integration tests, runnable e
 
 Android hardware validation may be performed later by a contributor or device lab. Until then, label Android device performance/routing unverified and the SDK preview as appropriate; do not block the Linux SDK release on unavailable Android hardware or claim that emulator/Linux results substitute for it.
 
+The CI workflow now runs a pinned Android NDK 27.2.12479018 / CMake 3.22.1 matrix for
+`arm64-v8a` and `x86_64`, builds `libparso_android.so`, and checks the JNI export set. This
+establishes repeatable native ABI evidence only; it does not satisfy the Kotlin/Gradle, AAR,
+emulator, or real-device gates.
+
 ## Documentation, examples, and test deliverables
 
 | Area | Required updates and evidence |

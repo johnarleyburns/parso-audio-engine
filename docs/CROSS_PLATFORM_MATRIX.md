@@ -1,6 +1,6 @@
 # Cross-platform support matrix
 
-This is the CP0 contract and inventory. “Planned” means the implementation and its tests do not exist yet; it is not a product capability claim. A row may move to “supported” only when the linked unit, integration, packaging, and acceptance gates pass.
+This is the CP0 contract and inventory. “Planned” means the implementation and its tests do not exist yet. “Supported” means an implementation and evidence exist for that platform; release advertising still depends on the linked unit, integration, packaging, acceptance, device, and human-review gates.
 
 | Surface | Swift / Apple | C/C++ / Linux | Windows C/C++ | Windows C# | Kotlin / Android | CP0 evidence | First implementation phase |
 |---|---|---|---|---|---|---|---|
@@ -23,7 +23,7 @@ This is the CP0 contract and inventory. “Planned” means the implementation a
 
 Python shares the public C ABI and native implementations listed above. Its release evidence is independent of the C/C++ consumer results. CP-PY follows the native services work and CP6 includes Python-specific listening acceptance.
 
-| Python surface | Planned implementation | Required evidence |
+| Python surface | Implementation status | Required evidence |
 |---|---|---|
 | Buffers / DSP / headless render | Implemented through stdlib `ctypes`, retained deck storage, and bounded native render | 16 binding tests, host runner, and native/Python crossfader parity report pass |
 | File IO / SRC / loudness / analysis | Implemented native codec/SRC/loudness/summary/waveform services | Real Ogg/FLAC integration, capability errors, and acceptance sidecars pass |
