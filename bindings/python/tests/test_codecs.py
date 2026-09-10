@@ -3,7 +3,14 @@ import os
 from pathlib import Path
 import unittest
 
-from parso_audio import AudioCodec, CodecServices, ContainerCapability, Engine, ParsoError
+from parso_audio import (
+    AudioCodec,
+    CodecServices,
+    ContainerCapability,
+    Engine,
+    EngineCommand,
+    ParsoError,
+)
 
 
 class CodecServicesTests(unittest.TestCase):
@@ -112,6 +119,26 @@ class CodecServicesTests(unittest.TestCase):
             self.assertEqual(engine.record_dropped_frames(), 0)
             engine.record_reset()
             self.assertEqual(len(engine.record_drain(1)[0]), 0)
+
+    def test_headless_engine_exposes_shared_transport_command_payload(self) -> None:
+        samples = [0.2 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0) for index in range(4_800)]
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_deck_buffer(0, samples, 48_000, 1)
+            engine.post_command(EngineCommand.PLAY, 0)
+            engine.set_keylock(0, True)
+            engine.set_slip(0, True)
+            engine.seek(0, 0.01)
+            engine.post_command(EngineCommand.SET_LOOP, 0, i0=1, f0=0.01, f1=0.05)
+            left, right = engine.render(128)
+            self.assertEqual(len(left), len(right))
+            self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
+
+    def test_headless_engine_rejects_invalid_command_deck(self) -> None:
+        with Engine(max_frames=64, library_path=self.library) as engine:
+            with self.assertRaises(ValueError):
+                engine.post_command(EngineCommand.PLAY, 2)
+            with self.assertRaises(ValueError):
+                engine.seek(0, -0.1)
 
 
 if __name__ == "__main__":

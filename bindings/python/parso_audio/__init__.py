@@ -7,6 +7,7 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 import ctypes.util
+import math
 import os
 import sys
 from typing import Iterable, Optional, Union
@@ -33,6 +34,51 @@ class AudioCodec(IntEnum):
     OPUS = 4
     MP3 = 5
     AAC = 6
+
+
+class EngineCommand(IntEnum):
+    """Stable transport and effect command selectors from ``parso.h``."""
+
+    PLAY = 0
+    PAUSE = 1
+    SET_CUE = 2
+    JUMP_CUE = 3
+    HOTCUE_SET = 4
+    HOTCUE_JUMP = 5
+    HOTCUE_DELETE = 6
+    LOOP_IN = 7
+    LOOP_OUT = 8
+    RELOOP_EXIT = 9
+    BEATLOOP = 10
+    LOOP_SCALE = 11
+    LOOP_MOVE = 12
+    SET_LOOP = 13
+    SET_LOOP_ACTIVE = 14
+    BEATJUMP = 15
+    SYNC = 16
+    SET_MASTER = 17
+    SET_KEYLOCK = 18
+    SET_SLIP = 19
+    JOG_TOUCH = 20
+    JOG_MOVE = 21
+    JOG_RELEASE = 22
+    SEEK = 23
+    UNSYNC = 24
+    STEM_ARM = 25
+    STEM_GAIN = 26
+    STEM_MUTE = 27
+    STEM_SOLO = 28
+    SET_REVERSE = 29
+    VINYL_SPEED = 30
+    ECHO_SET = 31
+    COLORFX_KIND = 32
+    BEATFX_KIND = 33
+    BEATFX_ONOFF = 34
+    BEATFX_RELEASE = 35
+    SAMPLER_TRIGGER = 36
+    SAMPLER_STOP = 37
+    SAMPLER_CONFIG = 38
+    LOAD = 39
 
 
 class ContainerCapability(IntFlag):
@@ -722,28 +768,66 @@ class Engine:
         self._raise_for_status(status, "setting deck buffer")
         self._deck_buffers[deck] = (channel_planes, planes)
 
-    def play(self, deck: int) -> None:
-        """Queue the portable play command for a deck."""
+    def post_command(
+        self,
+        command_type: Union[EngineCommand, int],
+        deck: int = -1,
+        *,
+        i0: int = 0,
+        i1: int = 0,
+        i2: int = 0,
+        f0: float = 0.0,
+        f1: float = 0.0,
+    ) -> None:
+        """Queue one ABI command with explicit POD payload fields.
 
-        self._post_command(0, deck)
+        ``deck`` may be ``-1`` for global commands. The command is copied into
+        the native SPSC queue and applied at the next render boundary.
+        """
 
-    def pause(self, deck: int) -> None:
-        """Queue the portable pause command for a deck."""
-
-        self._post_command(1, deck)
-
-    def _post_command(self, command_type: int, deck: int) -> None:
         self._ensure_open()
-        if deck < 0 or deck >= self._deck_count:
+        if deck < -1 or deck >= self._deck_count:
             raise ValueError("deck is out of range")
         command = _Command(size=ctypes.sizeof(_Command), abi_version=self._ABI_VERSION)
         self._call("command initialization", self._library.parso_command_init, command)
-        command.type = command_type
+        command.type = int(command_type)
         command.deck = deck
+        command.i0 = i0
+        command.i1 = i1
+        command.i2 = i2
+        command.f0 = f0
+        command.f1 = f1
         status = self._library.parso_engine_post_command(
             self._handle, ctypes.byref(command)
         )
         self._raise_for_status(status, "posting engine command")
+
+    def play(self, deck: int) -> None:
+        """Queue the portable play command for a deck."""
+
+        self.post_command(EngineCommand.PLAY, deck)
+
+    def pause(self, deck: int) -> None:
+        """Queue the portable pause command for a deck."""
+
+        self.post_command(EngineCommand.PAUSE, deck)
+
+    def seek(self, deck: int, seconds: float) -> None:
+        """Seek a deck to an absolute position in seconds."""
+
+        if not math.isfinite(seconds) or seconds < 0.0:
+            raise ValueError("seconds must be finite and non-negative")
+        self.post_command(EngineCommand.SEEK, deck, f0=seconds)
+
+    def set_keylock(self, deck: int, enabled: bool) -> None:
+        """Enable or disable a deck's time/pitch key lock."""
+
+        self.post_command(EngineCommand.SET_KEYLOCK, deck, f0=float(enabled))
+
+    def set_slip(self, deck: int, enabled: bool) -> None:
+        """Enable or disable slip transport for a deck."""
+
+        self.post_command(EngineCommand.SET_SLIP, deck, f0=float(enabled))
 
     def render(self, frames: int) -> tuple[array, array]:
         """Render a bounded stereo block into newly allocated managed arrays."""
@@ -855,6 +939,7 @@ def _as_float_array(samples: Samples) -> array:
 
 __all__ = [
     "AudioCodec",
+    "EngineCommand",
     "CodecCapabilities",
     "CodecOptions",
     "CodecServices",

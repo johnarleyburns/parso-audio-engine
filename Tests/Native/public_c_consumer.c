@@ -54,6 +54,14 @@ int main(void) {
         !require_status(parso_engine_set_control(engine, &control), "set control") ||
         !require_status(parso_engine_set_deck_buffer(engine, 0, &view), "set buffer") ||
         !require_status(parso_engine_post_command(engine, &command), "post play") ||
+        !require_status(parso_engine_post_command(engine, &(parso_command_t){
+            .size = sizeof(parso_command_t), .abi_version = PARSO_ABI_VERSION,
+            .type = PARSO_COMMAND_SET_SLIP, .deck = 0, .f0 = 1.0f
+        }), "post slip") ||
+        !require_status(parso_engine_post_command(engine, &(parso_command_t){
+            .size = sizeof(parso_command_t), .abi_version = PARSO_ABI_VERSION,
+            .type = PARSO_COMMAND_SEEK, .deck = 0, .f0 = 0.001f
+        }), "post seek") ||
         !require_status(parso_engine_render(engine, &output), "render") ||
         !require_status(parso_engine_get_stats(engine, &stats), "get stats")) {
         if (engine) parso_engine_destroy(&engine);

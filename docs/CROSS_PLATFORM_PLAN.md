@@ -112,7 +112,8 @@ lifetime execution remains a native-Windows gate.
 
 The CP-PY offline spike now provides `bindings/python`, a dependency-free `ctypes` package with
 capability discovery, the same six native byte-codec selectors, native SRC/loudness wrappers, and
-bounded headless rendering with retained deck-buffer ownership and play/pause commands. Its source tests and Vorbis example pass
+bounded headless rendering with retained deck-buffer ownership and shared command payloads. Its
+source tests and Vorbis example pass
 against the Linux CMake library. Fresh-venv installation is pending because this session's host has
 no `pip`/`ensurepip`; wheel construction itself passes through setuptools.
 

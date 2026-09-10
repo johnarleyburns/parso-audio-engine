@@ -37,7 +37,10 @@ future gates.
 
 `Engine` provides bounded stereo headless rendering and a master-level control;
 `set_deck_buffer` copies and retains planar channel storage until replacement or
-close, and `play`/`pause` queue the portable transport commands. Device IO,
+close, and `play`/`pause` queue the portable transport commands. `post_command`
+exposes the versioned command payload (`i0`/`i1`/`i2` and `f0`/`f1`) for the
+shared native transport, with convenience methods for absolute seek, key-lock,
+and slip. Device IO,
 analysis, broader DJ controls, and recording remain explicit future gates.
 
 ## Local verification
