@@ -48,6 +48,22 @@ points. The video uses the first 30 seconds by default; set `--max-seconds 0` to
 track. The analysis itself runs on the complete source track before the visible clip is selected,
 except that the `phrase` scenario also keeps the complete source visible for phrase review.
 
+## Linux native headless artifact
+
+The framework-free native acceptance seam can be built and run on Linux while the
+Swift analyzer remains Apple-only:
+
+```bash
+cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-native --target parso_native_acceptance_artifacts
+./build-native/parso_native_acceptance_artifacts \
+  --output-dir /tmp/parso-native-acceptance --seconds 30
+```
+
+This produces `native-headless-tone.wav` and its JSON duration/event sidecar
+from the public C ABI and shared engine. It is an initial render/codec smoke
+artifact; fixture analysis and the full scenario matrix remain pending.
+
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
 downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. Section

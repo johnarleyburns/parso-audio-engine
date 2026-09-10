@@ -102,6 +102,11 @@ are advertised: the current native capability mask includes WAV, FLAC, Ogg Vorbi
 AAC. ALAC, AIFF, and CAF remain unset until their native gates pass. Independent C11 and C++17 consumer tests
 exercise the PCM, SRC, and loudness contracts through `ctest`.
 
+The native acceptance target `parso_native_acceptance_artifacts` renders a 30-second headless
+artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. It is a
+framework-free Linux starting point for the human-listening gate; full fixture analysis and DJ
+scenario coverage remain pending.
+
 This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated

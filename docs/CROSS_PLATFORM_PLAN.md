@@ -113,6 +113,10 @@ The binding also includes a 30-second minimum `render_acceptance.py` seam that w
 engine output through the public WAV service plus a JSON duration/event sidecar. It is intentionally
 only the first acceptance artifact and does not claim full FLX4 scenario or analysis coverage.
 
+The native CMake target `parso_native_acceptance_artifacts` provides the matching framework-free
+C++ smoke artifact and is covered by CTest; both runners are initial acceptance seams, not the
+completed fixture-analysis/DJ scenario matrix.
+
 ### CP3 — Shared offline services and DJ behavior
 
 1. Expose native buffers, SRC, loudness, FLAC/Xiph-Vorbis/Opus bridges, and WAV IO. Audit CGlint's current decode/encode paths with real fixtures before advertising portable MP3 support.

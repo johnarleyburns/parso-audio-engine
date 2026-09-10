@@ -547,6 +547,24 @@ if(PARSO_BUILD_TESTS)
             LABELS "native;public-api;consumer;recording;c11"
         )
 
+        add_executable(parso_native_acceptance_artifacts
+            Tools/NativeAcceptanceArtifacts/main.cpp
+        )
+        target_link_libraries(parso_native_acceptance_artifacts PRIVATE
+            $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+            $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        )
+        target_include_directories(parso_native_acceptance_artifacts PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME native_acceptance_artifacts
+            COMMAND parso_native_acceptance_artifacts
+                --output-dir "${CMAKE_CURRENT_BINARY_DIR}/native-acceptance-artifacts"
+        )
+        set_tests_properties(native_acceptance_artifacts PROPERTIES
+            LABELS "native;acceptance;offline;recording;cxx17"
+        )
+
         if(PARSO_BUILD_CODEC_BRIDGES)
             add_executable(parso_public_codec_consumer
                 Tests/Native/public_codec_consumer.c
