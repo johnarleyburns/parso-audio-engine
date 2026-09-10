@@ -642,6 +642,22 @@ class Engine:
             ctypes.c_void_p, ctypes.POINTER(_Stats)
         ]
         library.parso_engine_get_stats.restype = ctypes.c_int32
+        library.parso_engine_record_set_active.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        library.parso_engine_record_set_active.restype = ctypes.c_int32
+        library.parso_engine_record_drain.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        library.parso_engine_record_drain.restype = ctypes.c_int32
+        library.parso_engine_record_dropped_frames.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64)
+        ]
+        library.parso_engine_record_dropped_frames.restype = ctypes.c_int32
+        library.parso_engine_record_reset.argtypes = [ctypes.c_void_p]
+        library.parso_engine_record_reset.restype = ctypes.c_int32
 
     def close(self) -> None:
         """Destroy the native engine; calling close repeatedly is safe."""
@@ -757,6 +773,51 @@ class Engine:
         status = self._library.parso_engine_get_stats(self._handle, ctypes.byref(stats))
         self._raise_for_status(status, "reading engine stats")
         return EngineStats(stats.master_frame, stats.starved_frames, stats.deck_count)
+
+    def set_record_active(self, active: bool) -> None:
+        """Enable or disable the bounded native master record ring."""
+
+        self._ensure_open()
+        status = self._library.parso_engine_record_set_active(self._handle, int(active))
+        self._raise_for_status(status, "setting record state")
+
+    def record_drain(self, max_frames: int) -> tuple[array, array]:
+        """Drain up to ``max_frames`` from the native master record ring."""
+
+        self._ensure_open()
+        if max_frames <= 0:
+            raise ValueError("max_frames must be positive")
+        left = array("f", [0.0]) * max_frames
+        right = array("f", [0.0]) * max_frames
+        out_frames = ctypes.c_uint32()
+        float_pointer = ctypes.POINTER(ctypes.c_float)
+        status = self._library.parso_engine_record_drain(
+            self._handle,
+            ctypes.cast(left.buffer_info()[0], float_pointer),
+            ctypes.cast(right.buffer_info()[0], float_pointer),
+            max_frames,
+            ctypes.byref(out_frames),
+        )
+        self._raise_for_status(status, "draining record ring")
+        return left[:out_frames.value], right[:out_frames.value]
+
+    def record_dropped_frames(self) -> int:
+        """Return the number of frames discarded because the record ring filled."""
+
+        self._ensure_open()
+        dropped = ctypes.c_uint64()
+        status = self._library.parso_engine_record_dropped_frames(
+            self._handle, ctypes.byref(dropped)
+        )
+        self._raise_for_status(status, "reading record counter")
+        return dropped.value
+
+    def record_reset(self) -> None:
+        """Discard pending record frames and reset the dropped-frame counter."""
+
+        self._ensure_open()
+        status = self._library.parso_engine_record_reset(self._handle)
+        self._raise_for_status(status, "resetting record ring")
 
     def _ensure_open(self) -> None:
         if not getattr(self, "_handle", None) or not self._handle.value:

@@ -81,6 +81,20 @@ class CodecServicesTests(unittest.TestCase):
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
             self.assertEqual(len(left), len(right))
 
+    def test_headless_engine_record_ring_drains_off_thread_surface(self) -> None:
+        samples = [0.2 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0) for index in range(4_800)]
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_deck_buffer(0, samples, 48_000, 1)
+            engine.play(0)
+            engine.set_record_active(True)
+            engine.render(256)
+            left, right = engine.record_drain(256)
+            self.assertEqual(len(left), 256)
+            self.assertEqual(len(right), 256)
+            self.assertEqual(engine.record_dropped_frames(), 0)
+            engine.record_reset()
+            self.assertEqual(len(engine.record_drain(1)[0]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

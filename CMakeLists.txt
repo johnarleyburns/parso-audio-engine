@@ -529,6 +529,24 @@ if(PARSO_BUILD_TESTS)
             LABELS "native;public-api;consumer;offline;services;cxx17"
         )
 
+        add_executable(parso_public_c_record_consumer
+            Tests/Native/public_c_record_consumer.c
+        )
+        target_link_libraries(parso_public_c_record_consumer PRIVATE
+            $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+            $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        )
+        if(UNIX)
+            target_link_libraries(parso_public_c_record_consumer PRIVATE m)
+        endif()
+        target_include_directories(parso_public_c_record_consumer PRIVATE
+            Sources/CParsoAPI/include
+        )
+        add_test(NAME public_c_record_consumer COMMAND parso_public_c_record_consumer)
+        set_tests_properties(public_c_record_consumer PROPERTIES
+            LABELS "native;public-api;consumer;recording;c11"
+        )
+
         if(PARSO_BUILD_CODEC_BRIDGES)
             add_executable(parso_public_codec_consumer
                 Tests/Native/public_codec_consumer.c

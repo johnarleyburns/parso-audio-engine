@@ -325,6 +325,21 @@ PARSO_API parso_status_t parso_engine_get_stats(
     parso_stats_t *stats
 );
 
+/* Off-thread master record tap. Recording activation/reset and draining are
+ * control-side operations; the render callback only copies into the bounded
+ * native ring. Drain outputs are caller-owned planar float32 buffers. */
+PARSO_API parso_status_t parso_engine_record_set_active(
+    parso_engine_t *engine, uint32_t active
+);
+PARSO_API parso_status_t parso_engine_record_drain(
+    parso_engine_t *engine, float *left, float *right,
+    uint32_t max_frames, uint32_t *out_frames
+);
+PARSO_API parso_status_t parso_engine_record_dropped_frames(
+    const parso_engine_t *engine, uint64_t *out_frames
+);
+PARSO_API parso_status_t parso_engine_record_reset(parso_engine_t *engine);
+
 #ifdef __cplusplus
 }
 #endif

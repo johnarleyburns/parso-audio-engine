@@ -1214,4 +1214,68 @@ PARSO_API parso_status_t parso_engine_get_stats(
     }
 }
 
+PARSO_API parso_status_t parso_engine_record_set_active(
+    parso_engine_t *engine, uint32_t active
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (active > 1) return fail(PARSO_STATUS_INVALID_ARGUMENT, "record active flag is invalid");
+        pe_record_set_active(engine->handle.engine, active != 0 ? 1 : 0);
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while setting record state");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_record_drain(
+    parso_engine_t *engine, float *left, float *right,
+    uint32_t maxFrames, uint32_t *outFrames
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (!outFrames || maxFrames == 0 || maxFrames > static_cast<uint32_t>(INT_MAX) ||
+            (!left && !right)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "record drain arguments are invalid");
+        }
+        *outFrames = static_cast<uint32_t>(pe_record_drain(
+            engine->handle.engine, left, right, static_cast<int>(maxFrames)
+        ));
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while draining record ring");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_record_dropped_frames(
+    const parso_engine_t *engine, uint64_t *outFrames
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (!outFrames) return fail(PARSO_STATUS_INVALID_ARGUMENT, "record counter is null");
+        const int64_t dropped = pe_record_dropped_frames(engine->handle.engine);
+        *outFrames = dropped < 0 ? 0 : static_cast<uint64_t>(dropped);
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while reading record counter");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_record_reset(parso_engine_t *engine) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        pe_record_reset(engine->handle.engine);
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while resetting record ring");
+    }
+}
+
 } // extern "C"
