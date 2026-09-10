@@ -143,6 +143,15 @@ class CodecServicesTests(unittest.TestCase):
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
             self.assertEqual(len(left), len(right))
 
+    def test_headless_engine_crossfader_control_requires_two_decks(self) -> None:
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            with self.assertRaises(ValueError):
+                engine.set_crossfader(1.5)
+            engine.set_crossfader(-1.0)
+            engine.set_crossfader(1.0)
+        with self.assertRaises(ValueError):
+            Engine(max_frames=256, deck_count=1, library_path=self.library)
+
     def test_headless_engine_record_ring_drains_off_thread_surface(self) -> None:
         samples = [0.2 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0) for index in range(4_800)]
         with Engine(max_frames=256, library_path=self.library) as engine:

@@ -14,5 +14,16 @@ with CodecServices("/path/to/libparso.so") as audio:
 ```
 
 This initial package covers synchronous offline codec, sample-rate conversion,
-loudness, and bounded headless rendering services. Device IO, analysis, DJ
-control, and recording remain separate native milestones.
+loudness, and bounded headless rendering services. `Engine.set_crossfader(position)`
+publishes an A/B mixer snapshot with a bounded position in `[-1, 1]`; the
+acceptance renderer can exercise the same two-deck timeline as the native runner:
+
+```bash
+python3 bindings/python/examples/render_acceptance.py \
+  --library build-native/libparso.so \
+  --scenario crossfader-sweep \
+  --output-dir /tmp/parso-python-crossfader
+```
+
+Device IO remains a platform milestone; analysis, DJ control, and recording are
+native services surfaced through this facade.

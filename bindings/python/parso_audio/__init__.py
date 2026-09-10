@@ -796,7 +796,7 @@ class Engine:
         deck_count: int = 2,
         library_path: Optional[Union[str, os.PathLike[str]]] = None,
     ) -> None:
-        if sample_rate_hz <= 0 or max_frames <= 0 or not 1 <= deck_count <= 4:
+        if sample_rate_hz <= 0 or max_frames <= 0 or not 2 <= deck_count <= 4:
             raise ValueError("invalid engine sample rate, block size, or deck count")
         self._library = ctypes.CDLL(CodecServices._find_library(library_path))
         self._configure_functions()
@@ -905,6 +905,33 @@ class Engine:
             self._handle, ctypes.byref(control)
         )
         self._raise_for_status(status, "setting engine control")
+
+    def set_crossfader(self, position: float) -> None:
+        """Set the A/B crossfader position for subsequent renders.
+
+        This convenience routes deck zero to the A side and deck one to the B
+        side. The native control snapshot is copied before return, so it is
+        safe to update between bounded render callbacks.
+        """
+
+        self._ensure_open()
+        if not math.isfinite(position) or not -1.0 <= position <= 1.0:
+            raise ValueError("crossfader position must be finite and between -1 and 1")
+        if self._deck_count < 2:
+            raise ValueError("crossfader requires at least two decks")
+        control = _Control(size=ctypes.sizeof(_Control), abi_version=self._ABI_VERSION)
+        self._call("control initialization", self._library.parso_control_init, control)
+        control.crossfader = position
+        control.xfade_assign[0] = 0.0
+        control.xfade_assign[1] = 1.0
+        control.fader[0] = 1.0
+        control.fader[1] = 1.0
+        control.trim[0] = 1.0
+        control.trim[1] = 1.0
+        status = self._library.parso_engine_set_control(
+            self._handle, ctypes.byref(control)
+        )
+        self._raise_for_status(status, "setting crossfader")
 
     def set_deck_buffer(
         self,

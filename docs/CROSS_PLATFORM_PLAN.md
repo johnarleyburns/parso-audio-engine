@@ -214,6 +214,10 @@ generated WAV/JSON pairs. It records the current commit, SHA-256 hashes, parsed 
 actual and declared duration, scenario/fixture IDs, and an explicit pending human-review state;
 missing pairs, malformed headers, short artifacts, and duration mismatches fail the command.
 
+The Python binding now exposes the same bounded A/B crossfader control and can render a matching
+two-deck `crossfader-sweep` artifact. Native and Python sidecars use the same four auditable event
+names, so the indexer can review both bindings without treating one as a proxy for the other.
+
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 
 ### CP-PY — Python 3 wrapper and packaging (after CP3; device integration after CP5)
