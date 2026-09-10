@@ -60,6 +60,91 @@ public enum ContainerCapability : ulong
     Caf = 256
 }
 
+/// <summary>Stable transport and effect command selectors from the public C ABI.</summary>
+public enum EngineCommand : uint
+{
+    /// <summary>Start transport.</summary>
+    Play = 0,
+    /// <summary>Stop transport.</summary>
+    Pause = 1,
+    /// <summary>Set the primary cue.</summary>
+    SetCue = 2,
+    /// <summary>Jump to the primary cue.</summary>
+    JumpCue = 3,
+    /// <summary>Set a hot cue slot.</summary>
+    HotCueSet = 4,
+    /// <summary>Jump to a hot cue slot.</summary>
+    HotCueJump = 5,
+    /// <summary>Delete a hot cue slot.</summary>
+    HotCueDelete = 6,
+    /// <summary>Set loop-in.</summary>
+    LoopIn = 7,
+    /// <summary>Set loop-out.</summary>
+    LoopOut = 8,
+    /// <summary>Exit or re-enter an available loop.</summary>
+    ReloopExit = 9,
+    /// <summary>Create a beat loop.</summary>
+    BeatLoop = 10,
+    /// <summary>Scale the active loop.</summary>
+    LoopScale = 11,
+    /// <summary>Move the active loop.</summary>
+    LoopMove = 12,
+    /// <summary>Set loop bounds explicitly.</summary>
+    SetLoop = 13,
+    /// <summary>Set loop active state.</summary>
+    SetLoopActive = 14,
+    /// <summary>Jump by beats.</summary>
+    BeatJump = 15,
+    /// <summary>Apply a synchronized position.</summary>
+    Sync = 16,
+    /// <summary>Set global master state.</summary>
+    SetMaster = 17,
+    /// <summary>Set key-lock state.</summary>
+    SetKeylock = 18,
+    /// <summary>Set slip state.</summary>
+    SetSlip = 19,
+    /// <summary>Begin jog touch.</summary>
+    JogTouch = 20,
+    /// <summary>Move the jog position.</summary>
+    JogMove = 21,
+    /// <summary>End jog touch.</summary>
+    JogRelease = 22,
+    /// <summary>Seek to an absolute position.</summary>
+    Seek = 23,
+    /// <summary>Clear synchronization.</summary>
+    Unsync = 24,
+    /// <summary>Arm stems.</summary>
+    StemArm = 25,
+    /// <summary>Set stem gain.</summary>
+    StemGain = 26,
+    /// <summary>Set stem mute.</summary>
+    StemMute = 27,
+    /// <summary>Set stem solo.</summary>
+    StemSolo = 28,
+    /// <summary>Set reverse state.</summary>
+    SetReverse = 29,
+    /// <summary>Set vinyl speed timing.</summary>
+    VinylSpeed = 30,
+    /// <summary>Set echo state.</summary>
+    EchoSet = 31,
+    /// <summary>Set Color FX kind.</summary>
+    ColorFxKind = 32,
+    /// <summary>Set Beat FX kind.</summary>
+    BeatFxKind = 33,
+    /// <summary>Set Beat FX on/off state.</summary>
+    BeatFxOnOff = 34,
+    /// <summary>Release Beat FX.</summary>
+    BeatFxRelease = 35,
+    /// <summary>Trigger a sampler slot.</summary>
+    SamplerTrigger = 36,
+    /// <summary>Stop a sampler slot.</summary>
+    SamplerStop = 37,
+    /// <summary>Configure a sampler slot.</summary>
+    SamplerConfig = 38,
+    /// <summary>Load a deck source.</summary>
+    Load = 39
+}
+
 /// <summary>Options shared by the native offline codec services.</summary>
 public readonly record struct CodecOptions
 {
@@ -328,24 +413,94 @@ public sealed class Engine : IDisposable
         deckBuffers.Add(deck, replacement);
     }
 
-    /// <summary>Queues the portable play command for a deck.</summary>
-    public void Play(uint deck) => PostTransportCommand(deck, NativeMethods.PlayCommand);
-
-    /// <summary>Queues the portable pause command for a deck.</summary>
-    public void Pause(uint deck) => PostTransportCommand(deck, NativeMethods.PauseCommand);
-
-    private void PostTransportCommand(uint deck, uint commandType)
+    /// <summary>Queues a public ABI command with its fixed-width payload fields.</summary>
+    /// <param name="commandType">The stable command selector.</param>
+    /// <param name="deck">The destination deck, or -1 for a global command.</param>
+    /// <param name="i0">First integer payload field.</param>
+    /// <param name="i1">Second integer payload field.</param>
+    /// <param name="i2">Third integer payload field.</param>
+    /// <param name="f0">First floating-point payload field.</param>
+    /// <param name="f1">Second floating-point payload field.</param>
+    public void PostCommand(EngineCommand commandType, int deck = -1,
+                            int i0 = 0, int i1 = 0, int i2 = 0,
+                            float f0 = 0.0f, float f1 = 0.0f)
     {
-        if (deck >= deckCount) throw new ArgumentOutOfRangeException(nameof(deck));
+        if (deck < -1 || deck >= deckCount) throw new ArgumentOutOfRangeException(nameof(deck));
         var command = new NativeMethods.Command
         {
             Size = (uint)Marshal.SizeOf<NativeMethods.Command>(),
             AbiVersion = NativeMethods.AbiVersion,
-            Type = commandType,
-            Deck = checked((int)deck)
+            Type = (uint)commandType,
+            Deck = deck,
+            I0 = i0,
+            I1 = i1,
+            I2 = i2,
+            F0 = f0,
+            F1 = f1
         };
         var status = NativeMethods.PostCommand(handle, ref command);
-        ThrowIfFailed(status, "posting transport command");
+        ThrowIfFailed(status, "posting engine command");
+    }
+
+    /// <summary>Queues the portable play command for a deck.</summary>
+    public void Play(uint deck) => PostCommand(EngineCommand.Play, checked((int)deck));
+
+    /// <summary>Queues the portable pause command for a deck.</summary>
+    public void Pause(uint deck) => PostCommand(EngineCommand.Pause, checked((int)deck));
+
+    /// <summary>Sets the primary cue in seconds.</summary>
+    public void SetCue(uint deck, float seconds) => PostCommand(EngineCommand.SetCue,
+        checked((int)deck), f0: ValidateNonNegative(seconds, nameof(seconds)));
+
+    /// <summary>Queues a jump to the primary cue.</summary>
+    public void JumpCue(uint deck) => PostCommand(EngineCommand.JumpCue, checked((int)deck));
+
+    /// <summary>Sets one of eight hot cues in seconds.</summary>
+    public void SetHotCue(uint deck, int slot, float seconds)
+    {
+        ValidateHotCueSlot(slot);
+        PostCommand(EngineCommand.HotCueSet, checked((int)deck), i0: slot,
+            f0: ValidateNonNegative(seconds, nameof(seconds)));
+    }
+
+    /// <summary>Queues a jump to one of eight hot cues.</summary>
+    public void JumpHotCue(uint deck, int slot)
+    {
+        ValidateHotCueSlot(slot);
+        PostCommand(EngineCommand.HotCueJump, checked((int)deck), i0: slot);
+    }
+
+    /// <summary>Deletes one of eight hot cues.</summary>
+    public void DeleteHotCue(uint deck, int slot)
+    {
+        ValidateHotCueSlot(slot);
+        PostCommand(EngineCommand.HotCueDelete, checked((int)deck), i0: slot);
+    }
+
+    /// <summary>Sets loop bounds in seconds and optionally activates the loop.</summary>
+    public void SetLoop(uint deck, float startSeconds, float endSeconds, bool active = true)
+    {
+        if (!float.IsFinite(startSeconds) || !float.IsFinite(endSeconds) ||
+            startSeconds < 0.0f || endSeconds <= startSeconds)
+            throw new ArgumentOutOfRangeException(nameof(endSeconds));
+        PostCommand(EngineCommand.SetLoop, checked((int)deck), i0: active ? 1 : 0,
+            f0: startSeconds, f1: endSeconds);
+    }
+
+    /// <summary>Enables or disables the deck's available loop.</summary>
+    public void SetLoopActive(uint deck, bool active) => PostCommand(
+        EngineCommand.SetLoopActive, checked((int)deck), f0: active ? 1.0f : 0.0f);
+
+    private static float ValidateNonNegative(float value, string parameterName)
+    {
+        if (!float.IsFinite(value) || value < 0.0f)
+            throw new ArgumentOutOfRangeException(parameterName);
+        return value;
+    }
+
+    private static void ValidateHotCueSlot(int slot)
+    {
+        if (slot is < 0 or >= 8) throw new ArgumentOutOfRangeException(nameof(slot));
     }
 
     /// <summary>Renders one block of non-interleaved stereo output into caller-owned spans.</summary>
@@ -512,9 +667,6 @@ internal static unsafe partial class NativeMethods
     internal const int Ok = 0;
     internal const int InvalidArgument = -1;
     internal const uint AbiVersion = 1;
-    internal const uint PlayCommand = 0;
-    internal const uint PauseCommand = 1;
-
     [StructLayout(LayoutKind.Sequential)]
     internal struct Capabilities
     {

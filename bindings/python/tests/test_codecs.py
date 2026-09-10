@@ -129,6 +129,14 @@ class CodecServicesTests(unittest.TestCase):
             engine.set_slip(0, True)
             engine.seek(0, 0.01)
             engine.post_command(EngineCommand.SET_LOOP, 0, i0=1, f0=0.01, f1=0.05)
+            engine.set_cue(0, 0.01)
+            engine.jump_cue(0)
+            engine.set_hotcue(0, 0, 0.02)
+            engine.jump_hotcue(0, 0)
+            engine.delete_hotcue(0, 0)
+            engine.set_loop(0, 0.01, 0.05)
+            engine.set_loop_active(0, True)
+            engine.beat_loop(0, 1.0, 0.01)
             left, right = engine.render(128)
             self.assertEqual(len(left), len(right))
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
@@ -139,6 +147,8 @@ class CodecServicesTests(unittest.TestCase):
                 engine.post_command(EngineCommand.PLAY, 2)
             with self.assertRaises(ValueError):
                 engine.seek(0, -0.1)
+            with self.assertRaises(ValueError):
+                engine.set_hotcue(0, 8)
 
 
 if __name__ == "__main__":

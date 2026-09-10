@@ -829,6 +829,73 @@ class Engine:
 
         self.post_command(EngineCommand.SET_SLIP, deck, f0=float(enabled))
 
+    def set_cue(self, deck: int, seconds: Optional[float] = None) -> None:
+        """Set a deck cue in seconds, or at its current position when omitted."""
+
+        if seconds is not None and (not math.isfinite(seconds) or seconds < 0.0):
+            raise ValueError("seconds must be finite and non-negative")
+        self.post_command(EngineCommand.SET_CUE, deck, f0=math.nan if seconds is None else seconds)
+
+    def jump_cue(self, deck: int) -> None:
+        """Queue a jump to the deck's primary cue."""
+
+        self.post_command(EngineCommand.JUMP_CUE, deck)
+
+    def set_hotcue(self, deck: int, slot: int, seconds: Optional[float] = None) -> None:
+        """Set one of eight hot cues in seconds, or at the current position."""
+
+        if not 0 <= slot < 8:
+            raise ValueError("hot cue slot must be between zero and seven")
+        if seconds is not None and (not math.isfinite(seconds) or seconds < 0.0):
+            raise ValueError("seconds must be finite and non-negative")
+        self.post_command(
+            EngineCommand.HOTCUE_SET, deck, i0=slot,
+            f0=math.nan if seconds is None else seconds,
+        )
+
+    def jump_hotcue(self, deck: int, slot: int) -> None:
+        """Queue a jump to one of eight hot cues."""
+
+        if not 0 <= slot < 8:
+            raise ValueError("hot cue slot must be between zero and seven")
+        self.post_command(EngineCommand.HOTCUE_JUMP, deck, i0=slot)
+
+    def delete_hotcue(self, deck: int, slot: int) -> None:
+        """Delete one of eight hot cues."""
+
+        if not 0 <= slot < 8:
+            raise ValueError("hot cue slot must be between zero and seven")
+        self.post_command(EngineCommand.HOTCUE_DELETE, deck, i0=slot)
+
+    def set_loop(self, deck: int, start_seconds: float, end_seconds: float,
+                 active: bool = True) -> None:
+        """Set loop bounds in seconds and optionally activate the loop."""
+
+        if (not math.isfinite(start_seconds) or not math.isfinite(end_seconds) or
+                start_seconds < 0.0 or end_seconds <= start_seconds):
+            raise ValueError("loop bounds must be finite and increasing")
+        self.post_command(
+            EngineCommand.SET_LOOP, deck, i0=int(active),
+            f0=start_seconds, f1=end_seconds,
+        )
+
+    def set_loop_active(self, deck: int, active: bool) -> None:
+        """Enable or disable the deck's available loop."""
+
+        self.post_command(EngineCommand.SET_LOOP_ACTIVE, deck, f0=float(active))
+
+    def beat_loop(self, deck: int, beats: float, start_seconds: Optional[float] = None) -> None:
+        """Create and activate a loop of ``beats`` at an optional start time."""
+
+        if not math.isfinite(beats) or beats <= 0.0:
+            raise ValueError("beats must be finite and positive")
+        if start_seconds is not None and (not math.isfinite(start_seconds) or start_seconds < 0.0):
+            raise ValueError("start_seconds must be finite and non-negative")
+        self.post_command(
+            EngineCommand.BEATLOOP, deck, f0=beats,
+            f1=math.nan if start_seconds is None else start_seconds,
+        )
+
     def render(self, frames: int) -> tuple[array, array]:
         """Render a bounded stereo block into newly allocated managed arrays."""
 
