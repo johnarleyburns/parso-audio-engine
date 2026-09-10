@@ -209,6 +209,11 @@ The maintainer has Linux and no Android hardware. Make Linux the primary human l
 8. Write a review manifest with commit, fixture hashes, sample rate, scenario parameters, output paths, automated measurements, and manual results. Human fields record reviewer/date, pass/fail, timestamped audible issues, and retest status. Generated artifacts start as `pending`; only actual listening can mark them passed.
 9. Run equivalent scenarios through the installed Python wrapper as well as the C/C++ CLI. The Python script must load, configure, render, analyze, and record through the public Python API, rather than merely launching the native acceptance executable. Produce separate WAV/JSON/MP4 artifacts and record package/interpreter/native-library versions and binding identity in the review manifest. Compare Python and native outputs with the same inputs, event timing, and tolerances. Require actual Linux human sign-off for Python decode, time/pitch, EQ, mix/FX, cue/loop, and recording scenarios. Add Python-driven live playback/capture review once the native device backend is ready; device callbacks remain native.
 
+The dependency-free `scripts/index-linux-acceptance.py` now creates the review manifest for
+generated WAV/JSON pairs. It records the current commit, SHA-256 hashes, parsed WAVE format,
+actual and declared duration, scenario/fixture IDs, and an explicit pending human-review state;
+missing pairs, malformed headers, short artifacts, and duration mismatches fail the command.
+
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 
 ### CP-PY — Python 3 wrapper and packaging (after CP3; device integration after CP5)

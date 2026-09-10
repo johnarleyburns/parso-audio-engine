@@ -64,6 +64,20 @@ This produces `native-headless-tone.wav` and its JSON duration/event sidecar
 from the public C ABI and shared engine. It is an initial render/codec smoke
 artifact; fixture analysis and the full scenario matrix remain pending.
 
+Index generated Linux artifacts before review so the files, native commit, format, duration, and
+human status are recorded together:
+
+```bash
+python3 scripts/index-linux-acceptance.py \
+  --root /tmp/parso-native-acceptance \
+  --output /tmp/parso-native-acceptance/manifest.json
+```
+
+The indexer rejects missing pairs, malformed WAV headers, durations below 30 seconds, and sidecar
+duration mismatches. Every valid artifact starts with `reviewStatus: "pending"`; only a human
+listening pass should change that field in a review copy. Generated manifests and media remain
+outside the repository.
+
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
 downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. Section
