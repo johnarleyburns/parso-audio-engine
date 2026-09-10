@@ -357,6 +357,26 @@ if(PARSO_BUILD_SHARED_API)
     set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
 endif()
 
+if(ANDROID AND PARSO_BUILD_SHARED_API)
+    find_path(PARSO_ANDROID_JNI_INCLUDE jni.h
+        PATHS "${CMAKE_SYSROOT}/usr/include"
+              "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+        NO_DEFAULT_PATH
+    )
+    if(NOT PARSO_ANDROID_JNI_INCLUDE)
+        message(FATAL_ERROR "Android JNI headers were not found")
+    endif()
+    add_library(ParsoAndroidJNI SHARED
+        Sources/ParsoAndroidJNI/src/parso_android_jni.cpp
+    )
+    target_include_directories(ParsoAndroidJNI PRIVATE
+        "${PARSO_ANDROID_JNI_INCLUDE}"
+        Sources/CParsoAPI/include
+    )
+    target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI)
+    set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
+endif()
+
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 

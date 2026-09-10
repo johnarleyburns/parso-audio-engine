@@ -170,6 +170,12 @@ Gate: shared scenario vectors and real fixtures pass through native and Swift AP
 6. Handle audio focus, interruptions, foreground/background lifecycle, microphone permission, URI/file-descriptor input, and unavailable cue/booth outputs. Background service policy belongs in the app integration/sample.
 7. Supply a small sample: load two files, mix, EQ, cue/loop, analyze, record, display meters. Publish local Maven artifacts first; remote publication is a separate release action.
 
+The first Android bridge slice now builds `libparso_android.so` for arm64-v8a and x86_64. Its
+Kotlin-facing `ParsoNative` declaration uses direct `ByteBuffer` planes for bounded render calls
+and exposes create/destroy/play over the public C ABI. This is a JNI compile/lifetime seam only:
+Gradle/AAR packaging, JVM tests, device output, capture, audio focus, and route-change behavior
+remain required before Android support can be advertised.
+
 Gate: JVM API/lifetime tests, JNI instrumentation, AAR consumer build, 16 KB page-size validation, and real-device playback/capture/route-change/underrun tests. Emulator tests do not establish latency performance.
 
 ### CP5 — Linux playback and native SDK packaging
