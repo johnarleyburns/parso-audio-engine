@@ -1693,8 +1693,10 @@ extern "C" {
 
 pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
     if (!(sample_rate > 0.0) || max_frames <= 0) return nullptr;
-    pe_engine* engine = new (std::nothrow) pe_engine{sample_rate, max_frames};
+    pe_engine* engine = new (std::nothrow) pe_engine{};
     if (!engine) return nullptr;
+    engine->sampleRate = sample_rate;
+    engine->maxFrames = max_frames;
     engine->deckCount = deck_count < 2 ? 2 : (deck_count > PE_MAX_DECKS ? PE_MAX_DECKS : deck_count);
     for (int i = 0; i < PE_INSERT_COUNT; ++i) {
         engine->insertFn[i].store(nullptr, std::memory_order_relaxed);

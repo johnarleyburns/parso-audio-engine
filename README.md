@@ -84,6 +84,17 @@ integration tests, installed-package consumer builds, and Linux human-listening 
 [cross-platform plan](docs/CROSS_PLATFORM_PLAN.md) for phase gates and the
 [matrix](docs/CROSS_PLATFORM_MATRIX.md) for support status.
 
+The native CP1 smoke build is available through CMake:
+
+```bash
+cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON
+cmake --build build-native
+ctest --test-dir build-native --output-on-failure
+```
+
+This currently exercises the shared C++ headless render core. It does not claim complete Linux codec,
+device, Python, Android, or Apple-framework support; those require the later gates in the plan.
+
 ## Repository layout
 
 ```

@@ -18,15 +18,33 @@ This is the CP0 contract and inventory. “Planned” means the implementation a
 
 ## Required test layers
 
+### Python 3 / Linux (additional binding; all surfaces planned)
+
+Python shares the public C ABI and native implementations listed above. Its release evidence is independent of the C/C++ consumer results. CP-PY follows the native services work and CP6 includes Python-specific listening acceptance.
+
+| Python surface | Planned implementation | Required evidence |
+|---|---|---|
+| Buffers / DSP / headless render | Python buffer protocol, optional NumPy helpers, shared native DSP | Unit tests for dtype/layout/strides/bounds; native/Python render parity; PCM example |
+| File IO / SRC / loudness / analysis | Python objects and exceptions over native services | Real-fixture integration tests; file-analysis example; capability errors for unavailable codecs |
+| DJ controls / mixing / recording | Shared native control and recording APIs | End-to-end decode/analyze/mix/record/decode test; mixer and recording examples |
+| Ownership / concurrency | Context managers, explicit close, serialized control, off-thread event polling | Lifetime, repeated close, cancellation, invalid-handle and concurrent-use tests; no Python on RT thread |
+| Linux playback / capture | Python controls the native Linux backend | Python-driven playback/capture example and device tests; callback runs entirely in native code |
+| Packaging / docs | Linux CPython wheels and source distribution | Fresh-venv installation outside checkout, declared interpreter/architecture matrix, ABI/load checks, README quickstart and full Python guide |
+| Human listening | Audio generated through the installed Python API; matching WAV/JSON/MP4 | At least 30-second scenarios, full-track phrase review, Python/native A/B, Python-specific reviewer/date/result manifest |
+
+The Python minimum version, FFI choice, and wheel compatibility floor are decisions for the packaging spike. Other Python platforms/interpreters remain unadvertised until tested. CP-PY and CP6 in `CROSS_PLATFORM_PLAN.md` define the implementation and listening gates.
+
+### Shared test layers
+
 Every supported row needs all applicable layers below. A forwarding test alone is insufficient.
 
 | Layer | Purpose | Examples |
 |---|---|---|
 | Unit | Algorithm and state behavior | DSP kernels, transport, queue overflow, analysis, codec metadata |
 | Native integration | Shared pipeline behavior | decode → analyze → load → command → render → record |
-| Binding integration | ABI and ownership behavior | C/C++ consumer, JNI handles, cancellation, close order |
-| Packaging | External-consumer usability | CMake install, pkg-config, AAR/Maven, SwiftPM |
+| Binding integration | ABI and ownership behavior | C/C++ consumer, JNI/Python handles, cancellation, close order, native/Python scenario parity |
+| Packaging | External-consumer usability | CMake install, pkg-config, AAR/Maven, SwiftPM, Python wheels/source distributions in fresh virtual environments |
 | Device | Callback and route behavior | Linux device restart/capture; Android Oboe route changes |
-| Human acceptance | Audible behavior | Linux scenario WAV/JSON/MP4, reviewer manifest, A/B against Apple artifacts |
+| Human acceptance | Audible behavior | C/C++ and Python Linux scenario WAV/JSON/MP4, separate binding review results, A/B against Apple artifacts |
 
 The matrix is updated with the commit, test command, artifact path, and reviewer/date when a row changes state.

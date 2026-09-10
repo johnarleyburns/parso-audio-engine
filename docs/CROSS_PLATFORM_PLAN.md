@@ -1,12 +1,14 @@
-# Android and Linux expansion plan
+# Android, Linux, and Python 3 expansion plan
 
-Status: proposed; implementation has not started. Baseline inspected: `9de9035`.
+Status: implementation authorized; CP1 Linux build/headless slice is verified. CP0 contract/docs committed in `efa3d2f`; its baseline, detailed API/test inventory, and toolchain validation gates remain pending. Python 3 scope is specified for the next development session.
 
 ## Objective and scope
 
-Keep the existing Swift products and add a Kotlin/Android SDK and a Linux C/C++ SDK over one shared native engine. First deliver PCM-driven DSP/rendering, then complete file IO, DJ control, analysis, and recording parity. Playback, streaming, and neural products require their own acceptance inventory; they must not be implicitly advertised as portable when only the DJ engine is ready.
+Keep the existing Swift products and add a Kotlin/Android SDK, a Linux C/C++ SDK, and an approachable Python 3 wrapper over one shared native engine. Python should make file IO, analysis, DSP, mixing, and recording easy to use from scripts and interactive sessions. First deliver PCM-driven DSP/rendering, then complete file IO, DJ control, analysis, and recording parity. Playback, streaming, and neural products require their own acceptance inventory; they must not be implicitly advertised as portable when only the DJ engine is ready.
 
 Proposed initial targets: Android API 26+, arm64-v8a devices and x86_64 emulators; Linux x86_64 and aarch64 with a documented glibc baseline. Preserve the Apple deployment targets in `Package.swift`. These are planning defaults, to be confirmed by the first toolchain/device spike. No Swift runtime should be needed on Android or Linux.
+
+Python initially targets CPython 3 on Linux x86_64/aarch64. Select and document the minimum Python version and tested interpreter/architecture matrix during the packaging spike; Python 3.14.4 is available locally. Other OSes, interpreters, and free-threaded builds are not advertised until validated. Keep the user-facing Python API simple, with an installable package, context-managed resources, clear exceptions, and optional NumPy interoperability.
 
 ## Findings from this repository
 
@@ -15,15 +17,15 @@ Proposed initial targets: Android API 26+, arm64-v8a devices and x86_64 emulator
 - `ParsoDJEngine.swift` owns substantial orchestration, including pads, Smart Fader, loading, and recording. Wrapping `pe_*` alone does not reproduce this API's behavior.
 - Analysis uses Swift and Accelerate. File IO and device integration use Apple frameworks. Those services need portable implementations or platform adapters.
 - The public surface now includes playback, streaming, neural features, multiple decks, and stems. The older three-product/two-deck description is not a complete inventory.
-- `SPEC.md` §0 explicitly targets Apple only; `UNIFICATION_PLAN.md` §4b deliberately retired Linux. Revise these deliberately before implementation, preserving the historical rationale.
+- CP0 revised SPEC's Apple-only scope and preserved the historical Linux Swift retirement in `UNIFICATION_PLAN.md` §4b. Extend the contract/docs to Python as implementation begins.
 - The existing C interface exposes concrete control/command structs and caller-owned buffers. Treat it as an internal bridge until versioning, lifetime, and threading contracts are audited.
-- No phase ledger was present. Swift is unavailable in this Linux workspace; the README's green-suite claim was not independently verified.
+- Tool check (2026-09-10): GCC 15.2.0, CMake 4.2.3, and Python 3.14.4 are available. The user reports Swift is now installed, but this session cannot locate `swift` in PATH or the usual installation locations checked. Linux Swift does not provide Apple's Accelerate/AVFoundation/AudioToolbox frameworks or Xcode; the full existing Swift package baseline still requires Apple hardware/CI. The CP1 Linux build and CTest gate passed with the portable Signalsmith path; Android NDK tooling was not found.
 
 ## Intended architecture
 
 ```text
-Swift SDK                 Kotlin Android SDK              Linux C++ convenience API
-    |                            | JNI                              |
+Swift SDK       Kotlin Android SDK       Linux C++ API       Python 3 package
+    |                  | JNI                   |                 | FFI
     +---------------- versioned public C API -----------------------+
                                     |
                  shared native services and DJ control
@@ -33,6 +35,7 @@ Swift SDK                 Kotlin Android SDK              Linux C++ convenience 
 
 Device adapters: Apple existing backend | Android Oboe | Linux host callback/backend
 Builds:          SwiftPM               | Gradle + CMake | CMake
+Python packaging: Python build frontend + native CMake artifacts -> wheel / source distribution
 ```
 
 Native Core and Analysis remain independent of DJ concepts. Shared DJ orchestration belongs in an engine/control module. Move behavior incrementally from Swift into native services and have Swift delegate to them, retaining its public API and strict concurrency. CMake and SwiftPM compile the same sources, with platform-specific settings.
@@ -44,10 +47,10 @@ Every phase includes README/docs, runnable examples, unit tests, and integration
 ### CP0 — Establish the contract and baseline
 
 1. Run `swift build` and the full fixture-enabled `swift test` on an Apple runner; record actual results and disabled suites.
-2. Inventory every public API and FLX4 acceptance row into a matrix: Apple implementation, native coverage, Android/Linux target, corresponding test, milestone.
+2. Inventory every public API and FLX4 acceptance row into a matrix: Apple implementation, native coverage, Android/Linux/Python target, corresponding test, milestone.
 3. Separate DJ parity from playback/streaming/neural follow-ups, including newer multi-deck/stem features already exposed by the engine.
 4. Amend SPEC targets, layering, backend policy, and acceptance requirements; reconcile README requirements with Package.swift. Add this CP workstream to the handoff instructions without conflating it with the original phases.
-5. Pin compiler, CMake, NDK, Gradle, SDK, and dependency versions after validating compatibility. Audit dependency configuration and licensing under the repository allowlist.
+5. Pin compiler, CMake, NDK, Gradle, SDK, Python packaging/FFI tools, and dependency versions after validating compatibility. Audit dependency configuration and licensing under the repository allowlist. Choose the Python version matrix and Linux wheel compatibility floor based on tested builds.
 
 Gate: reproducible Apple baseline and an explicit cross-platform feature matrix. Existing failures remain visible; no weakened tests or fabricated fixture ground truth.
 
@@ -115,13 +118,28 @@ The maintainer has Linux and no Android hardware. Make Linux the primary human l
 6. Include live Linux playback/capture and a recorded-session example to reveal device glitches that offline rendering misses. Use a deterministic mic fixture for repeatable offline checks and an optional real-mic session for capture review.
 7. Offer dry/wet and Apple-reference/Linux A/B files with identical inputs, configuration, event timing, and explicit latency alignment. Level-match only when evaluating timbre; preserve unnormalized outputs for gain, limiter, and level-automation review. Missing Apple reference artifacts remain visible, not silently regenerated by Linux.
 8. Write a review manifest with commit, fixture hashes, sample rate, scenario parameters, output paths, automated measurements, and manual results. Human fields record reviewer/date, pass/fail, timestamped audible issues, and retest status. Generated artifacts start as `pending`; only actual listening can mark them passed.
+9. Run equivalent scenarios through the installed Python wrapper as well as the C/C++ CLI. The Python script must load, configure, render, analyze, and record through the public Python API, rather than merely launching the native acceptance executable. Produce separate WAV/JSON/MP4 artifacts and record package/interpreter/native-library versions and binding identity in the review manifest. Compare Python and native outputs with the same inputs, event timing, and tolerances. Require actual Linux human sign-off for Python decode, time/pitch, EQ, mix/FX, cue/loop, and recording scenarios. Add Python-driven live playback/capture review once the native device backend is ready; device callbacks remain native.
 
-Gate: the maintainer can run and listen on Linux without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
+Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
+
+### CP-PY — Python 3 wrapper and packaging (after CP3; device integration after CP5)
+
+1. Add a Python package, proposed location `bindings/python`, over the versioned public C ABI. Select a small FFI approach in a documented spike (stdlib ctypes or an allowlisted extension/FFI dependency); verify error handling, ownership, native-library loading, and GIL behavior before committing to it. Do not expose internal C++ structures or reimplement algorithms in Python.
+2. Provide discoverable Core, Analysis, and DJ APIs with type hints, docstrings, Python exceptions mapped from native statuses, context managers, idempotent `close()`, and explicit capability queries. Start with buffers and synchronous headless rendering, then file IO, SRC/loudness, analysis, DJ controls, and recording as native services become available.
+3. Define PCM dtype, layout, strides, channel count, sample-rate and 64-bit frame semantics. Accept Python buffer-protocol data with validated bounds/contiguity; add optional NumPy convenience. Copy into native-owned storage by default off-thread; any zero-copy view must keep its owner alive and have documented mutability/release rules. Reject invalid, closed, stale, or incompatible handles safely.
+4. Serialize control writes and event draining to respect the native SPSC contract. Release the GIL where supported for long native offline calls, retaining referenced storage until completion. Define cancellation and concurrent close behavior. No Python callbacks, interpreter work, GIL acquisition, or Python allocation may occur on the real-time audio thread; poll events off-thread and let native backends own live playback/capture.
+5. Build versioned Linux wheels and a source distribution using CMake artifacts. Specify native-library discovery, ABI compatibility checks, supported CPython/architecture/glibc combinations, bundled dependency notices, and source-build prerequisites. Test clean virtual-environment installation outside the checkout without an existing system Parso library. Prefer local wheel validation first; publishing is a separate release action.
+6. Add unit tests for conversions, shape/dtype/stride errors, status-to-exception mapping, context-manager/close semantics, object lifetimes, and control state. Add integration tests for decode -> analyze -> load -> render -> record -> decode through Python, numerical parity with native scenarios, repeated create/close, concurrency/cancellation, and unsupported capabilities. Run them against installed wheels across the declared Python matrix, with native sanitizers where compatible.
+7. Add runnable Python 3 examples for file inspection/analysis, PCM DSP, two-track headless mixing and WAV export, optional NumPy use, recording, and native-backed Linux playback when available. CI runs examples in fresh virtual environments with documented fixtures and checks actual output artifacts.
+8. Update README with Python installation, a short usable quickstart, requirements and capability gaps; add a Python guide/API reference covering ownership, exceptions, buffers, threading, packaging, and troubleshooting. Extend SPEC, architecture, feature matrix, and `docs/human-visible-acceptance.md` to Python. All commands must be verified against built package artifacts.
+9. Supply a Python Linux listening runner meeting CP6's duration, full-track phrase, artifact, and manual review requirements. Reuse the existing video renderer only for presentation; the audio under review must come from the Python API.
+
+Gate: documented Python APIs, installed-wheel unit/integration tests, runnable examples, and source-distribution builds pass on declared targets; CP6 records Python-specific Linux listening sign-off before claiming Python release acceptance. Other bindings keep their own gates.
 
 ### CP7 — Cross-platform release gate
 
-- CI: existing Apple Swift tests; Linux GCC/Clang native tests and sanitizers; Android NDK builds, Kotlin tests, emulator instrumentation, and a scheduled hardware run.
-- Run matching serialized command scenarios through Swift, C, C++, and Kotlin, covering every matrix row. Use numeric audio tolerances and exact discrete-state assertions.
+- CI: existing Apple Swift tests; Linux GCC/Clang native tests and sanitizers; Python installed-wheel unit/integration/example tests across declared interpreter versions and architectures; Android NDK builds, Kotlin tests, emulator instrumentation, and a scheduled hardware run.
+- Run matching serialized command scenarios through Swift, C, C++, Kotlin, and Python, covering every matrix row. Use numeric audio tolerances and exact discrete-state assertions. Python release acceptance includes its own Linux human listening results, not only native results.
 - Instrument allocation and prohibited operations around engine DSP calls, including transitions and queue pressure. Keep measurement outside RT kernels where it requires system calls. Verify zero allocations after preparation.
 - Measure render time against actual callback deadlines, dropouts, memory, recording overflow, long-track precision, and long-session stability on named devices. Record measured budgets; do not promise universal latency.
 - Verify dependency notices, source pins, SPDX policy, binary architecture/page alignment, exported symbols, and archive contents. Test consuming the packaged artifacts outside the monorepo.
@@ -145,11 +163,13 @@ Android hardware validation may be performed later by a contributor or device la
 
 Each implementation PR must include the relevant rows above or explicitly identify why a row does not apply. No phase is complete with examples that do not build, undocumented public APIs, or pending tests for advertised behavior.
 
+Python applies to every row of this table: README installation/quickstart, Python API and build docs, example scripts, unit and installed-package integration tests, wheel/source-distribution consumer checks, cross-binding parity, and Linux human listening artifacts/sign-off. CP-PY lists the concrete deliverables; these must accompany the wrapper implementation rather than follow later as cleanup.
+
 ## Recommended execution order
 
-CP0 -> CP1 -> CP2 -> CP3 -> CP5 -> CP6 -> CP4 -> CP7. Prioritize Linux device support and human listening before Android integration because that is the maintainer's available review platform. Begin the native artifact CLI in CP2 and add scenarios with each feature; CP6 is its full acceptance gate. A thin PCM-only Android smoke app can validate JNI/Oboe earlier, but must not be presented as the complete SDK. First useful shipping increment: C/C++ headless SDK and Linux listening artifacts; next: shared DJ/file/analysis/recording parity and Kotlin integration.
+CP0 remaining verification -> CP1 -> CP2 -> CP3 -> CP-PY offline/package implementation -> CP5 -> CP-PY live-device integration -> CP6 (C/C++ and Python listening) -> CP4 -> CP7. Preserve the existing phase IDs; CP-PY is an additional milestone. Prioritize Linux and Python usability/listening before Android integration because Linux is the maintainer's available review platform. Begin the native artifact CLI in CP2 and add scenarios with each feature; add Python scenarios as its APIs land. CP6 is the full listening gate for both. A thin PCM-only Android smoke app can validate JNI/Oboe earlier, but must not be presented as the complete SDK.
 
-Use focused conventional commits and update the untracked phase ledger after every commit. A planning-only change does not establish any build/test gate. The first implementation slice should be CMake + portable Signalsmith + a native headless smoke test, after the Apple baseline/spec update.
+Use focused conventional commits and update the untracked phase ledger after every commit. The verified CP1 Linux slice now provides CMake targets, C-clean header coverage, and `pe_step`/`pe_render` parity coverage with variable bounded callback sizes. Finish the detailed CP0 inventory/toolchain checks and obtain the Apple baseline separately; missing Apple hardware is an explicit verification gap, not a reason to skip Linux native progress or declare Apple tests passed. Discover the reported Swift installation, and add the Android NDK cross-build when that toolchain is available. Do not treat Linux Swift as a substitute for macOS/Xcode testing. Python implementation remains the later CP-PY milestone.
 
 ## External implementation references
 
