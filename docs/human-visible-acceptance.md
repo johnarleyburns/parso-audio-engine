@@ -91,6 +91,20 @@ python3 scripts/index-linux-acceptance.py \
   --output /tmp/parso-crossfader-acceptance/manifest.json
 ```
 
+Compare native and Python renders from the same timeline with the explicit cross-backend gate:
+
+```bash
+python3 scripts/compare-linux-acceptance.py \
+  --left /tmp/parso-crossfader-acceptance/native-crossfader-sweep.json \
+  --right /tmp/parso-python-crossfader/python-crossfader-sweep.json \
+  --tolerance 2 \
+  --output /tmp/parso-crossfader-comparison.json
+```
+
+The report checks scenario/event parity, WAVE format and frame count, then records maximum and
+mean absolute 16-bit sample differences. The default tolerance is two integer counts; a passing
+comparison still requires separate human listening review.
+
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
 downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. Section

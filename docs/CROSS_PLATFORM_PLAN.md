@@ -217,6 +217,8 @@ missing pairs, malformed headers, short artifacts, and duration mismatches fail 
 The Python binding now exposes the same bounded A/B crossfader control and can render a matching
 two-deck `crossfader-sweep` artifact. Native and Python sidecars use the same four auditable event
 names, so the indexer can review both bindings without treating one as a proxy for the other.
+`scripts/compare-linux-acceptance.py` checks those sidecars and the decoded 16-bit PCM with an
+explicit sample tolerance, emitting a machine-readable parity report before human listening.
 
 Gate: the maintainer can run and listen on Linux through both C/C++ and Python without Android or Swift; automated artifact checks pass and required scenarios have recorded human sign-off for each binding. Native CLI listening alone does not validate the Python wrapper. Audible defects become regressions with reproducible timelines. Update fixture BPM/key ground truth only after actual verification, as required by AGENTS.md.
 
