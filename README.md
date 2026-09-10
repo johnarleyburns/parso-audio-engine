@@ -107,6 +107,18 @@ artifact through the public ABI and writes a WAV plus JSON duration/event sideca
 framework-free Linux starting point for the human-listening gate; full fixture analysis and DJ
 scenario coverage remain pending.
 
+The dependency-free Linux host-callback example is built as `parso_linux_host_callback` and
+covered by CTest. Run it with an optional output path to produce a stereo WAV:
+
+```bash
+./build-native/parso_linux_host_callback /tmp/parso-host-callback.wav
+```
+
+The application owns the output planes and callback schedule; `parso_engine_render` only fills
+the bounded block. Device adapters remain outside the engine, so ALSA, PipeWire, JACK, or a
+host application's callback can be added without changing the render ABI. The installed package
+consumer also checks this engine path, alongside the Xiph Ogg Vorbis encode/decode service.
+
 This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated

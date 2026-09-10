@@ -673,5 +673,22 @@ if(PARSO_BUILD_TESTS)
         set_tests_properties(installed_c_consumer PROPERTIES
             LABELS "native;public-api;consumer;packaging;c11"
         )
+
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_executable(parso_linux_host_callback
+                Tools/LinuxHostCallback/main.cpp
+            )
+            target_link_libraries(parso_linux_host_callback PRIVATE
+                $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+                $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+            )
+            target_include_directories(parso_linux_host_callback PRIVATE
+                Sources/CParsoAPI/include
+            )
+            add_test(NAME linux_host_callback COMMAND parso_linux_host_callback)
+            set_tests_properties(linux_host_callback PROPERTIES
+                LABELS "native;linux;host-callback;consumer;cxx17"
+            )
+        endif()
     endif()
 endif()

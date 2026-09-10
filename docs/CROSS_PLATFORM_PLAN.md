@@ -185,6 +185,14 @@ Gate: JVM API/lifetime tests, JNI instrumentation, AAR consumer build, 16 KB pag
 3. Cover device enumeration, negotiated rate/layout, bounded conversion buffers, hot unplug, capture, master/cue/booth routing, and graceful shutdown. Report missing hardware routing as unavailable.
 4. Provide headless render-to-WAV and live C/C++ mixer examples. Package versioned libraries, SONAME, headers, symbols, notices, and reproducible source-build instructions; establish the glibc floor in CI containers.
 
+The dependency-free `parso_linux_host_callback` example now supplies the first host callback
+contract. The host owns planar output buffers, chooses each bounded callback size, invokes
+`parso_engine_render` once per callback, and drains events/stats only after the callback boundary.
+An optional output path writes the rendered stereo signal as WAV. No device API, allocation,
+logging, or file IO is required by the render call itself; a future ALSA, PipeWire, JACK, or
+application-owned device adapter can connect to this same contract. The installed CMake-package
+consumer exercises the render lifetime path in addition to the Xiph Vorbis codec round trip.
+
 Gate: clean external C/C++ consumers on Linux x86_64/aarch64, headless parity, and live playback/capture acceptance on documented hardware. A host callback SDK can ship before an optional device backend clears review.
 
 ### CP6 — Linux human listening acceptance

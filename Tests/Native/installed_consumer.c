@@ -4,6 +4,66 @@
 #include <stdint.h>
 #include <stdio.h>
 
+static int run_engine_smoke(void)
+{
+    enum { frames = 128 };
+    float source[frames];
+    float output_left[frames];
+    float output_right[frames];
+    const float *planes[] = {source};
+    parso_engine_options_t options;
+    parso_control_t control;
+    parso_pcm_view_t view;
+    parso_output_view_t output;
+    parso_command_t command;
+    parso_engine_t *engine = NULL;
+
+    for (uint32_t index = 0; index < frames; ++index) {
+        source[index] = 0.15f * sinf((float)index * 0.05f);
+        output_left[index] = 0.0f;
+        output_right[index] = 0.0f;
+    }
+    if (parso_engine_options_init(&options) != PARSO_STATUS_OK ||
+        parso_control_init(&control) != PARSO_STATUS_OK ||
+        parso_pcm_view_init(&view) != PARSO_STATUS_OK ||
+        parso_output_view_init(&output) != PARSO_STATUS_OK ||
+        parso_command_init(&command) != PARSO_STATUS_OK) {
+        fprintf(stderr, "installed consumer: engine initialization failed: %s\n",
+                parso_last_error());
+        return 1;
+    }
+    options.max_frames = frames;
+    view.planes = planes;
+    view.frames = frames;
+    view.channel_count = 1;
+    view.sample_rate_hz = 48000;
+    output.left = output_left;
+    output.right = output_right;
+    output.frames = frames;
+    command.type = PARSO_COMMAND_PLAY;
+    command.deck = 0;
+    if (parso_engine_create(&options, &engine) != PARSO_STATUS_OK ||
+        parso_engine_set_control(engine, &control) != PARSO_STATUS_OK ||
+        parso_engine_set_deck_buffer(engine, 0, &view) != PARSO_STATUS_OK ||
+        parso_engine_post_command(engine, &command) != PARSO_STATUS_OK ||
+        parso_engine_render(engine, &output) != PARSO_STATUS_OK) {
+        fprintf(stderr, "installed consumer: engine render failed: %s\n",
+                parso_last_error());
+        parso_engine_destroy(&engine);
+        return 1;
+    }
+    int signal = 0;
+    for (uint32_t index = 0; index < frames; ++index) {
+        if (fabsf(output_left[index]) > 1.0e-5f ||
+            fabsf(output_right[index]) > 1.0e-5f) {
+            signal = 1;
+            break;
+        }
+    }
+    parso_engine_destroy(&engine);
+    return signal && engine == NULL ? 0 : 1;
+}
+
 int main(void)
 {
     enum { frames = 1024 };
@@ -50,5 +110,5 @@ int main(void)
     parso_bytes_release(&encoded);
     input.samples = NULL;
     parso_pcm_buffer_release(&input);
-    return 0;
+    return run_engine_smoke();
 }
