@@ -95,6 +95,17 @@ ctest --test-dir build-native --output-on-failure
 This currently exercises the shared C++ headless render core. It does not claim complete Linux codec,
 device, Python, Android, or Apple-framework support; those require the later gates in the plan.
 
+For the Android native toolchain on Debian/Ubuntu Linux or macOS, run:
+
+```bash
+./scripts/setup-android.sh
+```
+
+The script installs the official Android CLI, SDK platform-tools, a stable NDK and CMake, configures
+`ANDROID_HOME`/`ANDROID_NDK_HOME` in a user shell environment, and cross-builds `arm64-v8a` and
+`x86_64` by default. Use `./scripts/setup-android.sh --no-build` to install without compiling, or
+pin versions with `PARSO_ANDROID_NDK_PACKAGE` and `PARSO_ANDROID_CMAKE_PACKAGE`.
+
 ## Repository layout
 
 ```
