@@ -88,6 +88,14 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(decoded.frames, 1_000)
         self.assertIn(decoded.channel_count, (1, 2))
         self.assertGreater(decoded.sample_rate_hz, 8_000)
+        summary = self.audio.analyze(decoded.samples, decoded.sample_rate_hz, decoded.channel_count)
+        minimum, maximum = self.audio.waveform(
+            decoded.samples, decoded.sample_rate_hz, decoded.channel_count, 32
+        )
+        self.assertGreater(summary.duration_seconds, 0.0)
+        self.assertTrue(math.isfinite(summary.peak))
+        self.assertEqual(len(minimum), 32)
+        self.assertEqual(len(maximum), 32)
 
     def test_real_flac_fixture_decode(self) -> None:
         fixture = Path(__file__).parents[3] / "Tests" / "Fixtures" / "audio" / "wikipedia_chanukah.flac"
@@ -97,6 +105,14 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(decoded.frames, 1_000)
         self.assertIn(decoded.channel_count, (1, 2))
         self.assertGreater(decoded.sample_rate_hz, 8_000)
+        summary = self.audio.analyze(decoded.samples, decoded.sample_rate_hz, decoded.channel_count)
+        minimum, maximum = self.audio.waveform(
+            decoded.samples, decoded.sample_rate_hz, decoded.channel_count, 32
+        )
+        self.assertGreater(summary.duration_seconds, 0.0)
+        self.assertTrue(math.isfinite(summary.rms))
+        self.assertEqual(len(minimum), 32)
+        self.assertEqual(len(maximum), 32)
 
     def test_close_is_idempotent_and_rejects_calls(self) -> None:
         service = CodecServices(self.library)

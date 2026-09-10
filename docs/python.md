@@ -63,6 +63,9 @@ PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
 PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
   PYTHONPATH=bindings/python python3 bindings/python/examples/render_acceptance.py \
   --output-dir /tmp/parso-python-acceptance
+PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
+  PYTHONPATH=bindings/python python3 bindings/python/examples/fixture_acceptance.py \
+  --output /tmp/parso-python-acceptance/fixture-analysis.json
 ```
 
 The package's `pyproject.toml` builds a pure-Python wheel. Native artifacts
