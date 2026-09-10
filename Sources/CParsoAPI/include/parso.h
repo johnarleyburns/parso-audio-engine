@@ -57,6 +57,18 @@ extern "C" {
 #define PARSO_OFFLINE_SERVICE_SRC UINT64_C(1)
 #define PARSO_OFFLINE_SERVICE_LOUDNESS UINT64_C(2)
 
+/* Explicit byte-oriented codec selectors. These values intentionally do not
+ * depend on C enum layout so they remain stable across language bindings. */
+#define PARSO_CODEC_WAV 1u
+#define PARSO_CODEC_FLAC 2u
+#define PARSO_CODEC_OGG_VORBIS 3u
+#define PARSO_CODEC_OPUS 4u
+#define PARSO_CODEC_MP3 5u
+#define PARSO_CODEC_AAC 6u
+
+/* Use this value for a constant-bitrate encode. */
+#define PARSO_CODEC_VBR_CBR UINT32_MAX
+
 typedef int32_t parso_status_t;
 enum {
     PARSO_STATUS_OK = 0,
@@ -104,6 +116,18 @@ typedef struct {
     uint64_t size_bytes;
     uint32_t reserved[2];
 } parso_bytes_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint32_t compression_level; /* FLAC: 0...8; default 5 */
+    uint32_t bitrate_kbps;      /* MP3/AAC/Opus; default 192 */
+    uint32_t bits_per_sample;  /* FLAC/WAV integer output; default 16 */
+    uint32_t wav_is_float;     /* WAV only: 0 integer, 1 IEEE float */
+    uint32_t quality;          /* Glint quality: 0 speed, 1 normal, 2 best */
+    uint32_t vbr_quality;      /* 0...9, or PARSO_CODEC_VBR_CBR */
+    uint32_t reserved[2];
+} parso_codec_options_t;
 
 typedef struct {
     uint32_t size;
@@ -215,6 +239,21 @@ PARSO_API parso_status_t parso_pcm_buffer_release(parso_pcm_buffer_t *buffer);
 PARSO_API parso_status_t parso_bytes_init(parso_bytes_t *bytes);
 /* Idempotent; clears the byte buffer after releasing its owned storage. */
 PARSO_API parso_status_t parso_bytes_release(parso_bytes_t *bytes);
+
+/* Byte-oriented codec services. Input bytes and PCM samples are borrowed for
+ * the duration of the call. Results own their storage and must be released by
+ * the matching idempotent release function. Ogg Vorbis is decode-only because
+ * this native dependency set has no permissive encoder. AAC is ADTS and Opus
+ * is Ogg Opus. */
+PARSO_API parso_status_t parso_codec_options_init(parso_codec_options_t *options);
+PARSO_API parso_status_t parso_codec_read(
+    const uint8_t *data, uint64_t size_bytes, uint32_t codec,
+    const parso_codec_options_t *options, parso_pcm_buffer_t *out_buffer
+);
+PARSO_API parso_status_t parso_codec_write(
+    const parso_pcm_buffer_t *input, uint32_t codec,
+    const parso_codec_options_t *options, parso_bytes_t *out_bytes
+);
 
 /* Offline WAV/PCM services. Input bytes and writer input samples are borrowed
  * for the duration of the call. Raw PCM uses little-endian integer PCM with

@@ -105,6 +105,13 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     # These source lists mirror the SwiftPM vendor targets. The source files
     # remain unmodified upstream code; the SYSTEM include boundary keeps their
     # diagnostics from changing the first-party warning policy.
+    add_library(Cogg STATIC
+        Sources/Cogg/src/bitwise.c
+        Sources/Cogg/src/framing.c
+    )
+    target_include_directories(Cogg SYSTEM PUBLIC Sources/Cogg/include)
+    set_target_properties(Cogg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
     file(GLOB_RECURSE Cflac_sources CONFIGURE_DEPENDS
         Sources/Cflac/src/*.c
     )
@@ -139,12 +146,35 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     target_link_libraries(CflacBridge PUBLIC Cflac)
     set_target_properties(CflacBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-    add_library(Cvorbis STATIC Sources/Cvorbis/src/stb_vorbis_impl.c)
-    target_include_directories(Cvorbis SYSTEM PUBLIC Sources/Cvorbis/include)
+    file(GLOB_RECURSE Cvorbis_sources CONFIGURE_DEPENDS
+        Sources/Cvorbis/xiph/src/*.c
+    )
+    list(FILTER Cvorbis_sources EXCLUDE REGEX "/psytune\\.c$")
+    add_library(Cvorbis STATIC ${Cvorbis_sources})
+    target_include_directories(Cvorbis
+        SYSTEM PUBLIC Sources/Cvorbis/xiph/include Sources/Cogg/include
+        SYSTEM PRIVATE Sources/Cvorbis/xiph/src
+    )
+    target_compile_definitions(Cvorbis PRIVATE HAVE_CONFIG_H)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        # Unmodified libvorbis 1.3.7 uses compact one-line cleanup statements
+        # that trigger this diagnostic under the repository's -Werror policy.
+        target_compile_options(Cvorbis PRIVATE
+            -Wno-misleading-indentation
+            -Wno-maybe-uninitialized
+        )
+    endif()
+    target_link_libraries(Cvorbis PUBLIC Cogg)
+    if(UNIX)
+        target_link_libraries(Cvorbis PUBLIC m)
+    endif()
     set_target_properties(Cvorbis PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(CvorbisBridge STATIC Sources/CvorbisBridge/src/parso_vorbis.c)
-    target_include_directories(CvorbisBridge PUBLIC Sources/CvorbisBridge/include)
+    target_include_directories(CvorbisBridge
+        PUBLIC Sources/CvorbisBridge/include
+        PRIVATE Sources/Cvorbis/xiph/include Sources/Cogg/include
+    )
     target_link_libraries(CvorbisBridge PUBLIC Cvorbis)
     set_target_properties(CvorbisBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -153,6 +183,7 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         Sources/Copus/silk/*.c
         Sources/Copus/src/*.c
     )
+    list(FILTER Copus_sources EXCLUDE REGEX "/src/(bitwise|framing)\\.c$")
     list(FILTER Copus_sources EXCLUDE REGEX "/silk/float/")
     add_library(Copus STATIC ${Copus_sources})
     target_include_directories(Copus
@@ -166,6 +197,7 @@ if(PARSO_BUILD_CODEC_BRIDGES)
             Sources/Copus/silk/float
             Sources/Copus/include/ogg
             Sources/Copus/include/opus
+            Sources/Cogg/include
     )
     target_compile_definitions(Copus PRIVATE
         HAVE_CONFIG_H
@@ -184,7 +216,9 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         )
     endif()
     if(UNIX)
-        target_link_libraries(Copus PUBLIC m)
+        target_link_libraries(Copus PUBLIC Cogg m)
+    else()
+        target_link_libraries(Copus PUBLIC Cogg)
     endif()
     set_target_properties(Copus PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -229,9 +263,14 @@ add_library(CParsoAPI STATIC
 target_include_directories(CParsoAPI
     PUBLIC Sources/CParsoAPI/include
     PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
-            Sources/Csrc/include Sources/Cebur128/include
+            Sources/CGlint/include Sources/Csrc/include Sources/Cebur128/include
 )
 target_link_libraries(CParsoAPI PUBLIC CParsoEngine PRIVATE CGlintWav Csrc Cebur128)
+if(PARSO_BUILD_CODEC_BRIDGES)
+    target_compile_definitions(CParsoAPI PRIVATE PARSO_CODEC_BRIDGES_AVAILABLE)
+    target_include_directories(CParsoAPI PRIVATE Sources/CflacBridge/include)
+    target_link_libraries(CParsoAPI PRIVATE CGlint CflacBridge CvorbisBridge CopusBridge)
+endif()
 
 if(PARSO_BUILD_SHARED_API)
     add_library(ParsoAPI SHARED
@@ -240,13 +279,18 @@ if(PARSO_BUILD_SHARED_API)
     target_include_directories(ParsoAPI
         PUBLIC Sources/CParsoAPI/include
         PRIVATE Sources/CParsoEngine/include Sources/CGlint/src
-                Sources/Csrc/include Sources/Cebur128/include
+                Sources/CGlint/include Sources/Csrc/include Sources/Cebur128/include
     )
     target_compile_definitions(ParsoAPI PRIVATE
         PARSO_BUILD_SHARED
         PARSO_BUILDING_LIBRARY
     )
     target_link_libraries(ParsoAPI PRIVATE CParsoEngine CGlintWav Csrc Cebur128)
+    if(PARSO_BUILD_CODEC_BRIDGES)
+        target_compile_definitions(ParsoAPI PRIVATE PARSO_CODEC_BRIDGES_AVAILABLE)
+        target_include_directories(ParsoAPI PRIVATE Sources/CflacBridge/include)
+        target_link_libraries(ParsoAPI PRIVATE CGlint CflacBridge CvorbisBridge CopusBridge)
+    endif()
     set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
 endif()
 
@@ -358,6 +402,36 @@ if(PARSO_BUILD_TESTS)
         set_tests_properties(public_cpp_services_consumer PROPERTIES
             LABELS "native;public-api;consumer;offline;services;cxx17"
         )
+
+        if(PARSO_BUILD_CODEC_BRIDGES)
+            add_executable(parso_public_codec_consumer
+                Tests/Native/public_codec_consumer.c
+            )
+            target_link_libraries(parso_public_codec_consumer PRIVATE
+                $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+                $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+            )
+            if(UNIX)
+                target_link_libraries(parso_public_codec_consumer PRIVATE m)
+            endif()
+            target_include_directories(parso_public_codec_consumer PRIVATE
+                Sources/CParsoAPI/include
+            )
+            add_test(NAME public_codec_consumer COMMAND parso_public_codec_consumer)
+            set_tests_properties(public_codec_consumer PROPERTIES
+                LABELS "native;public-api;consumer;offline;codec;c11"
+            )
+            add_test(NAME public_codec_fixture_consumer
+                COMMAND parso_public_codec_consumer
+                    "${PARSO_NATIVE_FIXTURES_DIR}/wikipedia_chanukah.flac"
+                    "${PARSO_NATIVE_FIXTURES_DIR}/audial_waking_up.ogg"
+                    "${PARSO_NATIVE_FIXTURES_DIR}/gostreyshen_world.mp3"
+            )
+            set_tests_properties(public_codec_fixture_consumer PROPERTIES
+                LABELS "native;public-api;consumer;offline;codec;fixtures;c11"
+                SKIP_RETURN_CODE 77
+            )
+        endif()
 
         if(PARSO_BUILD_CODEC_BRIDGES AND PARSO_BUILD_CODEC_FIXTURE_TESTS)
             add_executable(parso_native_codec_fixture_smoke

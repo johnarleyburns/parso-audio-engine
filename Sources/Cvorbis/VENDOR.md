@@ -1,15 +1,11 @@
-# Vendoring Ogg Vorbis decode (stb_vorbis, Public Domain / MIT-0)
-Drop `stb_vorbis.c` and its header into src/ + include/ (single-file decoder).
-Expose a tiny C-clean shim in include/ if you prefer (e.g. `parso_vorbis_decode(path, ...)`).
-Alternative (BSD): libogg + libvorbis + libvorbisfile. Remove shim + placeholder.
-Source: https://github.com/nothings/stb
+# Vendoring Xiph Ogg Vorbis encode/decode
 
-Source commit: `2c980bb59875b0d32144a71867fbdebb2f77cd20`
+Vendored from the upstream `libvorbis-1.3.7` release (`0657aee69dec8508a0011f47f3b69d7538e9d262f`).
+The target includes the reference `libvorbis`, `libvorbisenc`, and `libvorbisfile` sources under
+`xiph/`, with the upstream `COPYING` retained beside them. Its Ogg dependency is the separate
+`Cogg` target, vendored from libogg 1.3.5 and recorded in `Sources/Cogg/VENDOR.md`.
 
-Vendored files:
-- `include/stb_vorbis.inc` (unmodified upstream `stb_vorbis.c` single-file decoder;
-  the `.inc` suffix prevents SwiftPM from compiling the same implementation twice)
-- `LICENSE` (unmodified upstream dual MIT / public-domain license)
-
-`include/stb_vorbis.h` selects the decoder's supported declaration-only mode;
-`src/stb_vorbis_impl.c` creates the single implementation translation unit.
+The public bridge uses `libvorbisfile` for decoding and `libvorbis`/`libvorbisenc` for encoding.
+This replaces the former `stb_vorbis` decode-only implementation; no GPL encoder is required or
+linked. The generated `xiph/src/config.h` contains only build-feature defaults and is not upstream
+codec implementation code.

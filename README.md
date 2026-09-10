@@ -37,7 +37,7 @@ source of truth and the test suite remains the executable specification.
   audiobook output through AVFoundation / AudioToolbox. Native portable targets cover WAV plus
   fixture-gated FLAC, Ogg Vorbis, Opus, MP3, and AAC paths; portable ALAC/M4A/M4B remain explicitly
   gated pending a permissive codec/container implementation. FLAC, Ogg Vorbis and Opus use vendored permissive C
-  (`Cflac`, `Cvorbis`, `Copus`); loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
+  (`Cflac`, Xiph `Cvorbis`, `Copus`); Ogg Vorbis uses the BSD-style Xiph encoder/decoder; loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
   uses `CGlint` by default, because AudioToolbox has no MP3 encoder — an app under a
   compatible license can supply its own encoder (e.g. LAME) instead via
   `AudioFileWriter`'s `mp3Encoder: (any MP3Encoding)?` parameter, with PAE never
@@ -173,7 +173,7 @@ scripts/           download-fixtures.sh
 ## Vendoring the C dependencies
 
 Each C target has a `VENDOR.md` with exact upstream + steps. Summary (all permissive):
-libFLAC (BSD-3), stb_vorbis (public domain), libogg+libopus+libopusfile (BSD-3), libebur128 (MIT),
+libFLAC (BSD-3), libogg+libvorbis+libvorbisfile (BSD-style), libopus+libopusfile (BSD-3), libebur128 (MIT),
 libsamplerate ≥ 0.2.2 (BSD-2), Signalsmith Stretch (MIT). CI fails if any GPL/LGPL/AGPL text lands in
 the tree.
 
@@ -518,7 +518,7 @@ let key = KeyEstimator().analyze(pcm)
 ## Decoding & encoding formats
 
 ```swift
-// Decode (auto-detects container; routes FLAC→libFLAC, Ogg→stb_vorbis, Opus→libopusfile, else Apple)
+// Decode (auto-detects container; routes FLAC→libFLAC, Ogg→Xiph libvorbisfile, Opus→libopusfile, else Apple)
 let pcm = try AudioFileReader(url: url).readAll()
 
 // Explicit container

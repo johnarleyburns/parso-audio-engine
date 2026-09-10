@@ -9,8 +9,8 @@ retains its own license; none use a prohibited copyleft license.
 | libFLAC | BSD-3-Clause | https://xiph.org/flac/ | FLAC decode/encode |
 | libebur128 | MIT | https://github.com/jiixyj/libebur128 | EBU R128 loudness |
 | libsamplerate (≥ 0.2.2) | BSD-2-Clause | https://github.com/libsndfile/libsamplerate | Offline sample-rate conversion |
-| stb_vorbis | MIT / Public Domain | https://github.com/nothings/stb | Ogg Vorbis decode |
-| libogg | BSD-3-Clause | https://github.com/xiph/ogg | Ogg container (Opus) |
+| libogg | BSD-style | https://xiph.org/ogg/ | Ogg container for Vorbis and Opus |
+| libvorbis / libvorbisenc / libvorbisfile | BSD-style | https://xiph.org/vorbis/ | Ogg Vorbis encode/decode |
 | libopus | BSD-3-Clause | https://github.com/xiph/opus | Opus decode |
 | libopusfile | BSD-3-Clause | https://github.com/xiph/opusfile | Ogg Opus file reader |
 | Signalsmith Stretch | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch | Time-stretch / pitch-shift |

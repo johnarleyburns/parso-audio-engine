@@ -37,11 +37,11 @@ int main(void) {
         !require_ok(parso_bytes_init(&wav), "WAV bytes init") ||
         !require_ok(parso_bytes_init(&raw), "raw bytes init")) return 1;
 
-    if (capabilities.decode_containers != PARSO_CONTAINER_WAV ||
-        capabilities.encode_containers != PARSO_CONTAINER_WAV ||
+    if ((capabilities.decode_containers & PARSO_CONTAINER_WAV) == 0 ||
+        (capabilities.encode_containers & PARSO_CONTAINER_WAV) == 0 ||
         (capabilities.pcm_read_formats & PARSO_PCM_FORMAT_S16_LE) == 0 ||
         (capabilities.pcm_write_formats & PARSO_PCM_FORMAT_S16_LE) == 0 ||
-        (capabilities.decode_containers & PARSO_CONTAINER_FLAC) != 0) {
+        (capabilities.decode_containers & PARSO_CONTAINER_FLAC) == 0) {
         fprintf(stderr, "public_c_offline_consumer: incorrect capabilities\n");
         return 1;
     }

@@ -44,6 +44,42 @@ int main() {
         return 1;
     }
 
+    parso_codec_options_t codecOptions{};
+    parso::PcmBuffer codecInput;
+    parso::Bytes encoded;
+    parso::PcmBuffer decoded;
+    codecInput.cHandle()->samples = samples;
+    codecInput.cHandle()->frames = frames;
+    codecInput.cHandle()->channel_count = 1;
+    codecInput.cHandle()->sample_rate_hz = 48000;
+    if (parso_codec_options_init(&codecOptions) != PARSO_STATUS_OK ||
+        codecInput.writeCodec(PARSO_CODEC_OGG_VORBIS, codecOptions,
+                              &encoded) != PARSO_STATUS_OK) {
+        std::fprintf(stderr, "public_cpp_services_consumer: invalid codec setup: %s\n",
+                     parso_last_error());
+        codecInput.cHandle()->samples = nullptr;
+        input.samples = nullptr;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+
+    // Exercise the C++ codec wrapper with the same borrowed input used by the
+    // service checks. The static read helper is intentionally called on the
+    // decoded object so ownership remains RAII-managed by PcmBuffer.
+    if (parso::PcmBuffer::readCodec(encoded.data(), encoded.size(),
+                                    PARSO_CODEC_OGG_VORBIS, codecOptions,
+                                    &decoded) != PARSO_STATUS_OK ||
+        decoded.frames() == 0 || decoded.channels() != 1 ||
+        decoded.sampleRate() != 48000) {
+        std::fprintf(stderr, "public_cpp_services_consumer: invalid Vorbis round trip: %s\n",
+                     parso_last_error());
+        codecInput.cHandle()->samples = nullptr;
+        input.samples = nullptr;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+
+    codecInput.cHandle()->samples = nullptr;
     input.samples = nullptr;
     return parso_pcm_buffer_release(&input) == PARSO_STATUS_OK ? 0 : 1;
 }

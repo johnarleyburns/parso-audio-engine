@@ -141,7 +141,7 @@ public final class PCMBuffer: @unchecked Sendable {
 
 public enum AudioContainer: Sendable, Equatable {
     case flac          // libFLAC (Cflac)
-    case oggVorbis     // stb_vorbis (Cvorbis)
+    case oggVorbis     // Xiph libvorbisfile (Cvorbis)
     case opus          // libopusfile (Copus)
     case wav, aiff, caf, mp3, aac, m4a, m4b  // AVFoundation-native containers
     case auto
@@ -221,7 +221,7 @@ public struct AudioFileMetadata: Sendable, Equatable {
 }
 
 /// Reads PCM from disk. Routing by container:
-/// `.flac` → libFLAC (`Cflac`); `.oggVorbis` → stb_vorbis (`Cvorbis`);
+/// `.flac` → libFLAC (`Cflac`); `.oggVorbis` → Xiph libvorbisfile (`Cvorbis`);
 /// `.opus` → libopusfile (`Copus`); the native containers (WAV, AIFF, CAF, MP3,
 /// AAC, ALAC-in-M4A) go through `AVAudioFile`.
 public struct AudioFileReader: Sendable {
@@ -451,7 +451,7 @@ public struct AudioFileReader: Sendable {
         guard result == 0, let samples, channels > 0,
               frames <= UInt64(Int.max), frames <= UInt64(Int.max) / UInt64(channels) else {
             if let samples { parso_vorbis_free(samples) }
-            throw AudioFileError.invalidFile("stb_vorbis decode failed")
+            throw AudioFileError.invalidFile("Xiph Vorbis decode failed")
         }
         defer { parso_vorbis_free(samples) }
         let frameCount = Int(frames)

@@ -8,7 +8,7 @@ This is the CP0 contract and inventory. “Planned” means the implementation a
 | Headless `pe_step` rendering | Existing test path | Public facade and CTest in progress | Native CTest on `windows-latest` | Planned C# consumer smoke test | Planned JNI smoke path | `pe_step` is the common deterministic seam | CP2 / CP-WIN |
 | DJ controls and state | Swift `ParsoDJEngine` | Planned shared native control module | Planned shared native control module | Planned C# API over shared control module | Planned Kotlin facade | Current control behavior identified as migration scope | CP3 / CP-WIN |
 | Analysis | Swift + Accelerate | Planned portable FFT/vector backend | Planned shared native backend | Planned managed result types and error mapping | Planned through native analysis API | Algorithms and result types specified in `SPEC.md` | CP3 / CP-WIN |
-| FLAC / Vorbis / Opus | Supported through vendored C | Planned after CMake build and fixture gates | Planned native MSVC and cross-build capability checks | Planned managed capability queries | Planned after NDK fixture gates | Vendor licenses and targets inventoried | CP1/CP3 / CP-WIN |
+| FLAC / Vorbis / Opus | Supported through vendored C | Xiph Vorbis plus native FLAC/Opus bridges are fixture-gated | Planned native MSVC and cross-build capability checks | Planned managed capability queries | Planned after NDK fixture gates | Vendor licenses and targets inventoried | CP1/CP3 / CP-WIN |
 | WAV / PCM | Supported | Supported through `parso_wav_*` / `parso_pcm_*` | Native C/C++ offline consumers pass with the shared ABI | C# buffer/marshaling consumer planned | Planned | CP3 native capability + ownership slice is covered by independent C11/C++17 CTest consumers; packaging remains pending | CP3 / CP-WIN |
 | SRC / loudness | Supported through `Csrc` / `Cebur128` | Supported through `parso_src_convert` / `parso_loudness_measure` | Independent C11/C++17 service consumers pass with CMake/CTest | Planned managed result/options wrappers | Planned | CP3 native service contract is covered; platform packaging remains pending | CP3 / CP-WIN |
 | MP3 / AAC / ALAC / AIFF / CAF | Apple-supported paths plus Glint MP3 encode | Capability-specific; no unsupported format is implied | Capability-specific; Windows codecs require explicit adapter validation | Capability-specific managed errors | Capability-specific; Android codec adapter requires device tests | Platform codec gaps called out in plan | CP3 / CP-WIN |
@@ -52,9 +52,9 @@ The matrix is updated with the commit, test command, artifact path, and reviewer
 
 ### CP3 native offline slice
 
-The portable C ABI currently advertises only the formats implemented by the native build: WAV
-container read/write and raw little-endian integer PCM read/write at 8/16/24/32 bits. It also
+The portable C ABI advertises the native build's fixture-gated WAV, FLAC, Ogg Vorbis, Opus, MP3,
+and AAC byte services, plus raw little-endian integer PCM read/write at 8/16/24/32 bits. It also
 advertises one-shot libsamplerate SRC and libebur128 EBU R128 loudness services. Reads and SRC
 results return owned interleaved float32 buffers; writes return owned byte buffers. Owned buffers are
-released through idempotent ABI functions. FLAC, Ogg Vorbis, Opus, MP3, AAC, ALAC, AIFF, and CAF
-remain unset in the capability masks until native implementations and their fixture gates pass.
+released through idempotent ABI functions. ALAC, AIFF, and CAF remain unset until platform or
+portable implementations and their fixture gates pass.

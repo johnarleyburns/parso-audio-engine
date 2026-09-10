@@ -23,7 +23,33 @@ typedef struct {
     uint32_t *exact_float_bits;
     size_t exact_count;
     int failed;
+    const uint8_t *memory_data;
+    size_t memory_size;
+    size_t memory_position;
 } parso_flac_decode_context;
+
+static FLAC__StreamDecoderReadStatus parso_flac_memory_read_callback(
+    const FLAC__StreamDecoder *decoder,
+    FLAC__byte buffer[],
+    size_t *bytes,
+    void *client_data)
+{
+    parso_flac_decode_context *context = (parso_flac_decode_context *)client_data;
+    size_t available;
+
+    (void)decoder;
+    if (bytes == NULL || context->memory_position > context->memory_size)
+        return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+    available = context->memory_size - context->memory_position;
+    if (*bytes > available)
+        *bytes = available;
+    if (*bytes != 0) {
+        memcpy(buffer, context->memory_data + context->memory_position, *bytes);
+        context->memory_position += *bytes;
+        return FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+    }
+    return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+}
 
 static int parso_flac_reserve(parso_flac_decode_context *context, size_t additional)
 {
@@ -186,6 +212,70 @@ int parso_flac_decode_file(const char *path,
     return 0;
 }
 
+int parso_flac_decode_memory(const uint8_t *data,
+                             uint64_t size_bytes,
+                             int32_t **samples,
+                             uint64_t *frames,
+                             uint32_t *channels,
+                             uint32_t *sample_rate,
+                             uint32_t *bits_per_sample)
+{
+    FLAC__StreamDecoder *decoder;
+    FLAC__StreamDecoderInitStatus init_status;
+    parso_flac_decode_context context = { 0 };
+    FLAC__bool processed;
+    FLAC__bool finished;
+
+    if (data == NULL || size_bytes == 0 || size_bytes > SIZE_MAX ||
+        samples == NULL || frames == NULL || channels == NULL ||
+        sample_rate == NULL || bits_per_sample == NULL)
+        return 1;
+    *samples = NULL;
+    *frames = 0;
+    *channels = 0;
+    *sample_rate = 0;
+    *bits_per_sample = 0;
+    context.memory_data = data;
+    context.memory_size = (size_t)size_bytes;
+    context.memory_position = 0;
+    decoder = FLAC__stream_decoder_new();
+    if (decoder == NULL)
+        return 1;
+    FLAC__stream_decoder_set_metadata_respond_all(decoder);
+    init_status = FLAC__stream_decoder_init_stream(
+        decoder,
+        parso_flac_memory_read_callback,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        parso_flac_write_callback,
+        parso_flac_metadata_callback,
+        parso_flac_error_callback,
+        &context
+    );
+    if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
+        FLAC__stream_decoder_delete(decoder);
+        return 2;
+    }
+    processed = FLAC__stream_decoder_process_until_end_of_stream(decoder);
+    finished = FLAC__stream_decoder_finish(decoder);
+    FLAC__stream_decoder_delete(decoder);
+    if (!processed || !finished || context.failed || context.channels == 0 ||
+        context.sample_rate == 0 || context.count % context.channels != 0) {
+        free(context.samples);
+        free(context.exact_float_bits);
+        return 3;
+    }
+    *samples = context.samples;
+    *frames = (uint64_t)(context.count / context.channels);
+    *channels = context.channels;
+    *sample_rate = context.sample_rate;
+    *bits_per_sample = context.bits_per_sample;
+    free(context.exact_float_bits);
+    return 0;
+}
+
 int parso_flac_encode_file(const char *path,
                            const int32_t *samples,
                            const uint32_t *exact_float_bits,
@@ -327,6 +417,111 @@ int parso_flac_encode_file_tagged(const char *path,
     if (vorbis) FLAC__metadata_object_delete(vorbis);
     FLAC__stream_encoder_delete(encoder);
     return processed && finished ? 0 : 3;
+}
+
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    size_t capacity;
+    int failed;
+} parso_flac_memory_output;
+
+static FLAC__StreamEncoderWriteStatus parso_flac_memory_write_callback(
+    const FLAC__StreamEncoder *encoder,
+    const FLAC__byte buffer[],
+    size_t bytes,
+    uint32_t samples,
+    uint32_t current_frame,
+    void *client_data)
+{
+    parso_flac_memory_output *output = (parso_flac_memory_output *)client_data;
+    size_t required;
+    size_t capacity;
+    uint8_t *resized;
+
+    (void)encoder;
+    (void)samples;
+    (void)current_frame;
+    if (bytes > SIZE_MAX - output->size) {
+        output->failed = 1;
+        return FLAC__STREAM_ENCODER_WRITE_STATUS_FATAL_ERROR;
+    }
+    required = output->size + bytes;
+    if (required > output->capacity) {
+        capacity = output->capacity == 0 ? 4096 : output->capacity;
+        while (capacity < required) {
+            if (capacity > SIZE_MAX / 2) {
+                output->failed = 1;
+                return FLAC__STREAM_ENCODER_WRITE_STATUS_FATAL_ERROR;
+            }
+            capacity *= 2;
+        }
+        resized = (uint8_t *)realloc(output->data, capacity);
+        if (resized == NULL) {
+            output->failed = 1;
+            return FLAC__STREAM_ENCODER_WRITE_STATUS_FATAL_ERROR;
+        }
+        output->data = resized;
+        output->capacity = capacity;
+    }
+    if (bytes != 0)
+        memcpy(output->data + output->size, buffer, bytes);
+    output->size = required;
+    return FLAC__STREAM_ENCODER_WRITE_STATUS_OK;
+}
+
+int parso_flac_encode_memory(const int32_t *samples,
+                             uint64_t frames,
+                             uint32_t channels,
+                             uint32_t bits_per_sample,
+                             uint32_t sample_rate,
+                             uint32_t compression,
+                             uint8_t **data,
+                             uint64_t *size_bytes)
+{
+    FLAC__StreamEncoder *encoder;
+    FLAC__StreamEncoderInitStatus init_status;
+    parso_flac_memory_output output = { 0 };
+    FLAC__bool processed;
+    FLAC__bool finished;
+
+    if (data == NULL || size_bytes == NULL ||
+        (frames != 0 && samples == NULL) || channels == 0 || channels > 8 ||
+        (bits_per_sample != 16 && bits_per_sample != 24 && bits_per_sample != 32) ||
+        sample_rate == 0 || frames > UINT32_MAX) {
+        return 1;
+    }
+    *data = NULL;
+    *size_bytes = 0;
+
+    encoder = FLAC__stream_encoder_new();
+    if (encoder == NULL)
+        return 1;
+    if (!FLAC__stream_encoder_set_channels(encoder, channels) ||
+        !FLAC__stream_encoder_set_bits_per_sample(encoder, bits_per_sample) ||
+        !FLAC__stream_encoder_set_sample_rate(encoder, sample_rate) ||
+        !FLAC__stream_encoder_set_compression_level(encoder, compression > 8 ? 8 : compression) ||
+        !FLAC__stream_encoder_set_total_samples_estimate(encoder, frames)) {
+        FLAC__stream_encoder_delete(encoder);
+        return 1;
+    }
+    init_status = FLAC__stream_encoder_init_stream(
+        encoder, parso_flac_memory_write_callback, NULL, NULL, NULL, &output);
+    if (init_status != FLAC__STREAM_ENCODER_INIT_STATUS_OK) {
+        FLAC__stream_encoder_delete(encoder);
+        return 2;
+    }
+    processed = frames == 0 ? (FLAC__bool)1 : FLAC__stream_encoder_process_interleaved(
+        encoder, samples, (uint32_t)frames);
+    finished = FLAC__stream_encoder_finish(encoder);
+    FLAC__stream_encoder_delete(encoder);
+    if (!processed || !finished || output.failed || output.size == 0) {
+        free(output.data);
+        return 3;
+    }
+    *data = output.data;
+    *size_bytes = (uint64_t)output.size;
+    return 0;
 }
 
 /* ── Bounded range decode ─────────────────────────────────────────────────── */

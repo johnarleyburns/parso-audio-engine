@@ -20,6 +20,14 @@ int parso_flac_decode_file(const char *path,
                            uint32_t *sample_rate,
                            uint32_t *bits_per_sample);
 
+int parso_flac_decode_memory(const uint8_t *data,
+                             uint64_t size_bytes,
+                             int32_t **samples,
+                             uint64_t *frames,
+                             uint32_t *channels,
+                             uint32_t *sample_rate,
+                             uint32_t *bits_per_sample);
+
 int parso_flac_encode_file(const char *path,
                            const int32_t *samples,
                            const uint32_t *exact_float_bits,
@@ -44,6 +52,17 @@ int parso_flac_encode_file_tagged(const char *path,
                                   const char *const *comment_keys,
                                   const char *const *comment_values,
                                   int comment_count);
+
+/* In-memory native FLAC delivery encoder. The returned byte array is owned by
+ * the caller and must be released with parso_flac_free(). */
+int parso_flac_encode_memory(const int32_t *samples,
+                             uint64_t frames,
+                             uint32_t channels,
+                             uint32_t bits_per_sample,
+                             uint32_t sample_rate,
+                             uint32_t compression,
+                             uint8_t **data,
+                             uint64_t *size_bytes);
 
 /*
  * Decode a bounded, contiguous range of a FLAC file without reading the rest of

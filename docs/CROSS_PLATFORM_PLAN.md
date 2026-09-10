@@ -100,7 +100,7 @@ Gate: Linux host build passes; the reproducible Linux-to-Windows cross-build pas
 
 ### CP3 — Shared offline services and DJ behavior
 
-1. Expose native buffers, SRC, loudness, FLAC/Vorbis/Opus bridges, and WAV IO. Audit CGlint's current decode/encode paths with real fixtures before advertising portable MP3 support.
+1. Expose native buffers, SRC, loudness, FLAC/Xiph-Vorbis/Opus bridges, and WAV IO. Audit CGlint's current decode/encode paths with real fixtures before advertising portable MP3 support.
 2. Publish per-platform decode/encode/container capabilities. Android AAC can use a platform codec adapter after validation; Linux AAC/ALAC/AIFF/CAF require separately validated implementations or providers. Return explicit unsupported-format errors until implemented. Container support is a separate gate from codec support.
 3. Extract DJ control in small slices: transport/cue/jog; loop/hot-cue/quantize/sync/slip; pads/sampler; mixer/monitoring/mic; Smart Fader/CFX. Keep all language wrappers on this shared behavior.
 4. Port analysis in order: FFT/STFT, onsets, tempo/beatgrid, key, structure, waveform, full analysis. Preserve SPEC algorithms, normalization, frame conventions, and deterministic behavior. Evaluate the existing portable FFT facilities before adding a dependency.
@@ -112,6 +112,13 @@ and EBU R128 services. `parso_wav_*`, `parso_pcm_*`, `parso_src_convert`, and
 `parso_loudness_measure` provide borrowed-input/owned-result operations, and independent C11/C++17
 consumers cover round trips, malformed input, SRC frame-count metadata, loudness results, and
 idempotent release. No unsupported container is advertised by this slice.
+
+The CP3 codec sub-phase now vendors Xiph libogg 1.3.5 plus libvorbis 1.3.7 (BSD-style), replacing
+the former stb_vorbis decode-only target. The public byte ABI exposes Ogg Vorbis read/write through
+the Xiph bridge, while Glint remains the MP3/AAC/portable Opus byte path and libFLAC remains the
+FLAC byte path. Public capability bits and C11 fixture consumers cover the enabled formats; any
+future platform-specific encoder can remain an injected provider without adding GPL code to this
+package.
 
 Gate: shared scenario vectors and real fixtures pass through native and Swift APIs. Cross-backend tolerances are justified per measurement. Missing formats remain explicit capability gaps and block any claim of full codec parity.
 

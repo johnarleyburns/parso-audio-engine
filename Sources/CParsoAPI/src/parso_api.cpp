@@ -4,6 +4,11 @@
 #include "parso_engine.h"
 #include "samplerate.h"
 #include "wav_io.hpp"
+#if defined(PARSO_CODEC_BRIDGES_AVAILABLE)
+#include "glint/glint.h"
+#include "parso_flac.h"
+#include "parso_vorbis.h"
+#endif
 
 #include <algorithm>
 #include <climits>
@@ -26,6 +31,7 @@ constexpr uint32_t kMinimumStatsSize = static_cast<uint32_t>(sizeof(parso_stats_
 constexpr uint32_t kMinimumCapabilitiesSize = static_cast<uint32_t>(sizeof(parso_capabilities_t));
 constexpr uint32_t kMinimumPCMBufferSize = static_cast<uint32_t>(sizeof(parso_pcm_buffer_t));
 constexpr uint32_t kMinimumBytesSize = static_cast<uint32_t>(sizeof(parso_bytes_t));
+constexpr uint32_t kMinimumCodecOptionsSize = static_cast<uint32_t>(sizeof(parso_codec_options_t));
 constexpr uint32_t kMinimumSRCOptionsSize = static_cast<uint32_t>(sizeof(parso_src_options_t));
 constexpr uint32_t kMinimumLoudnessOptionsSize =
     static_cast<uint32_t>(sizeof(parso_loudness_options_t));
@@ -113,6 +119,32 @@ parso_status_t validateEmptyBytes(const parso_bytes_t *bytes) noexcept {
     return PARSO_STATUS_OK;
 }
 
+bool validCodec(uint32_t codec) noexcept {
+    return codec >= PARSO_CODEC_WAV && codec <= PARSO_CODEC_AAC;
+}
+
+parso_status_t validateCodecOptions(const parso_codec_options_t *options) noexcept {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec options are null");
+    const parso_status_t status = checkHeader(
+        options->size, options->abi_version, kMinimumCodecOptionsSize
+    );
+    if (status != PARSO_STATUS_OK) return status;
+    if (options->compression_level > 8 || options->wav_is_float > 1 ||
+        options->quality > 2 ||
+        (options->vbr_quality != PARSO_CODEC_VBR_CBR && options->vbr_quality > 9)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec options are invalid");
+    }
+    if (options->bits_per_sample != 0 && !validWavBits(
+            options->bits_per_sample, options->wav_is_float)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec bit depth is invalid");
+    }
+    if (options->bitrate_kbps != 0 &&
+        (options->bitrate_kbps < 8 || options->bitrate_kbps > 512)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec bitrate is invalid");
+    }
+    return PARSO_STATUS_OK;
+}
+
 parso_status_t validateSRCOptions(const parso_src_options_t *options) noexcept {
     if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "SRC options are null");
     const parso_status_t status = checkHeader(
@@ -166,6 +198,50 @@ parso_status_t copyPCM(const std::vector<float> &samples, uint32_t sampleRate,
     out->channel_count = channels;
     out->sample_rate_hz = sampleRate;
     return PARSO_STATUS_OK;
+}
+
+parso_status_t copyPCM(const float *samples, uint64_t sampleCount,
+                       uint32_t sampleRate, uint32_t channels,
+                       parso_pcm_buffer_t *out) noexcept {
+    if (!samples && sampleCount != 0) {
+        return fail(PARSO_STATUS_INTERNAL, "decoded PCM is null");
+    }
+    if (channels < 1 || channels > 2 || sampleRate == 0 ||
+        sampleCount % channels != 0 ||
+        sampleCount > std::numeric_limits<size_t>::max() / sizeof(float)) {
+        return fail(PARSO_STATUS_INTERNAL, "decoded PCM has an invalid format");
+    }
+    const size_t allocationSize = static_cast<size_t>(sampleCount) * sizeof(float);
+    float *owned = nullptr;
+    if (allocationSize > 0) {
+        owned = static_cast<float *>(std::malloc(allocationSize));
+        if (!owned) return fail(PARSO_STATUS_OUT_OF_MEMORY, "PCM allocation failed");
+        std::memcpy(owned, samples, allocationSize);
+    }
+    out->samples = owned;
+    out->frames = sampleCount / channels;
+    out->channel_count = channels;
+    out->sample_rate_hz = sampleRate;
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t copyIntegerPCM(const int32_t *samples, uint64_t sampleCount,
+                              uint32_t sampleRate, uint32_t channels,
+                              uint32_t bits, parso_pcm_buffer_t *out) noexcept {
+    if (!samples && sampleCount != 0) {
+        return fail(PARSO_STATUS_INTERNAL, "decoded integer PCM is null");
+    }
+    if (!validBits(bits) || channels < 1 || channels > 2 || sampleRate == 0 ||
+        sampleCount % channels != 0 ||
+        sampleCount > std::numeric_limits<size_t>::max() / sizeof(float)) {
+        return fail(PARSO_STATUS_INTERNAL, "decoded integer PCM has an invalid format");
+    }
+    const size_t count = static_cast<size_t>(sampleCount);
+    std::vector<float> converted(count);
+    const double scale = std::ldexp(1.0, static_cast<int>(bits) - 1);
+    for (size_t index = 0; index < count; ++index)
+        converted[index] = static_cast<float>(static_cast<double>(samples[index]) / scale);
+    return copyPCM(converted, sampleRate, channels, out);
 }
 
 parso_status_t copyBytes(const std::vector<uint8_t> &bytes, parso_bytes_t *out) noexcept {
@@ -346,6 +422,18 @@ PARSO_API parso_status_t parso_capabilities_get(parso_capabilities_t *capabiliti
     if (status != PARSO_STATUS_OK) return status;
     capabilities->decode_containers = PARSO_CONTAINER_WAV;
     capabilities->encode_containers = PARSO_CONTAINER_WAV;
+#if defined(PARSO_CODEC_BRIDGES_AVAILABLE)
+    capabilities->decode_containers |= PARSO_CONTAINER_FLAC |
+                                       PARSO_CONTAINER_OGG_VORBIS |
+                                       PARSO_CONTAINER_OPUS |
+                                       PARSO_CONTAINER_MP3 |
+                                       PARSO_CONTAINER_AAC;
+    capabilities->encode_containers |= PARSO_CONTAINER_FLAC |
+                                       PARSO_CONTAINER_OGG_VORBIS |
+                                       PARSO_CONTAINER_OPUS |
+                                       PARSO_CONTAINER_MP3 |
+                                       PARSO_CONTAINER_AAC;
+#endif
     capabilities->pcm_read_formats = PARSO_PCM_FORMAT_S8 |
                                       PARSO_PCM_FORMAT_S16_LE |
                                       PARSO_PCM_FORMAT_S24_LE |
@@ -393,6 +481,215 @@ PARSO_API parso_status_t parso_bytes_release(parso_bytes_t *bytes) {
     bytes->abi_version = PARSO_ABI_VERSION;
     lastError = "ok";
     return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_codec_options_init(parso_codec_options_t *options) {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec options are null");
+    std::memset(options, 0, sizeof(*options));
+    options->size = sizeof(*options);
+    options->abi_version = PARSO_ABI_VERSION;
+    options->compression_level = 5;
+    options->bitrate_kbps = 192;
+    options->bits_per_sample = 16;
+    options->quality = 1;
+    options->vbr_quality = PARSO_CODEC_VBR_CBR;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_codec_read(
+    const uint8_t *data, uint64_t sizeBytes, uint32_t codec,
+    const parso_codec_options_t *options, parso_pcm_buffer_t *outBuffer
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyPCMBuffer(outBuffer);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        const parso_status_t optionsStatus = validateCodecOptions(options);
+        if (optionsStatus != PARSO_STATUS_OK) return optionsStatus;
+        if (!validCodec(codec) || !data || sizeBytes == 0 ||
+            sizeBytes > std::numeric_limits<size_t>::max()) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec input is invalid");
+        }
+        if (codec == PARSO_CODEC_WAV)
+            return parso_wav_read(data, sizeBytes, outBuffer);
+#if defined(PARSO_CODEC_BRIDGES_AVAILABLE)
+        if (sizeBytes > static_cast<uint64_t>(INT_MAX))
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec input is too large");
+        if (codec == PARSO_CODEC_FLAC) {
+            int32_t *decoded = nullptr;
+            uint64_t frames = 0;
+            uint32_t channels = 0;
+            uint32_t sampleRate = 0;
+            uint32_t bits = 0;
+            const int status = parso_flac_decode_memory(
+                data, sizeBytes, &decoded, &frames, &channels, &sampleRate, &bits
+            );
+            if (status != 0 || !decoded || channels < 1 || channels > 2 ||
+                sampleRate == 0 || frames == 0 || !validBits(bits)) {
+                parso_flac_free(decoded);
+                return fail(PARSO_STATUS_INVALID_ARGUMENT,
+                            "FLAC input is malformed or unsupported");
+            }
+            const parso_status_t copyStatus = copyIntegerPCM(
+                decoded, frames * channels, sampleRate, channels, bits, outBuffer
+            );
+            parso_flac_free(decoded);
+            if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+            return copyStatus;
+        }
+        if (codec == PARSO_CODEC_OGG_VORBIS) {
+            float *decoded = nullptr;
+            uint64_t frames = 0;
+            uint32_t channels = 0;
+            uint32_t sampleRate = 0;
+            const int status = parso_vorbis_decode_memory(
+                data, sizeBytes, &decoded, &frames, &channels, &sampleRate
+            );
+            if (status != 0 || !decoded || channels < 1 || channels > 2 ||
+                sampleRate == 0 || frames == 0) {
+                parso_vorbis_free(decoded);
+                return fail(PARSO_STATUS_INVALID_ARGUMENT,
+                            "Ogg Vorbis input is malformed or unsupported");
+            }
+            const parso_status_t copyStatus = copyPCM(
+                decoded, frames * channels, sampleRate, channels, outBuffer
+            );
+            parso_vorbis_free(decoded);
+            if (copyStatus == PARSO_STATUS_OK) lastError = "ok";
+            return copyStatus;
+        }
+        int sampleRate = 0;
+        int channels = 0;
+        int frames = 0;
+        float *decoded = static_cast<float *>(glint_decode_audio(
+            data, static_cast<int>(sizeBytes), &sampleRate, &channels, &frames
+        ));
+        if (!decoded || sampleRate <= 0 || channels < 1 || channels > 2 || frames <= 0) {
+            glint_free(decoded);
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec input is malformed or unsupported");
+        }
+        const parso_status_t status = copyPCM(
+            decoded, static_cast<uint64_t>(frames) * static_cast<uint32_t>(channels),
+            static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels), outBuffer
+        );
+        glint_free(decoded);
+        if (status == PARSO_STATUS_OK) lastError = "ok";
+        return status;
+#else
+        (void)codec;
+        return fail(PARSO_STATUS_UNSUPPORTED, "codec bridges are unavailable");
+#endif
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "codec decode allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while reading codec data");
+    }
+}
+
+PARSO_API parso_status_t parso_codec_write(
+    const parso_pcm_buffer_t *input, uint32_t codec,
+    const parso_codec_options_t *options, parso_bytes_t *outBytes
+) {
+    try {
+        const parso_status_t outputStatus = validateEmptyBytes(outBytes);
+        if (outputStatus != PARSO_STATUS_OK) return outputStatus;
+        const parso_status_t inputStatus = validatePCMBuffer(input);
+        if (inputStatus != PARSO_STATUS_OK) return inputStatus;
+        const parso_status_t optionsStatus = validateCodecOptions(options);
+        if (optionsStatus != PARSO_STATUS_OK) return optionsStatus;
+        if (!validCodec(codec))
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec selector is invalid");
+        if (codec == PARSO_CODEC_WAV)
+            return parso_wav_write(input, options->bits_per_sample,
+                                   options->wav_is_float, outBytes);
+#if defined(PARSO_CODEC_BRIDGES_AVAILABLE)
+        if (input->frames > static_cast<uint64_t>(INT_MAX) ||
+            input->sample_rate_hz > static_cast<uint32_t>(INT_MAX)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec input is too large");
+        }
+        const uint64_t sampleCount = input->frames * input->channel_count;
+        if (codec == PARSO_CODEC_FLAC) {
+            const uint32_t bits = options->bits_per_sample == 0
+                ? 16 : options->bits_per_sample;
+            if (bits != 16 && bits != 24 && bits != 32)
+                return fail(PARSO_STATUS_INVALID_ARGUMENT, "FLAC bit depth is invalid");
+            if (sampleCount > std::numeric_limits<size_t>::max() / sizeof(int32_t))
+                return fail(PARSO_STATUS_INVALID_ARGUMENT, "codec input is too large");
+            std::vector<int32_t> quantized(static_cast<size_t>(sampleCount));
+            const double maximum = std::ldexp(1.0, static_cast<int>(bits) - 1) - 1.0;
+            const double minimum = -std::ldexp(1.0, static_cast<int>(bits) - 1);
+            for (size_t index = 0; index < quantized.size(); ++index) {
+                double sample = std::isfinite(input->samples[index])
+                    ? static_cast<double>(input->samples[index]) : 0.0;
+                sample = std::max(-1.0, std::min(1.0, sample));
+                double scaled = sample * maximum;
+                if (sample < 0.0) scaled = sample * -minimum;
+                int64_t value = static_cast<int64_t>(scaled + (scaled >= 0.0 ? 0.5 : -0.5));
+                if (value > static_cast<int64_t>(maximum)) value = static_cast<int64_t>(maximum);
+                if (static_cast<double>(value) < minimum) value = static_cast<int64_t>(minimum);
+                quantized[index] = static_cast<int32_t>(value);
+            }
+            uint8_t *encoded = nullptr;
+            uint64_t encodedSize = 0;
+            const int status = parso_flac_encode_memory(
+                quantized.empty() ? nullptr : quantized.data(), input->frames,
+                input->channel_count, bits, input->sample_rate_hz,
+                options->compression_level, &encoded, &encodedSize
+            );
+            if (status != 0 || !encoded || encodedSize == 0) {
+                parso_flac_free(encoded);
+                return fail(PARSO_STATUS_INTERNAL, "FLAC encode failed");
+            }
+            outBytes->data = encoded;
+            outBytes->size_bytes = encodedSize;
+            lastError = "ok";
+            return PARSO_STATUS_OK;
+        }
+        if (codec == PARSO_CODEC_OGG_VORBIS) {
+            const uint32_t bitrate = options->bitrate_kbps == 0 ? 192
+                : options->bitrate_kbps;
+            uint8_t *encoded = nullptr;
+            uint64_t encodedSize = 0;
+            const int status = parso_vorbis_encode_memory(
+                input->samples, input->frames, input->channel_count,
+                input->sample_rate_hz, bitrate, &encoded, &encodedSize
+            );
+            if (status != 0 || !encoded || encodedSize == 0) {
+                parso_vorbis_free(encoded);
+                return fail(PARSO_STATUS_INTERNAL, "Ogg Vorbis encode failed");
+            }
+            outBytes->data = encoded;
+            outBytes->size_bytes = encodedSize;
+            lastError = "ok";
+            return PARSO_STATUS_OK;
+        }
+        const int format = codec == PARSO_CODEC_OPUS ? GLINT_ENC_OPUS
+            : codec == PARSO_CODEC_MP3 ? GLINT_ENC_MP3 : GLINT_ENC_AAC;
+        const int bitrate = options->bitrate_kbps == 0 ? 192
+            : static_cast<int>(options->bitrate_kbps);
+        const int vbrQuality = options->vbr_quality == PARSO_CODEC_VBR_CBR
+            ? -1 : static_cast<int>(options->vbr_quality);
+        int encodedSize = 0;
+        uint8_t *encoded = glint_encode_audio(
+            input->samples, static_cast<int>(input->frames),
+            static_cast<int>(input->channel_count), static_cast<int>(input->sample_rate_hz),
+            format, bitrate, vbrQuality, static_cast<int>(options->quality), &encodedSize
+        );
+        if (!encoded || encodedSize <= 0) {
+            glint_free(encoded);
+            return fail(PARSO_STATUS_INTERNAL, "codec encode failed");
+        }
+        outBytes->data = encoded;
+        outBytes->size_bytes = static_cast<uint64_t>(encodedSize);
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+#else
+        return fail(PARSO_STATUS_UNSUPPORTED, "codec bridges are unavailable");
+#endif
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "codec encode allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while writing codec data");
+    }
 }
 
 PARSO_API parso_status_t parso_wav_read(

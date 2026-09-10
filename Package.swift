@@ -13,7 +13,8 @@ import PackageDescription
 //   Cflac    -> libFLAC 1.4.3 (BSD-3)      https://xiph.org/flac/
 //   Cebur128 -> libebur128 (MIT)          https://github.com/jiixyj/libebur128
 //   Csrc     -> libsamplerate 0.2.2 (BSD-2) https://github.com/libsndfile/libsamplerate
-//   Cvorbis  -> stb_vorbis (Public Domain) https://github.com/nothings/stb   (Ogg Vorbis decode)
+//   Cogg     -> libogg 1.3.5 (BSD-style)    https://github.com/xiph/ogg
+//   Cvorbis  -> libvorbis 1.3.7 (BSD-style)  https://github.com/xiph/vorbis (Ogg Vorbis encode/decode)
 //   Copus    -> libogg + libopus + libopusfile (BSD-3)  https://github.com/xiph  (Opus decode)
 //   CParsoDSP/vendor/signalsmith -> Signalsmith Stretch (MIT)
 //                                          https://github.com/Signalsmith-Audio/signalsmith-stretch
@@ -74,11 +75,29 @@ let package = Package(
                 .define("VERSION", to: "\"0.2.2\"")
             ]
         ),
-        .target(name: "Cvorbis",  path: "Sources/Cvorbis",  publicHeadersPath: "include"),
+        .target(
+            name: "Cogg",
+            path: "Sources/Cogg",
+            publicHeadersPath: "include",
+            linkerSettings: [.linkedLibrary("m")]
+        ),
+        .target(
+            name: "Cvorbis",
+            dependencies: ["Cogg"],
+            path: "Sources/Cvorbis",
+            exclude: ["xiph/src/psytune.c"],
+            publicHeadersPath: "xiph/include",
+            cSettings: [
+                .headerSearchPath("xiph/src"),
+                .headerSearchPath("../Cogg/include")
+            ],
+            linkerSettings: [.linkedLibrary("m")]
+        ),
         .target(
             name: "Copus",
+            dependencies: ["Cogg"],
             path: "Sources/Copus",
-            exclude: ["silk/float"],
+            exclude: ["silk/float", "src/bitwise.c", "src/framing.c"],
             publicHeadersPath: "include",
             cSettings: [
                 .headerSearchPath("src"),
@@ -89,6 +108,7 @@ let package = Package(
                 .headerSearchPath("silk/float"),
                 .headerSearchPath("include/ogg"),
                 .headerSearchPath("include/opus"),
+                .headerSearchPath("../Cogg/include"),
                 .define("HAVE_CONFIG_H"),
                 .define("OPUS_BUILD"),
                 .define("OPUS_DISABLE_INTRINSICS"),

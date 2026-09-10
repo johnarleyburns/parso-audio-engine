@@ -71,6 +71,14 @@ public:
                    : PARSO_STATUS_INVALID_ARGUMENT;
     }
 
+    static parso_status_t readCodec(const uint8_t *data, uint64_t size,
+                                    uint32_t codec,
+                                    const parso_codec_options_t &options,
+                                    PcmBuffer *out) noexcept {
+        return out ? parso_codec_read(data, size, codec, &options, &out->value_)
+                   : PARSO_STATUS_INVALID_ARGUMENT;
+    }
+
     parso_status_t writeWav(uint32_t bits, bool isFloat, Bytes *out) const noexcept {
         return out ? parso_wav_write(&value_, bits, isFloat ? 1u : 0u, out->cHandle())
                    : PARSO_STATUS_INVALID_ARGUMENT;
@@ -78,6 +86,12 @@ public:
 
     parso_status_t writePCM(uint32_t bits, Bytes *out) const noexcept {
         return out ? parso_pcm_write(&value_, bits, out->cHandle())
+                   : PARSO_STATUS_INVALID_ARGUMENT;
+    }
+
+    parso_status_t writeCodec(uint32_t codec, const parso_codec_options_t &options,
+                              Bytes *out) const noexcept {
+        return out ? parso_codec_write(&value_, codec, &options, out->cHandle())
                    : PARSO_STATUS_INVALID_ARGUMENT;
     }
 

@@ -20,7 +20,7 @@ as much of the behavior as possible independently testable.
 |---|---|---|---|
 | Engine / IO | AVAudioEngine + Core Audio | Apple | RT graph + output |
 | Decode FLAC | libFLAC | BSD-3 | native FLAC, no libogg |
-| Decode Ogg Vorbis | stb_vorbis | PD / MIT-0 | single-file decoder |
+| Encode/decode Ogg Vorbis | libogg + libvorbis/libvorbisenc/libvorbisfile | BSD-style | Xiph reference encoder and decoder |
 | Decode Opus | libogg + libopus + libopusfile | BSD-3 | `op_open_file` / `op_read_float` |
 | Decode MP3/AAC/ALAC/WAV/AIFF/M4B | AVAudioFile / AudioToolbox | Apple | native |
 | Encode WAV | AVAudioFile / ExtAudioFile | Apple | PCM |
