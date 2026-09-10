@@ -480,6 +480,25 @@ public sealed class Engine : IDisposable
         ThrowIfFailed(status, "setting control");
     }
 
+    /// <summary>Sets the A/B crossfader position for subsequent renders.</summary>
+    /// <param name="position">A bounded position from -1 (A) to +1 (B).</param>
+    public unsafe void SetCrossfader(float position)
+    {
+        if (!float.IsFinite(position) || position < -1.0f || position > 1.0f)
+            throw new ArgumentOutOfRangeException(nameof(position));
+        if (deckCount < 2) throw new InvalidOperationException("crossfader requires two decks");
+        var control = NativeMethods.DefaultControl();
+        control.Crossfader = position;
+        control.XfadeAssign[0] = 0.0f;
+        control.XfadeAssign[1] = 1.0f;
+        control.Fader[0] = 1.0f;
+        control.Fader[1] = 1.0f;
+        control.Trim[0] = 1.0f;
+        control.Trim[1] = 1.0f;
+        var status = NativeMethods.SetControl(handle, ref control);
+        ThrowIfFailed(status, "setting crossfader");
+    }
+
     /// <summary>Copies interleaved PCM into pinned planar storage retained by the engine.</summary>
     /// <param name="samples">Interleaved float32 PCM copied before returning.</param>
     /// <param name="sampleRateHz">The source sample rate.</param>
