@@ -103,6 +103,9 @@ the same versioned ABI. Decode results are copied before the native owned buffer
 the Windows consumer exercises an Xiph Ogg Vorbis encode/decode round trip. Linux verifies the
 Windows-targeted assembly; native DLL loading remains a Windows-only gate.
 
+The C# `Engine` binding also exposes activation, bounded drain, dropped-frame inspection, and reset
+for the native master record ring; the Windows consumer includes that smoke path.
+
 The CP-PY offline spike now provides `bindings/python`, a dependency-free `ctypes` package with
 capability discovery, the same six native byte-codec selectors, native SRC/loudness wrappers, and
 bounded headless rendering with retained deck-buffer ownership and play/pause commands. Its source tests and Vorbis example pass

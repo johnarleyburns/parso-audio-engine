@@ -330,6 +330,57 @@ public sealed class Engine : IDisposable
         return new EngineStats(stats.MasterFrame, stats.StarvedFrames, stats.DeckCount);
     }
 
+    /// <summary>Enables or disables the bounded native master record ring.</summary>
+    /// <param name="active">Whether subsequent renders should be copied into the ring.</param>
+    public void SetRecordActive(bool active)
+    {
+        var status = NativeMethods.RecordSetActive(handle, active ? 1u : 0u);
+        ThrowIfFailed(status, "setting record state");
+    }
+
+    /// <summary>Drains recorded master frames into new managed arrays.</summary>
+    /// <param name="maxFrames">The maximum number of frames to remove.</param>
+    /// <returns>Separate left and right managed channel arrays.</returns>
+    public unsafe (float[] Left, float[] Right) DrainRecord(uint maxFrames)
+    {
+        if (maxFrames == 0 || maxFrames > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(maxFrames));
+        var left = new float[(int)maxFrames];
+        var right = new float[(int)maxFrames];
+        uint outputFrames = 0;
+        fixed (float* leftPointer = left)
+        fixed (float* rightPointer = right)
+        {
+            var status = NativeMethods.RecordDrain(handle, leftPointer, rightPointer,
+                maxFrames, ref outputFrames);
+            ThrowIfFailed(status, "draining record ring");
+        }
+        if (outputFrames > maxFrames)
+            throw new ParsoException(NativeMethods.InvalidArgument, "draining record ring");
+        if (outputFrames != maxFrames)
+        {
+            Array.Resize(ref left, (int)outputFrames);
+            Array.Resize(ref right, (int)outputFrames);
+        }
+        return (left, right);
+    }
+
+    /// <summary>Gets the number of frames dropped by the bounded record ring.</summary>
+    public ulong RecordDroppedFrames()
+    {
+        ulong outputFrames = 0;
+        var status = NativeMethods.RecordDroppedFrames(handle, ref outputFrames);
+        ThrowIfFailed(status, "reading record counter");
+        return outputFrames;
+    }
+
+    /// <summary>Discards pending recorded frames and resets the drop counter.</summary>
+    public void ResetRecord()
+    {
+        var status = NativeMethods.RecordReset(handle);
+        ThrowIfFailed(status, "resetting record ring");
+    }
+
     /// <summary>Releases the native engine handle.</summary>
     public void Dispose()
     {
@@ -535,4 +586,17 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport("parso", EntryPoint = "parso_engine_get_stats")]
     internal static partial int GetStats(NativeEngineHandle engine, ref Stats stats);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_record_set_active")]
+    internal static partial int RecordSetActive(NativeEngineHandle engine, uint active);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_record_drain")]
+    internal static partial int RecordDrain(NativeEngineHandle engine, float* left, float* right,
+        uint maxFrames, ref uint outputFrames);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_record_dropped_frames")]
+    internal static partial int RecordDroppedFrames(NativeEngineHandle engine, ref ulong outputFrames);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_record_reset")]
+    internal static partial int RecordReset(NativeEngineHandle engine);
 }
