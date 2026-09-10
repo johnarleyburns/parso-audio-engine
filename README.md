@@ -100,28 +100,22 @@ the native Windows job builds and runs the C# consumer against the MSVC-built DL
 complete Linux codec, device, Python, Android, or Apple-framework support; those require the later gates
 in the plan.
 
-For the Android native toolchain on Debian/Ubuntu Linux or macOS, run:
-
-```bash
-./scripts/setup-android.sh
-```
-
-The script installs the official Android CLI, SDK platform-tools, a stable NDK and CMake, configures
-`ANDROID_HOME`/`ANDROID_NDK_HOME` in a user shell environment, and cross-builds `arm64-v8a` and
-`x86_64` by default. Use `./scripts/setup-android.sh --no-build` to install without compiling, or
-pin versions with `PARSO_ANDROID_NDK_PACKAGE` and `PARSO_ANDROID_CMAKE_PACKAGE`.
-
-For Linux native development plus the best-effort Windows GNU cross-build, run on Debian/Ubuntu x86_64:
+For the Linux native, Windows cross-build, and Android native toolchains on Debian/Ubuntu x86_64, run:
 
 ```bash
 ./scripts/setup-linux.sh
 ```
 
-This installs CMake/Ninja, the MinGW-w64 x86_64 toolchain, and the .NET 8 SDK, then verifies the Linux
-CTest targets, the Windows-targeted C# project, and the Windows GNU shared-library build. Use
-`--no-build` to install only, or `--no-windows-cross-build` when the Linux host is not intended to
-produce Windows artifacts. Native Windows/MSVC validation remains in GitHub Actions and
-`scripts/setup-windows.ps1`.
+The script installs the official Android CLI, SDK platform-tools, a stable NDK and CMake, configures
+`ANDROID_HOME`/`ANDROID_NDK_HOME` alongside the Linux/.NET/Windows cross-build environment, and
+cross-builds `arm64-v8a` and `x86_64` by default. Use `--no-build` to install without compiling,
+`--no-windows-cross-build` or `--no-android-build` to skip one verification target, `--no-android` to
+skip Android installation, or pin versions with `PARSO_ANDROID_NDK_PACKAGE` and
+`PARSO_ANDROID_CMAKE_PACKAGE`.
+
+The Linux setup also installs CMake/Ninja, the MinGW-w64 x86_64 toolchain, and the .NET 8 SDK, then
+verifies the Linux CTest targets, Windows-targeted C# project, and Windows GNU shared-library build.
+Native Windows/MSVC validation remains in GitHub Actions and `scripts/setup-windows.ps1`.
 
 On Windows 10/11, run an elevated PowerShell prompt:
 
@@ -130,8 +124,10 @@ On Windows 10/11, run an elevated PowerShell prompt:
 ```
 
 The script uses `winget` to install Visual Studio 2022 C++ Build Tools, CMake, Ninja, Git, and .NET 8,
-then builds/tests the native C/C++ targets and runs the C# consumer against the MSVC-built `parso.dll`.
-Use `-NoInstall` to use an existing toolchain or `-NoBuild` to install without verification.
+plus the official Android CLI, SDK platform-tools, a stable NDK, and Android CMake. It then builds/tests
+the native C/C++ targets, runs the C# consumer against the MSVC-built `parso.dll`, and cross-builds
+Android `arm64-v8a` and `x86_64`. Use `-NoInstall`, `-NoBuild`, `-NoAndroid`, or `-NoAndroidBuild` to
+limit the work.
 
 ## Repository layout
 
