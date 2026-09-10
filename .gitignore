@@ -3,6 +3,8 @@
 **/bin/
 **/obj/
 build-native/
+build-linux/
+build-windows-cross/
 build-android-*/
 *.xcodeproj
 DerivedData/
