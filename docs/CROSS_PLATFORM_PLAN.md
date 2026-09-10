@@ -103,6 +103,11 @@ the same versioned ABI. Decode results are copied before the native owned buffer
 the Windows consumer exercises an Xiph Ogg Vorbis encode/decode round trip. Linux verifies the
 Windows-targeted assembly; native DLL loading remains a Windows-only gate.
 
+The CP-PY offline spike now provides `bindings/python`, a dependency-free `ctypes` package with
+capability discovery and the same six native byte-codec selectors. Its source tests and Vorbis
+example pass against the Linux CMake library. Fresh-venv installation is pending because this
+session's host has no `pip`/`ensurepip`; wheel construction itself passes through setuptools.
+
 ### CP3 — Shared offline services and DJ behavior
 
 1. Expose native buffers, SRC, loudness, FLAC/Xiph-Vorbis/Opus bridges, and WAV IO. Audit CGlint's current decode/encode paths with real fixtures before advertising portable MP3 support.

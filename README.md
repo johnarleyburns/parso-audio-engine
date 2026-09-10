@@ -122,6 +122,11 @@ var encoded = CodecServices.Encode(samples, 48_000, 2, AudioCodec.OggVorbis);
 var decoded = CodecServices.Decode(encoded, AudioCodec.OggVorbis);
 ```
 
+The CP-PY preview in `bindings/python` provides the matching synchronous offline codec surface
+through standard-library `ctypes`; see [`docs/python.md`](docs/python.md) for native-library
+discovery, ownership, and local verification. It does not yet claim Python analysis, DJ controls,
+recording, device IO, or installed-wheel acceptance.
+
 For the Linux native, Windows cross-build, and Android native toolchains on Debian/Ubuntu x86_64, run:
 
 ```bash

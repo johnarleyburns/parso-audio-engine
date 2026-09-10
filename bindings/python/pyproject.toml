@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parso-audio"
+version = "0.1.0"
+description = "Python bindings for the Parso Audio Engine native offline services"
+requires-python = ">=3.10"
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Typing :: Typed",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["parso_audio*"]
+
+[tool.setuptools.package-data]
+parso_audio = ["py.typed"]
