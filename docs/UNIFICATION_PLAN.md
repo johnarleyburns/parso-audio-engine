@@ -148,7 +148,8 @@ Each phase ends green on `swift test` in all three repos before the next starts.
   `ParsoAudioCore`; both `FLAC.xcframework` and `Lame.xcframework` deleted. PAE grew
   `AudioFileReader.decodeRange` (bounded seekable, libFLAC `seek_absolute`, throws
   `notSeekable` rather than falling back), `ExportCodec.flacDelivery` (16/24-bit + Vorbis
-  comments, no PFLT block) and `AudioFileWriter.encodeMP3` (in-memory CBR Glint).
+  comments, no PFLT block), `ExportCodec.oggVorbis` (Xiph libvorbisenc), and
+  `AudioFileWriter.encodeMP3` (in-memory CBR Glint).
   `SeekableAudioDecoding` stays the app-side adapter protocol. Both Phase-3 carry-ins
   landed: `EQTapInstaller` adopted in Tonearm + Voxglass; app CI checks PAE out as a
   sibling. MP3-vs-LAME perceptual A-B carried to the author (`current_status.md`).

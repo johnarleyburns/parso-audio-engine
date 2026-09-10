@@ -172,6 +172,22 @@ struct CodecRoundtripTests {
         #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
     }
 
+    @Test func oggVorbisRoundtripPreservesTheDominantTone() throws {
+        let src = SignalGenerators.sine(frequency: 440, seconds: 1.0, channels: 2)
+        let url = tempURL("ogg")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try AudioFileWriter(
+            url: url, format: src.format, codec: .vorbisDefault
+        )
+        try writer.write(src)
+        try writer.finish()
+        let back = try AudioFileReader(url: url, container: .oggVorbis).readAll()
+        #expect(back.frameCount > 0)
+        #expect(back.channelCount == src.channelCount)
+        #expect(back.format.sampleRate == src.format.sampleRate)
+        #expect(Measure.dominantFrequency(back, searchRange: 300...600) == 440)
+    }
+
     @Test func m4aMetadataReadsStandardTextItems() throws {
         let url = tempURL("m4a")
         try makeMetadataFixture().write(to: url)

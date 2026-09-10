@@ -2275,8 +2275,8 @@ public final class Monitoring {
     }
 }
 
-/// Records the master bus off the RT thread. AAC defaults to 320 kbps; MP3 is
-/// also available through `ExportCodec.mp3Default` or an explicit bitrate.
+/// Records the master bus off the RT thread. AAC defaults to 320 kbps; Ogg
+/// Vorbis and MP3 are also available through their `ExportCodec` factories.
 @MainActor
 public final class MixRecorder {
     private let codec: ExportCodec
@@ -2291,7 +2291,8 @@ public final class MixRecorder {
     }
 
     /// Creates an AAC-LC recorder at the 320 kbps delivery default.
-    /// Pass `ExportCodec.mp3Default` or an explicit codec to select another format.
+    /// Pass `ExportCodec.vorbisDefault`, `ExportCodec.mp3Default`, or an explicit
+    /// codec to select another format.
     public convenience init(url: URL, codec: ExportCodec = .aacDefault) throws {
         try self.init(codec: codec, url: url)
     }

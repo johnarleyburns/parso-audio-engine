@@ -522,8 +522,9 @@ public struct AudioFileReader: Sendable {
     }
 }
 
-/// Export codecs. AAC and ALAC go through AVFoundation; MP3 goes through the vendored
-/// Glint encoder, which is the only MP3 encoder available — AudioToolbox cannot encode MP3.
+/// Export codecs. AAC and ALAC go through AVFoundation; Ogg Vorbis goes through
+/// the permissively licensed Xiph encoder; MP3 goes through the vendored Glint
+/// encoder, which is the only MP3 encoder available — AudioToolbox cannot encode MP3.
 /// One Vorbis comment (FLAC metadata tag), e.g. `key: "TITLE"`, `value: "…"`.
 public struct FLACVorbisComment: Sendable, Equatable {
     public var key: String
@@ -540,12 +541,15 @@ public enum ExportCodec: Sendable, Equatable {
     public static let defaultAACBitrate = 320_000
     /// The default CBR MP3 delivery bitrate used by convenience APIs.
     public static let defaultMP3Bitrate = 320
+    /// The default Ogg Vorbis nominal bitrate used by convenience APIs.
+    public static let defaultVorbisBitrate = 192
 
     case wavPCM(bitDepth: Int)   // via AVAudioFile / ExtAudioFile
     case flac(compression: Int)  // via libFLAC (Cflac) — PFLT float-preserving, 32-bit
     case aac(bitrate: Int)       // via AudioToolbox
     case alac                    // via AudioToolbox (lossless)
     case m4b(bitrate: Int)       // AAC-LC audiobook container via AudioToolbox
+    case oggVorbis(bitrate: Int) // via Xiph libvorbisenc/libogg
     case mp3(bitrate: Int)       // via Glint (AudioToolbox has no MP3 encoder)
     /// Standard delivery FLAC: caller bit depth (16/24), Vorbis-comment tags,
     /// no PFLT block — the file other tools expect. `bitDepth` clamps to 16/24.
@@ -555,6 +559,8 @@ public enum ExportCodec: Sendable, Equatable {
     public static let aacDefault: ExportCodec = .aac(bitrate: defaultAACBitrate)
     /// CBR MP3 at 320 kbps, suitable for delivery and mix recording.
     public static let mp3Default: ExportCodec = .mp3(bitrate: defaultMP3Bitrate)
+    /// Ogg Vorbis at 192 kbps, suitable for portable delivery.
+    public static let vorbisDefault: ExportCodec = .oggVorbis(bitrate: defaultVorbisBitrate)
 }
 
 /// Calls `body` with a C array of NUL-terminated pointers into `strings`,
@@ -599,7 +605,8 @@ public struct AudioFileWriter {
     ///   wrapper). `nil` (the default) keeps the built-in Glint encoder —
     ///   PAE's own MP3 support never depends on this parameter being set.
     /// Creates a writer using AAC-LC at 320 kbps when no codec is supplied.
-    /// Pass `.aac(bitrate:)` or `.mp3(bitrate:)` to select an explicit bitrate.
+    /// Pass `.aac(bitrate:)`, `.oggVorbis(bitrate:)`, or `.mp3(bitrate:)` to select
+    /// an explicit bitrate.
     public init(url: URL, format: AudioFormat, codec: ExportCodec = .aacDefault,
                 mp3Encoder: (any MP3Encoding)? = nil) throws {
         guard format.sampleRate.isFinite, format.sampleRate > 0, format.channelCount > 0 else {
@@ -625,6 +632,8 @@ public struct AudioFileWriter {
             try writeApple(buffer, formatID: kAudioFormatAppleLossless, bitrate: 0)
         case .m4b(let bitrate):
             try writeApple(buffer, formatID: kAudioFormatMPEG4AAC, bitrate: bitrate)
+        case .oggVorbis(let bitrate):
+            try writeVorbis(buffer, bitrate: bitrate)
         case .mp3(let bitrate):
             if let mp3Encoder {
                 let data = try mp3Encoder.encode(buffer, bitrateKbps: bitrate)
@@ -717,6 +726,44 @@ public struct AudioFileWriter {
     private func writeGlint(_ buffer: PCMBuffer, bitrate: Int) throws {
         let data = try AudioFileWriter.encodeMP3(buffer, bitrateKbps: bitrate)
         do { try data.write(to: url) }
+        catch { throw AudioFileError.writeFailed(error.localizedDescription) }
+    }
+
+    private func writeVorbis(_ buffer: PCMBuffer, bitrate: Int) throws {
+        guard bitrate >= 16, bitrate <= 512,
+              buffer.frameCount > 0,
+              buffer.channelCount >= 1, buffer.channelCount <= 2,
+              buffer.frameCount <= Int.max / buffer.channelCount,
+              buffer.format.sampleRate >= 8_000, buffer.format.sampleRate <= 48_000 else {
+            throw AudioFileError.formatMismatch
+        }
+        var interleaved = [Float](repeating: 0,
+                                  count: buffer.frameCount * buffer.channelCount)
+        for frame in 0..<buffer.frameCount {
+            for channel in 0..<buffer.channelCount {
+                interleaved[frame * buffer.channelCount + channel] = buffer.channel(channel)[frame]
+            }
+        }
+        var encoded: UnsafeMutablePointer<UInt8>?
+        var encodedSize: UInt64 = 0
+        let result = interleaved.withUnsafeBufferPointer { samples in
+            parso_vorbis_encode_memory(
+                samples.baseAddress,
+                UInt64(buffer.frameCount),
+                UInt32(buffer.channelCount),
+                UInt32(buffer.format.sampleRate.rounded()),
+                UInt32(bitrate),
+                &encoded,
+                &encodedSize
+            )
+        }
+        guard result == 0, let encoded, encodedSize > 0,
+              encodedSize <= UInt64(Int.max) else {
+            if let encoded { parso_vorbis_free(encoded) }
+            throw AudioFileError.writeFailed("Xiph Vorbis encode failed")
+        }
+        defer { parso_vorbis_free(encoded) }
+        do { try Data(bytes: encoded, count: Int(encodedSize)).write(to: url) }
         catch { throw AudioFileError.writeFailed(error.localizedDescription) }
     }
 

@@ -33,8 +33,8 @@ source of truth and the test suite remains the executable specification.
   Stretch, delay, Freeverb reverb, look-ahead limiter, lock-free SPSC ring) and `CParsoEngine`
   (allocation-free two-deck render graph) are real. `pe_render` (device) and `pe_step` (tests)
   share one DSP implementation.
-- **Codecs:** Apple targets cover WAV, AIFF, CAF, MP3, AAC, ALAC-in-M4A, and AAC-in-M4B
-  audiobook output through AVFoundation / AudioToolbox. Native portable targets cover WAV plus
+- **Codecs:** Apple targets cover WAV, AIFF, CAF, Ogg Vorbis, MP3, AAC, ALAC-in-M4A, and AAC-in-M4B
+  audiobook output through AVFoundation / AudioToolbox plus the Xiph Vorbis bridge. Native portable targets cover WAV plus
   fixture-gated FLAC, Ogg Vorbis, Opus, MP3, and AAC paths; portable ALAC/M4A/M4B remain explicitly
   gated pending a permissive codec/container implementation. FLAC, Ogg Vorbis and Opus use vendored permissive C
   (`Cflac`, Xiph `Cvorbis`, `Copus`); Ogg Vorbis uses the BSD-style Xiph encoder/decoder; loudness and SRC use `Cebur128` / `Csrc`; MP3 *encode*
@@ -475,7 +475,7 @@ engine.mixer.smartCFX.preset = 1
 engine.mixer.smartCFX.amount = 0.7   // single control drives a curated chain
 ```
 
-### Record the mix (WAV / FLAC / AAC / ALAC / MP3)
+### Record the mix (WAV / FLAC / Ogg Vorbis / AAC / ALAC / MP3)
 
 ```swift
 let rec = try MixRecorder(url: outURL) // AAC-LC, 320 kbps default
@@ -483,7 +483,7 @@ rec.start()
 // … perform …
 try rec.stop()
 // Other codecs: .wavPCM(bitDepth: 24), .flac(compression: 5), .alac,
-// .mp3Default (CBR 320 kbps)
+// .oggVorbis(bitrate: 192), .mp3Default (CBR 320 kbps)
 ```
 
 AAC and MP3 export/recording default to 320 kbps through
@@ -530,8 +530,8 @@ try w.write(pcm); try w.finish()
 ```
 
 Supported decode: FLAC, Ogg Vorbis, Opus, MP3, AAC, WAV, AIFF, CAF, and Apple-native ALAC.
-Supported encode: WAV/PCM, FLAC, MP3, AAC and ALAC. AAC and ALAC use AVFoundation; MP3 uses the
-vendored Glint encoder, since AudioToolbox cannot encode MP3. No implementation code from Apple's
+Supported encode: WAV/PCM, FLAC, Ogg Vorbis, MP3, AAC and ALAC. Ogg Vorbis uses the BSD-style Xiph
+encoder; AAC and ALAC use AVFoundation; MP3 uses the vendored Glint encoder, since AudioToolbox cannot encode MP3. No implementation code from Apple's
 public-source ALAC repository is used.
 
 ## Loudness / auto-gain
