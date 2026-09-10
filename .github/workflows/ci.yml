@@ -107,6 +107,17 @@ jobs:
           cmake --build build-native --parallel
       - name: Test native CMake targets
         run: ctest --test-dir build-native --output-on-failure
+      - name: Install and test Python binding in a fresh virtual environment
+        run: |
+          python3 -m venv /tmp/parso-python-venv
+          /tmp/parso-python-venv/bin/python -m pip install --disable-pip-version-check "setuptools>=68"
+          /tmp/parso-python-venv/bin/python -m pip install --no-deps --no-build-isolation ./bindings/python
+          PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
+            /tmp/parso-python-venv/bin/python -m unittest discover \
+            -s bindings/python/tests -v
+          PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
+            /tmp/parso-python-venv/bin/python bindings/python/examples/render_acceptance.py \
+            --output-dir /tmp/parso-python-acceptance --seconds 30
       - name: Install Windows GNU cross-compiler
         run: |
           sudo apt-get update

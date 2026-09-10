@@ -56,8 +56,9 @@ PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
 
 The package's `pyproject.toml` builds a pure-Python wheel. Native artifacts
 are intentionally supplied by the platform package rather than embedded in
-that wheel; wheel installation and native-library discovery remain packaging
-matrix work for CP-PY.
+that wheel. CI installs that wheel in a fresh virtual environment and runs its
+tests against the CMake-built native library; local installation requires a
+Python distribution that includes `pip` and `venv`.
 
 `render_acceptance.py` is a small offline acceptance seam, not the completed
 FLX4 scenario runner: it renders the native engine for at least 30 seconds,
