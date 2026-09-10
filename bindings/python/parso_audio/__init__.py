@@ -91,6 +91,14 @@ class EngineEventType(IntEnum):
     BUFFER_RELEASED = 4
 
 
+class OfflineService(IntFlag):
+    """Offline service capability bits reported by the native build."""
+
+    SRC = 1
+    LOUDNESS = 2
+    ANALYSIS = 4
+
+
 class ContainerCapability(IntFlag):
     """Container bits reported by a native build."""
 
@@ -148,6 +156,17 @@ class LoudnessResult:
     true_peak_dbtp: float
     gain_to_target_db: float
     loudness_range_lu: float
+
+
+@dataclass(frozen=True)
+class AnalysisResult:
+    """Deterministic portable duration, level, and tempo summary."""
+
+    duration_seconds: float
+    rms: float
+    peak: float
+    bpm: float
+    bpm_confidence: float
 
 
 @dataclass(frozen=True)
@@ -252,6 +271,29 @@ class _LoudnessResult(ctypes.Structure):
         ("true_peak_dbtp", ctypes.c_double),
         ("gain_to_target_db", ctypes.c_double),
         ("loudness_range_lu", ctypes.c_double),
+    ]
+
+
+class _AnalysisOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("hop_frames", ctypes.c_uint32),
+        ("min_bpm", ctypes.c_uint32),
+        ("max_bpm", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
+class _AnalysisResult(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("duration_seconds", ctypes.c_double),
+        ("rms", ctypes.c_double),
+        ("peak", ctypes.c_double),
+        ("bpm", ctypes.c_double),
+        ("bpm_confidence", ctypes.c_double),
     ]
 
 
@@ -424,6 +466,15 @@ class CodecServices:
             ctypes.POINTER(_LoudnessResult),
         ]
         library.parso_loudness_measure.restype = ctypes.c_int32
+        library.parso_analysis_options_init.argtypes = [ctypes.POINTER(_AnalysisOptions)]
+        library.parso_analysis_options_init.restype = ctypes.c_int32
+        library.parso_analysis_result_init.argtypes = [ctypes.POINTER(_AnalysisResult)]
+        library.parso_analysis_result_init.restype = ctypes.c_int32
+        library.parso_analysis_measure.argtypes = [
+            ctypes.POINTER(_PcmBuffer), ctypes.POINTER(_AnalysisOptions),
+            ctypes.POINTER(_AnalysisResult),
+        ]
+        library.parso_analysis_measure.restype = ctypes.c_int32
 
     def close(self) -> None:
         """Close this facade; calling close repeatedly is safe."""
@@ -608,6 +659,51 @@ class CodecServices:
             result.true_peak_dbtp,
             result.gain_to_target_db,
             result.loudness_range_lu,
+        )
+
+    def analyze(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        hop_frames: int = 256,
+        min_bpm: int = 60,
+        max_bpm: int = 190,
+    ) -> AnalysisResult:
+        """Measure deterministic levels and an energy-envelope tempo estimate."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        if hop_frames <= 0 or min_bpm <= 0 or max_bpm <= min_bpm:
+            raise ValueError("analysis hop and BPM bounds are invalid")
+        native_input = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer), abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=sample_rate_hz,
+        )
+        options = _AnalysisOptions(
+            size=ctypes.sizeof(_AnalysisOptions), abi_version=self._ABI_VERSION,
+            hop_frames=hop_frames, min_bpm=min_bpm, max_bpm=max_bpm,
+        )
+        self._call("analysis-options initialization", self._library.parso_analysis_options_init, options)
+        options.hop_frames = hop_frames
+        options.min_bpm = min_bpm
+        options.max_bpm = max_bpm
+        result = _AnalysisResult()
+        self._call("analysis-result initialization", self._library.parso_analysis_result_init, result)
+        status = self._library.parso_analysis_measure(
+            ctypes.byref(native_input), ctypes.byref(options), ctypes.byref(result)
+        )
+        self._raise_for_status(status, "analysis measurement")
+        return AnalysisResult(
+            result.duration_seconds, result.rms, result.peak,
+            result.bpm, result.bpm_confidence,
         )
 
     def _native_options(self, options: Optional[CodecOptions]) -> _CodecOptions:
@@ -1064,6 +1160,7 @@ def _as_float_array(samples: Samples) -> array:
 
 
 __all__ = [
+    "AnalysisResult",
     "AudioCodec",
     "EngineCommand",
     "CodecCapabilities",
@@ -1076,5 +1173,6 @@ __all__ = [
     "EngineEventType",
     "EngineStats",
     "LoudnessResult",
+    "OfflineService",
     "ParsoError",
 ]

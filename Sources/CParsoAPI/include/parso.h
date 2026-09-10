@@ -56,6 +56,7 @@ extern "C" {
 /* Offline service capability bits. */
 #define PARSO_OFFLINE_SERVICE_SRC UINT64_C(1)
 #define PARSO_OFFLINE_SERVICE_LOUDNESS UINT64_C(2)
+#define PARSO_OFFLINE_SERVICE_ANALYSIS UINT64_C(4)
 
 /* Explicit byte-oriented codec selectors. These values intentionally do not
  * depend on C enum layout so they remain stable across language bindings. */
@@ -169,6 +170,25 @@ typedef struct {
     double gain_to_target_db;
     double loudness_range_lu;
 } parso_loudness_result_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint32_t hop_frames; /* 0: implementation default */
+    uint32_t min_bpm;    /* 0: implementation default (60) */
+    uint32_t max_bpm;    /* 0: implementation default (190) */
+    uint32_t reserved;
+} parso_analysis_options_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    double duration_seconds;
+    double rms;
+    double peak;
+    double bpm;
+    double bpm_confidence;
+} parso_analysis_result_t;
 
 typedef struct {
     uint32_t size;
@@ -345,6 +365,15 @@ PARSO_API parso_status_t parso_loudness_result_init(parso_loudness_result_t *res
 PARSO_API parso_status_t parso_loudness_measure(
     const parso_pcm_buffer_t *input, const parso_loudness_options_t *options,
     parso_loudness_result_t *result
+);
+
+/* Deterministic portable summary analysis. The input is borrowed and the
+ * result is written in place; no DJ state or render-thread code is involved. */
+PARSO_API parso_status_t parso_analysis_options_init(parso_analysis_options_t *options);
+PARSO_API parso_status_t parso_analysis_result_init(parso_analysis_result_t *result);
+PARSO_API parso_status_t parso_analysis_measure(
+    const parso_pcm_buffer_t *input, const parso_analysis_options_t *options,
+    parso_analysis_result_t *result
 );
 
 PARSO_API parso_status_t parso_engine_options_init(parso_engine_options_t *options);

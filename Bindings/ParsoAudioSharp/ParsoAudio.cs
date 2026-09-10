@@ -212,6 +212,10 @@ public readonly record struct DecodedPcm(
     uint ChannelCount,
     uint SampleRateHz);
 
+/// <summary>Deterministic portable duration, level, and tempo summary.</summary>
+public readonly record struct AnalysisResult(
+    double DurationSeconds, double Rms, double Peak, double Bpm, double BpmConfidence);
+
 /// <summary>Provides ownership-safe managed access to native offline codec services.</summary>
 public static unsafe class CodecServices
 {
@@ -314,6 +318,51 @@ public static unsafe class CodecServices
         {
             NativeMethods.PcmBufferRelease(ref output);
         }
+    }
+
+    /// <summary>Measures levels and an energy-envelope tempo estimate on borrowed PCM.</summary>
+    public static AnalysisResult Analyze(ReadOnlySpan<float> samples, uint sampleRateHz,
+                                         uint channelCount, uint hopFrames = 256,
+                                         uint minBpm = 60, uint maxBpm = 190)
+    {
+        if (samples.IsEmpty) throw new ArgumentException("Samples cannot be empty.", nameof(samples));
+        if (channelCount is < 1 or > 2 || sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("PCM format must have one or two channels and a valid sample rate.");
+        if (hopFrames == 0 || minBpm == 0 || maxBpm <= minBpm)
+            throw new ArgumentOutOfRangeException(nameof(hopFrames));
+        var options = new NativeMethods.AnalysisOptions
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.AnalysisOptions>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        var status = NativeMethods.AnalysisOptionsInit(ref options);
+        ThrowIfFailed(status, "analysis-options initialization");
+        options.HopFrames = hopFrames;
+        options.MinBpm = minBpm;
+        options.MaxBpm = maxBpm;
+        var result = new NativeMethods.AnalysisResult
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.AnalysisResult>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        status = NativeMethods.AnalysisResultInit(ref result);
+        ThrowIfFailed(status, "analysis-result initialization");
+        var input = new NativeMethods.PcmBuffer
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.PcmBuffer>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Frames = checked((ulong)(samples.Length / (int)channelCount)),
+            ChannelCount = channelCount,
+            SampleRateHz = sampleRateHz
+        };
+        fixed (float* samplePointer = samples)
+        {
+            input.Samples = (nint)samplePointer;
+            status = NativeMethods.AnalysisMeasure(ref input, ref options, ref result);
+        }
+        ThrowIfFailed(status, "analysis measurement");
+        return new AnalysisResult(result.DurationSeconds, result.Rms, result.Peak,
+            result.Bpm, result.BpmConfidence);
     }
 
     private static NativeMethods.CodecOptions ToNativeOptions(CodecOptions options)
@@ -767,6 +816,29 @@ internal static unsafe partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct AnalysisOptions
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint HopFrames;
+        internal uint MinBpm;
+        internal uint MaxBpm;
+        internal uint Reserved;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AnalysisResult
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal double DurationSeconds;
+        internal double Rms;
+        internal double Peak;
+        internal double Bpm;
+        internal double BpmConfidence;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct EngineOptions
     {
         internal uint Size;
@@ -904,6 +976,16 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("parso", EntryPoint = "parso_codec_write")]
     internal static partial int CodecWrite(
         ref PcmBuffer input, uint codec, ref CodecOptions options, ref Bytes output);
+
+    [LibraryImport("parso", EntryPoint = "parso_analysis_options_init")]
+    internal static partial int AnalysisOptionsInit(ref AnalysisOptions options);
+
+    [LibraryImport("parso", EntryPoint = "parso_analysis_result_init")]
+    internal static partial int AnalysisResultInit(ref AnalysisResult result);
+
+    [LibraryImport("parso", EntryPoint = "parso_analysis_measure")]
+    internal static partial int AnalysisMeasure(ref PcmBuffer input, ref AnalysisOptions options,
+        ref AnalysisResult result);
 
     [LibraryImport("parso", EntryPoint = "parso_engine_create")]
     internal static partial int Create(ref EngineOptions options, out nint engine);

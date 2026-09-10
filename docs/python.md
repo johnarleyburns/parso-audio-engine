@@ -32,9 +32,10 @@ after close raise `ParsoError`.
 
 The current offline gate covers WAV, FLAC, Xiph Ogg Vorbis, Opus, MP3, and AAC
 where the loaded native capability bits advertise them. `convert_sample_rate`
-and `measure_loudness` expose the native SRC and EBU R128 services. ALAC,
-AIFF, CAF, analysis, DJ controls, recording, and device IO remain explicit
-future gates.
+and `measure_loudness` expose the native SRC and EBU R128 services. `analyze`
+provides the shared deterministic duration, RMS, peak, and energy-envelope BPM
+summary; key, structure, ALAC, AIFF, CAF, and device IO remain explicit future
+gates.
 
 `Engine` provides bounded stereo headless rendering and a master-level control;
 `set_deck_buffer` copies and retains planar channel storage until replacement or

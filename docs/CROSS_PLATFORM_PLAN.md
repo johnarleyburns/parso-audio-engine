@@ -145,6 +145,11 @@ and EBU R128 services. `parso_wav_*`, `parso_pcm_*`, `parso_src_convert`, and
 consumers cover round trips, malformed input, SRC frame-count metadata, loudness results, and
 idempotent release. No unsupported container is advertised by this slice.
 
+The next CP3 analysis slice adds `parso_analysis_measure` for a deterministic portable summary
+(duration, RMS, peak, and energy-envelope BPM/confidence). The C11 consumer, Python binding, and
+C# consumer exercise the same synthetic 120 BPM click vector. Key, structure, and full waveform
+generation remain separate gates; this summary does not claim full Swift analysis parity.
+
 The CP3 codec sub-phase now vendors Xiph libogg 1.3.5 plus libvorbis 1.3.7 (BSD-style), replacing
 the former stb_vorbis decode-only target. The public byte ABI exposes Ogg Vorbis read/write through
 the Xiph bridge, while Glint remains the MP3/AAC/portable Opus byte path and libFLAC remains the

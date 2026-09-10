@@ -13,9 +13,14 @@ static int require_ok(parso_status_t status, const char *operation) {
 
 int main(void) {
     enum { frames = 48000 };
+    enum { analysis_frames = 384000 };
     float samples[frames];
+    static float click_track[analysis_frames];
     for (uint32_t index = 0; index < frames; ++index) {
         samples[index] = 0.25f;
+    }
+    for (uint32_t beat = 0; beat < analysis_frames; beat += 24000) {
+        for (uint32_t index = beat; index < beat + 128; ++index) click_track[index] = 1.0f;
     }
 
     parso_capabilities_t capabilities;
@@ -24,16 +29,22 @@ int main(void) {
     parso_src_options_t src_options;
     parso_loudness_options_t loudness_options;
     parso_loudness_result_t loudness;
+    parso_analysis_options_t analysis_options;
+    parso_analysis_result_t analysis;
     if (!require_ok(parso_capabilities_init(&capabilities), "capabilities init") ||
         !require_ok(parso_capabilities_get(&capabilities), "capabilities get") ||
         (capabilities.offline_services & (PARSO_OFFLINE_SERVICE_SRC |
-                                          PARSO_OFFLINE_SERVICE_LOUDNESS)) !=
-            (PARSO_OFFLINE_SERVICE_SRC | PARSO_OFFLINE_SERVICE_LOUDNESS) ||
+                                          PARSO_OFFLINE_SERVICE_LOUDNESS |
+                                          PARSO_OFFLINE_SERVICE_ANALYSIS)) !=
+            (PARSO_OFFLINE_SERVICE_SRC | PARSO_OFFLINE_SERVICE_LOUDNESS |
+             PARSO_OFFLINE_SERVICE_ANALYSIS) ||
         !require_ok(parso_pcm_buffer_init(&input), "input init") ||
         !require_ok(parso_pcm_buffer_init(&converted), "converted init") ||
         !require_ok(parso_src_options_init(&src_options), "SRC options init") ||
         !require_ok(parso_loudness_options_init(&loudness_options), "loudness options init") ||
-        !require_ok(parso_loudness_result_init(&loudness), "loudness result init")) return 1;
+        !require_ok(parso_loudness_result_init(&loudness), "loudness result init") ||
+        !require_ok(parso_analysis_options_init(&analysis_options), "analysis options init") ||
+        !require_ok(parso_analysis_result_init(&analysis), "analysis result init")) return 1;
 
     input.samples = samples;
     input.frames = frames;
@@ -52,6 +63,22 @@ int main(void) {
         (loudness.gain_to_target_db -
              (loudness_options.target_lufs - loudness.integrated_lufs)) < -1.0e-9) {
         fprintf(stderr, "public_c_services_consumer: invalid service result\n");
+        parso_pcm_buffer_release(&converted);
+        input.samples = NULL;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+
+    parso_pcm_buffer_t analysis_input = {
+        .size = sizeof(parso_pcm_buffer_t), .abi_version = PARSO_ABI_VERSION,
+        .samples = click_track, .frames = analysis_frames,
+        .channel_count = 1, .sample_rate_hz = 48000
+    };
+    if (!require_ok(parso_analysis_measure(&analysis_input, &analysis_options, &analysis),
+                    "analysis measure") || analysis.bpm < 118.0 || analysis.bpm > 122.0 ||
+        analysis.bpm_confidence < 0.5) {
+        fprintf(stderr, "public_c_services_consumer: invalid analysis result bpm=%f confidence=%f\n",
+                analysis.bpm, analysis.bpm_confidence);
         parso_pcm_buffer_release(&converted);
         input.samples = NULL;
         parso_pcm_buffer_release(&input);

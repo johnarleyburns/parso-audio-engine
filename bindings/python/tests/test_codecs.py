@@ -60,6 +60,17 @@ class CodecServicesTests(unittest.TestCase):
         self.assertTrue(math.isfinite(result.integrated_lufs))
         self.assertTrue(math.isfinite(result.true_peak_dbtp))
 
+    def test_analysis_tempo_summary(self) -> None:
+        samples = [0.0] * (48_000 * 8)
+        for beat in range(0, len(samples), 24_000):
+            samples[beat:beat + 128] = [1.0] * 128
+        result = self.audio.analyze(samples, 48_000, 1)
+        self.assertAlmostEqual(result.duration_seconds, 8.0, places=6)
+        self.assertGreater(result.peak, 0.99)
+        self.assertGreater(result.bpm_confidence, 0.5)
+        self.assertGreater(result.bpm, 118.0)
+        self.assertLess(result.bpm, 122.0)
+
     def test_real_ogg_fixture_decode(self) -> None:
         fixture = Path(__file__).parents[3] / "Tests" / "Fixtures" / "audio" / "audial_waking_up.ogg"
         if not fixture.exists():

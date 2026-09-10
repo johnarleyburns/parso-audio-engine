@@ -14,6 +14,9 @@ var decoded = CodecServices.Decode(encoded, AudioCodec.OggVorbis);
 if (decoded.ChannelCount != 1 || decoded.SampleRateHz != 48_000 || decoded.Frames == 0 ||
     (ulong)decoded.Samples.Length != decoded.Frames)
     throw new InvalidOperationException("C# native consumer received invalid Vorbis PCM.");
+var analysis = CodecServices.Analyze(tone, 48_000, 1);
+if (analysis.DurationSeconds <= 0.0 || analysis.Peak <= 0.0)
+    throw new InvalidOperationException("C# native consumer received invalid analysis summary.");
 
 using var engine = Engine.Create(maxFrames: 256);
 var left = new float[256];
