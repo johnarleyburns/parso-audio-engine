@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace ParsoAudioSharp;
@@ -262,11 +263,14 @@ public sealed class Engine : IDisposable
 {
     private readonly NativeEngineHandle handle;
     private readonly uint maxFrames;
+    private readonly uint deckCount;
+    private readonly Dictionary<uint, PinnedDeckBuffer> deckBuffers = new();
 
-    private Engine(NativeEngineHandle handle, uint maxFrames)
+    private Engine(NativeEngineHandle handle, uint maxFrames, uint deckCount)
     {
         this.handle = handle;
         this.maxFrames = maxFrames;
+        this.deckCount = deckCount;
     }
 
     /// <summary>Creates a native engine with the requested render configuration.</summary>
@@ -279,7 +283,7 @@ public sealed class Engine : IDisposable
         var options = NativeMethods.DefaultOptions(sampleRateHz, maxFrames, deckCount);
         var status = NativeMethods.Create(ref options, out var nativeHandle);
         ThrowIfFailed(status, "engine creation");
-        return new Engine(new NativeEngineHandle(nativeHandle), maxFrames);
+        return new Engine(new NativeEngineHandle(nativeHandle), maxFrames, deckCount);
     }
 
     /// <summary>Sets the master output level used by subsequent renders.</summary>
@@ -290,6 +294,58 @@ public sealed class Engine : IDisposable
         control.MasterLevel = level;
         var status = NativeMethods.SetControl(handle, ref control);
         ThrowIfFailed(status, "setting control");
+    }
+
+    /// <summary>Copies interleaved PCM into pinned planar storage retained by the engine.</summary>
+    /// <param name="samples">Interleaved float32 PCM copied before returning.</param>
+    /// <param name="sampleRateHz">The source sample rate.</param>
+    /// <param name="channelCount">The number of channels, one or two.</param>
+    /// <param name="deck">The zero-based destination deck.</param>
+    public void SetDeckBuffer(ReadOnlySpan<float> samples, uint sampleRateHz,
+                              uint channelCount, uint deck)
+    {
+        if (deck >= deckCount || samples.Length == 0 || channelCount is < 1 or > 2 ||
+            sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("invalid deck PCM format");
+
+        var replacement = new PinnedDeckBuffer(samples, channelCount);
+        var view = new NativeMethods.PcmView
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.PcmView>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Planes = replacement.PlanesPointer,
+            Frames = checked((ulong)(samples.Length / (int)channelCount)),
+            ChannelCount = channelCount,
+            SampleRateHz = sampleRateHz
+        };
+        var status = NativeMethods.SetDeckBuffer(handle, deck, ref view);
+        if (status != NativeMethods.Ok)
+        {
+            replacement.Dispose();
+            ThrowIfFailed(status, "setting deck buffer");
+        }
+        if (deckBuffers.Remove(deck, out var previous)) previous.Dispose();
+        deckBuffers.Add(deck, replacement);
+    }
+
+    /// <summary>Queues the portable play command for a deck.</summary>
+    public void Play(uint deck) => PostTransportCommand(deck, NativeMethods.PlayCommand);
+
+    /// <summary>Queues the portable pause command for a deck.</summary>
+    public void Pause(uint deck) => PostTransportCommand(deck, NativeMethods.PauseCommand);
+
+    private void PostTransportCommand(uint deck, uint commandType)
+    {
+        if (deck >= deckCount) throw new ArgumentOutOfRangeException(nameof(deck));
+        var command = new NativeMethods.Command
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.Command>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Type = commandType,
+            Deck = checked((int)deck)
+        };
+        var status = NativeMethods.PostCommand(handle, ref command);
+        ThrowIfFailed(status, "posting transport command");
     }
 
     /// <summary>Renders one block of non-interleaved stereo output into caller-owned spans.</summary>
@@ -385,12 +441,50 @@ public sealed class Engine : IDisposable
     public void Dispose()
     {
         handle.Dispose();
+        foreach (var buffer in deckBuffers.Values) buffer.Dispose();
+        deckBuffers.Clear();
         GC.SuppressFinalize(this);
     }
 
     private static void ThrowIfFailed(int status, string operation)
     {
         if (status != NativeMethods.Ok) throw new ParsoException(status, operation);
+    }
+}
+
+internal sealed class PinnedDeckBuffer : IDisposable
+{
+    private readonly GCHandle leftHandle;
+    private readonly GCHandle rightHandle;
+    private readonly GCHandle planesHandle;
+
+    internal PinnedDeckBuffer(ReadOnlySpan<float> samples, uint channelCount)
+    {
+        var left = new float[samples.Length / (int)channelCount];
+        var right = new float[left.Length];
+        for (var index = 0; index < left.Length; index++)
+        {
+            left[index] = samples[index * (int)channelCount];
+            right[index] = channelCount == 1
+                ? left[index]
+                : samples[index * (int)channelCount + 1];
+        }
+        var planes = new nint[] { 0, 0 };
+        leftHandle = GCHandle.Alloc(left, GCHandleType.Pinned);
+        rightHandle = GCHandle.Alloc(right, GCHandleType.Pinned);
+        planes[0] = leftHandle.AddrOfPinnedObject();
+        planes[1] = rightHandle.AddrOfPinnedObject();
+        planesHandle = GCHandle.Alloc(planes, GCHandleType.Pinned);
+        PlanesPointer = planesHandle.AddrOfPinnedObject();
+    }
+
+    internal nint PlanesPointer { get; }
+
+    public void Dispose()
+    {
+        if (planesHandle.IsAllocated) planesHandle.Free();
+        if (rightHandle.IsAllocated) rightHandle.Free();
+        if (leftHandle.IsAllocated) leftHandle.Free();
     }
 }
 
@@ -418,6 +512,8 @@ internal static unsafe partial class NativeMethods
     internal const int Ok = 0;
     internal const int InvalidArgument = -1;
     internal const uint AbiVersion = 1;
+    internal const uint PlayCommand = 0;
+    internal const uint PauseCommand = 1;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct Capabilities
@@ -508,6 +604,31 @@ internal static unsafe partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct PcmView
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal nint Planes;
+        internal ulong Frames;
+        internal uint ChannelCount;
+        internal uint SampleRateHz;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Command
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint Type;
+        internal int Deck;
+        internal int I0;
+        internal int I1;
+        internal int I2;
+        internal float F0;
+        internal float F1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct Stats
     {
         internal uint Size;
@@ -580,6 +701,12 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport("parso", EntryPoint = "parso_engine_set_control")]
     internal static partial int SetControl(NativeEngineHandle engine, ref Control control);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_set_deck_buffer")]
+    internal static partial int SetDeckBuffer(NativeEngineHandle engine, uint deck, ref PcmView view);
+
+    [LibraryImport("parso", EntryPoint = "parso_engine_post_command")]
+    internal static partial int PostCommand(NativeEngineHandle engine, ref Command command);
 
     [LibraryImport("parso", EntryPoint = "parso_engine_render")]
     internal static partial int Render(NativeEngineHandle engine, ref OutputView output);
