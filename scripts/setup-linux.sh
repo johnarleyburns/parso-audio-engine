@@ -336,7 +336,7 @@ build_windows_cross() {
     log "Cross-building Windows GNU ABI targets"
     cmake -S "$REPO_ROOT" -B "$WINDOWS_BUILD_DIR" -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$REPO_ROOT/cmake/toolchains/windows-mingw-x86_64.cmake" \
-        -DPARSO_BUILD_TESTS=OFF \
+        -DPARSO_BUILD_TESTS=ON \
         -DPARSO_BUILD_SHARED_API=ON \
         -DCMAKE_BUILD_TYPE=Release
     cmake --build "$WINDOWS_BUILD_DIR" --parallel
@@ -346,6 +346,10 @@ build_windows_cross() {
         windows_library="$WINDOWS_BUILD_DIR/libparso.dll"
     fi
     [ -f "$windows_library" ] || die "cross-build did not produce parso.dll or libparso.dll"
+    [ -f "$WINDOWS_BUILD_DIR/parso_public_c_consumer.exe" ] || \
+        die "cross-build did not produce the public C consumer"
+    [ -f "$WINDOWS_BUILD_DIR/parso_public_cpp_consumer.exe" ] || \
+        die "cross-build did not produce the public C++ consumer"
     file "$windows_library" 2>/dev/null || true
 }
 

@@ -120,6 +120,16 @@ feed (including Ubuntu 26.04, where Microsoft's feed no longer publishes .NET pa
 Microsoft's package repository as the fallback.
 Native Windows/MSVC validation remains in GitHub Actions and `scripts/setup-windows.ps1`.
 
+Linux CI also installs Swift 6 for a portable Swift smoke lane. It directly compiles and runs the
+framework-free shared streaming/playback policy types; the complete SwiftPM package remains an
+Apple-framework package and is built/tested on macOS. The Linux MinGW lane builds the shared DLL
+and the public C11/C++17 consumer executables but does not execute Windows binaries; execution is
+covered by the native Windows CI job.
+
+CI treats first-party Swift, C, C++, and C# warnings as errors where the platform toolchain
+supports that setting. Vendored headers remain unmodified and are isolated with narrow system-include
+boundaries when their upstream diagnostics would otherwise be reported by strict builds.
+
 On Windows 10/11, run an elevated PowerShell prompt:
 
 ```powershell

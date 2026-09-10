@@ -15,13 +15,25 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Treat first-party native warnings as errors in every C/C++ target, including
+# the standalone consumers. Vendored Signalsmith headers are marked SYSTEM on
+# the DSP target below so their unchanged upstream diagnostics do not weaken
+# this policy.
+if(MSVC)
+    add_compile_options(/W4 /WX)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+endif()
+
 add_library(CParsoDSP STATIC
     Sources/CParsoDSP/src/parso_dsp_stub.cpp
 )
 target_include_directories(CParsoDSP
     PUBLIC Sources/CParsoDSP/include
-    PRIVATE Sources/CParsoDSP/vendor/signalsmith
-            Sources/CParsoDSP/src
+    PRIVATE Sources/CParsoDSP/src
+)
+target_include_directories(CParsoDSP SYSTEM PRIVATE
+    Sources/CParsoDSP/vendor/signalsmith
 )
 
 # Signalsmith has a portable implementation. Accelerate remains an Apple-only
@@ -67,18 +79,6 @@ if(PARSO_BUILD_SHARED_API)
     )
     target_link_libraries(ParsoAPI PRIVATE CParsoEngine)
     set_target_properties(ParsoAPI PROPERTIES OUTPUT_NAME parso)
-endif()
-
-if(MSVC)
-    target_compile_options(CParsoDSP PRIVATE /W4)
-    target_compile_options(CParsoEngine PRIVATE /W4)
-else()
-    target_compile_options(CParsoDSP PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(CParsoEngine PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(CParsoAPI PRIVATE -Wall -Wextra -Wpedantic)
-    if(PARSO_BUILD_SHARED_API)
-        target_compile_options(ParsoAPI PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
 endif()
 
 include(CTest)

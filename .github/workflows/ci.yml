@@ -52,14 +52,14 @@ jobs:
           done
           echo "::error::The complete $expected_fixture_count-fixture corpus was not downloaded"
           exit 1
-      - name: Build
-        run: swift build -c release -v
+      - name: Build with warnings as errors
+        run: swift build -c release -v -Xswiftc -warnings-as-errors
       - name: Unit tests (synthetic and real fixtures)
         # Release build: the debug scalar-FFT path in TempoEstimator makes the
         # real-fixture analysis suite take ~1h45m on CI runners (see
         # current_status.md); in release the full suite is minutes. Debug
         # compilation is still covered by the iOS/watchOS xcodebuild jobs.
-        run: swift test -c release -v
+        run: swift test -c release -v -Xswiftc -warnings-as-errors
       - name: Validate repository scripts and whitespace
         run: |
           bash -n scripts/setup-linux.sh
@@ -77,6 +77,21 @@ jobs:
           cmake --build build-native --parallel
       - name: Test native CMake targets
         run: ctest --test-dir build-native --output-on-failure
+      - name: Set up Swift for portable Linux smoke
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Build and run portable Swift smoke with warnings as errors
+        run: |
+          swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
+            Sources/ParsoAudioStreaming/ByteRangeMap.swift \
+            Sources/ParsoAudioStreaming/CachePolicies.swift \
+            Sources/ParsoAudioStreaming/RemoteStreamingResponsePolicy.swift \
+            Sources/ParsoAudioPlayback/GraphicEQ.swift \
+            Sources/ParsoAudioPlayback/Normalization.swift \
+            Tests/PortableSwift/LinuxPortableSmoke.swift \
+            -o /tmp/parso-linux-swift-smoke
+          /tmp/parso-linux-swift-smoke
 
   build-native-linux:
     runs-on: ubuntu-24.04
@@ -100,12 +115,14 @@ jobs:
         run: |
           cmake -S . -B build-windows-cross -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/windows-mingw-x86_64.cmake \
-            -DPARSO_BUILD_TESTS=OFF \
+            -DPARSO_BUILD_TESTS=ON \
             -DPARSO_BUILD_SHARED_API=ON \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-windows-cross --parallel
           test -f build-windows-cross/libparso.dll || test -f build-windows-cross/parso.dll
           file build-windows-cross/libparso.dll 2>/dev/null || file build-windows-cross/parso.dll
+          test -f build-windows-cross/parso_public_c_consumer.exe
+          test -f build-windows-cross/parso_public_cpp_consumer.exe
       - name: Set up .NET for Windows-targeted C# compilation
         uses: actions/setup-dotnet@v4
         with:
@@ -135,7 +152,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Build C# native consumer
-        run: dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release
+        run: |
+          dotnet build Bindings/ParsoAudioSharp/ParsoAudioSharp.csproj --configuration Release --warnaserror
+          dotnet build Bindings/ParsoAudioSharp.Consumer/ParsoAudioSharp.Consumer.csproj --configuration Release --warnaserror
       - name: Run C# native consumer
         shell: pwsh
         run: |
@@ -158,6 +177,8 @@ jobs:
         run: |
           xcodebuild -scheme parso-audio-engine-Package \
             -destination 'generic/platform=watchOS Simulator' \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             -skipPackagePluginValidation build
 
   build-ios:
@@ -176,6 +197,8 @@ jobs:
         run: |
           xcodebuild -scheme parso-audio-engine-Package \
             -destination 'generic/platform=iOS Simulator' \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             -skipPackagePluginValidation build
       - name: Cache acceptance-tool build
         uses: actions/cache@v4
