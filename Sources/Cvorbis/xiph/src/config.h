@@ -4,7 +4,10 @@
 #ifndef PARSO_XIPH_VORBIS_CONFIG_H
 #define PARSO_XIPH_VORBIS_CONFIG_H
 
+/* Windows toolchains provide alloca through malloc.h, not alloca.h. */
+#if !defined(_WIN32)
 #define HAVE_ALLOCA_H 1
+#endif
 #define HAVE_MEMCPY 1
 #define HAVE_MEMORY_H 1
 #define HAVE_STDINT_H 1

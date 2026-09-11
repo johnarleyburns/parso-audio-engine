@@ -122,6 +122,13 @@ if(NOT MSVC)
         target_compile_options(Cebur128 PRIVATE -Wno-cpp -Wno-pedantic)
     endif()
 endif()
+if(MINGW)
+    # MinGW does not ship the BSD <sys/queue.h> header used by libebur128.
+    # Keep the compatibility header first-party and outside the vendored tree.
+    target_include_directories(Cebur128 PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cebur128/compat"
+    )
+endif()
 set_target_properties(Cebur128 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(PARSO_BUILD_CODEC_BRIDGES)
@@ -164,6 +171,14 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         # a pedantic error. Keep the exception on the unchanged vendor target.
         target_compile_options(Cflac PRIVATE -Wno-pedantic)
     endif()
+    if(WIN32)
+        # The 1.4.3 headers select UTF-8-aware Windows file wrappers, but the
+        # source drop omits their implementation. Keep that compatibility code
+        # first-party and outside the vendored tree.
+        target_sources(Cflac PRIVATE
+            Sources/CflacCompat/src/win_utf8_io.c
+        )
+    endif()
     if(UNIX)
         target_link_libraries(Cflac PUBLIC m)
     endif()
@@ -174,6 +189,7 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CflacBridge/include>
         $<INSTALL_INTERFACE:include>
     )
+    target_compile_definitions(CflacBridge PRIVATE FLAC__NO_DLL)
     target_link_libraries(CflacBridge PUBLIC Cflac)
     set_target_properties(CflacBridge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -313,6 +329,9 @@ if(PARSO_BUILD_CODEC_BRIDGES)
             -Wno-unused-but-set-variable
             -Wno-unused-function
         )
+    endif()
+    if(WIN32)
+        target_compile_definitions(CGlint PRIVATE _USE_MATH_DEFINES)
     endif()
     if(UNIX)
         target_link_libraries(CGlint PUBLIC m)
