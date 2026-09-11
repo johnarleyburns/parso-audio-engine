@@ -184,6 +184,12 @@ idempotent. `Bindings/ParsoAudioAndroid` now builds a release AAR containing the
 output, capture, audio focus, and route-change behavior remain required before Android support can
 be advertised.
 
+The Android preview now also exposes `ParsoAnalysis` summary/key/structure calls over borrowed direct
+buffers, `ParsoVorbis` Xiph encode/decode with copied PCM ownership, `ParsoOffline` SRC/loudness
+services, and `ParsoEngine`'s bounded record tap. These surfaces compile through the local Maven AAR
+and an external application consumer; instrumentation covers the native calls but emulator/device
+execution and performance remain hosted gates.
+
 Gate: JVM API/lifetime tests, the external AAR consumer build, JNI instrumentation compilation, and
 16 KB page-size validation now pass locally and in CI. Instrumentation execution, emulator behavior,
 and real-device playback/capture/route-change/underrun tests remain. Emulator tests do not establish
