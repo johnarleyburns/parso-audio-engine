@@ -18,6 +18,10 @@ internal interface NativeEngineBridge {
     fun play(handle: Long, deck: Int): Boolean
     fun pause(handle: Long, deck: Int): Boolean
     fun setMix(handle: Long, crossfader: Float, masterLevel: Float): Boolean
+    fun postCommand(
+        handle: Long, type: Int, deck: Int,
+        i0: Int, i1: Int, i2: Int, f0: Float, f1: Float,
+    ): Boolean
     fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int
     fun setRecordActive(handle: Long, active: Boolean): Boolean
     fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int
@@ -49,6 +53,11 @@ private object JniEngineBridge : NativeEngineBridge {
 
     override fun setMix(handle: Long, crossfader: Float, masterLevel: Float): Boolean =
         ParsoNative.nativeSetMix(handle, crossfader, masterLevel)
+
+    override fun postCommand(
+        handle: Long, type: Int, deck: Int,
+        i0: Int, i1: Int, i2: Int, f0: Float, f1: Float,
+    ): Boolean = ParsoNative.nativePostCommand(handle, type, deck, i0, i1, i2, f0, f1)
 
     override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int =
         ParsoNative.nativeRender(handle, left, right, frames)
@@ -148,6 +157,23 @@ class ParsoEngine private constructor(
         }
     }
 
+    /** Queue one of the shared transport/loop commands on the control thread. */
+    fun postCommand(
+        command: EngineCommand,
+        deck: Int = 0,
+        i0: Int = 0,
+        i1: Int = 0,
+        i2: Int = 0,
+        f0: Float = 0.0f,
+        f1: Float = 0.0f,
+    ) {
+        require(deck in 0 until deckCount) { "deck is out of range" }
+        require(f0.isFinite() && f1.isFinite()) { "command values must be finite" }
+        check(native.postCommand(requireOpen(), command.value, deck, i0, i1, i2, f0, f1)) {
+            "native command was rejected"
+        }
+    }
+
     /** Fill caller-owned stereo direct buffers and return the rendered frame count. */
     fun render(left: ByteBuffer, right: ByteBuffer, frames: Int): Int {
         val handle = requireOpen()
@@ -222,4 +248,24 @@ class ParsoEngine private constructor(
             native: NativeEngineBridge,
         ): ParsoEngine = ParsoEngine(sampleRateHz, maxFrames, deckCount, native)
     }
+}
+
+/** Commands supported by the Android preview over the versioned native ABI. */
+enum class EngineCommand(val value: Int) {
+    SET_CUE(2),
+    JUMP_CUE(3),
+    HOTCUE_SET(4),
+    HOTCUE_JUMP(5),
+    HOTCUE_DELETE(6),
+    LOOP_IN(7),
+    LOOP_OUT(8),
+    RELOOP_EXIT(9),
+    SET_LOOP(13),
+    SET_LOOP_ACTIVE(14),
+    SYNC(16),
+    SET_MASTER(17),
+    SET_KEYLOCK(18),
+    SET_SLIP(19),
+    SEEK(23),
+    UNSYNC(24),
 }

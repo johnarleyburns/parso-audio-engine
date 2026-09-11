@@ -135,6 +135,26 @@ JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativeSetMix(
         ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativePostCommand(
+    JNIEnv *, jclass, jlong handle, jint type, jint deck,
+    jint i0, jint i1, jint i2, jfloat f0, jfloat f1
+) {
+    parso_engine_t *engine = fromHandle(handle);
+    if (!engine || type < 0 || type > static_cast<jint>(PARSO_COMMAND_LOAD) ||
+        deck < 0 || deck >= 4) return JNI_FALSE;
+    parso_command_t command{};
+    if (parso_command_init(&command) != PARSO_STATUS_OK) return JNI_FALSE;
+    command.type = static_cast<uint32_t>(type);
+    command.deck = deck;
+    command.i0 = i0;
+    command.i1 = i1;
+    command.i2 = i2;
+    command.f0 = f0;
+    command.f1 = f1;
+    return parso_engine_post_command(engine, &command) == PARSO_STATUS_OK
+        ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRender(
     JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint frames
 ) {

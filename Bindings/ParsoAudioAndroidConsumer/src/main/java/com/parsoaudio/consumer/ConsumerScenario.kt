@@ -4,6 +4,7 @@ import com.parsoaudio.ParsoAnalysis
 import com.parsoaudio.ParsoEngine
 import com.parsoaudio.ParsoOffline
 import com.parsoaudio.ParsoVorbis
+import com.parsoaudio.EngineCommand
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -39,6 +40,7 @@ object ConsumerScenario {
         ParsoEngine(maxFrames = RENDER_FRAMES).use { engine ->
             engine.setDeckBuffer(0, monoPlane(ANALYSIS_FRAMES), monoPlane(ANALYSIS_FRAMES), ANALYSIS_FRAMES)
             engine.setMix(-1.0f, 0.9f)
+            engine.postCommand(EngineCommand.SET_KEYLOCK, f0 = 1.0f)
             engine.setRecordActive(true)
             engine.play(0)
             rendered = engine.render(renderLeft, renderRight, RENDER_FRAMES)

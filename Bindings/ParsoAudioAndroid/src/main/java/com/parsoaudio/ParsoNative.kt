@@ -20,6 +20,10 @@ object ParsoNative {
     @JvmStatic external fun nativeSetMix(
         handle: Long, crossfader: Float, masterLevel: Float
     ): Boolean
+    @JvmStatic external fun nativePostCommand(
+        handle: Long, type: Int, deck: Int,
+        i0: Int, i1: Int, i2: Int, f0: Float, f1: Float
+    ): Boolean
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int
     ): Int

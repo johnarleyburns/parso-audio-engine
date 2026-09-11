@@ -20,6 +20,7 @@ class ParsoEngineInstrumentationTest {
             engine.play(0)
             engine.pause(0)
             engine.setMix(1.0f, 0.8f)
+            engine.postCommand(EngineCommand.SET_KEYLOCK, f0 = 1.0f)
             engine.setRecordActive(true)
             assertEquals(frames, engine.render(left, right, frames))
             assertEquals(frames, engine.drainRecord(left, right, frames))

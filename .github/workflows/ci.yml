@@ -199,6 +199,7 @@ jobs:
             --symbol Java_com_parsoaudio_ParsoNative_nativePlay \
             --symbol Java_com_parsoaudio_ParsoNative_nativePause \
             --symbol Java_com_parsoaudio_ParsoNative_nativeSetMix \
+            --symbol Java_com_parsoaudio_ParsoNative_nativePostCommand \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRender \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRecordSetActive \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRecordDrain \

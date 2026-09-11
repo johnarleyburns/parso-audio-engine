@@ -42,10 +42,14 @@ class ParsoEngineTest {
         engine.play(0)
         engine.pause(0)
         engine.setMix(-1.0f, 0.75f)
+        engine.postCommand(EngineCommand.LOOP_IN, f0 = 1.0f)
         engine.close()
         engine.close()
 
-        assertEquals(listOf("play:0", "pause:0", "mix:-1.0:0.75"), bridge.operations)
+        assertEquals(
+            listOf("play:0", "pause:0", "mix:-1.0:0.75", "command:7:0:1.0:0.0"),
+            bridge.operations,
+        )
         assertEquals(1, bridge.destroyCount)
     }
 
@@ -124,6 +128,14 @@ class ParsoEngineTest {
 
         override fun setMix(handle: Long, crossfader: Float, masterLevel: Float): Boolean {
             operations += "mix:$crossfader:$masterLevel"
+            return true
+        }
+
+        override fun postCommand(
+            handle: Long, type: Int, deck: Int,
+            i0: Int, i1: Int, i2: Int, f0: Float, f1: Float,
+        ): Boolean {
+            operations += "command:$type:$deck:$f0:$f1"
             return true
         }
 
