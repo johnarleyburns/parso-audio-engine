@@ -15,14 +15,20 @@ with CodecServices("/path/to/libparso.so") as audio:
 
 This initial package covers synchronous offline codec, sample-rate conversion,
 loudness, and bounded headless rendering services. `Engine.set_crossfader(position)`
-publishes an A/B mixer snapshot with a bounded position in `[-1, 1]`; the
-acceptance renderer can exercise the same two-deck timeline as the native runner:
+publishes an A/B mixer snapshot with a bounded position in `[-1, 1]`. The Linux
+acceptance renderer can load real MP3 fixtures into both decks:
 
 ```bash
+./scripts/download-fixtures.sh
 python3 bindings/python/examples/render_acceptance.py \
   --library build-native/libparso.so \
   --scenario crossfader-sweep \
-  --output-dir /tmp/parso-python-crossfader
+  --output-dir /tmp/parso-python-music \
+  --seconds 30 \
+  --input-mp3-a Tests/Fixtures/audio/gostreyshen_world.mp3 \
+  --input-mp3-b Tests/Fixtures/audio/tea_roots_isrc_usuan1100472.mp3 \
+  --fixture-a gostreyshen_world \
+  --fixture-b tea_roots_isrc_usuan1100472
 ```
 
 Device IO remains a platform milestone; analysis, DJ control, and recording are

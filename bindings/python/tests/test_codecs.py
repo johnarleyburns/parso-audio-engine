@@ -14,6 +14,7 @@ from parso_audio import (
     MixRecorder,
     ParsoError,
 )
+from parso_audio.acceptance import mp3_prefix
 
 
 class CodecServicesTests(unittest.TestCase):
@@ -141,6 +142,15 @@ class CodecServicesTests(unittest.TestCase):
         self.assertTrue(math.isfinite(summary.rms))
         self.assertEqual(len(minimum), 32)
         self.assertEqual(len(maximum), 32)
+
+    def test_real_mp3_fixture_prefix_decode(self) -> None:
+        fixture = Path(__file__).parents[3] / "Tests" / "Fixtures" / "audio" / "gostreyshen_world.mp3"
+        if not fixture.exists():
+            self.skipTest("fixture corpus is unavailable")
+        encoded = mp3_prefix(fixture.read_bytes(), 30.0)
+        decoded = self.audio.decode(encoded, AudioCodec.MP3)
+        self.assertGreater(decoded.frames / decoded.sample_rate_hz, 30.0)
+        self.assertEqual(decoded.channel_count, 2)
 
     def test_close_is_idempotent_and_rejects_calls(self) -> None:
         service = CodecServices(self.library)

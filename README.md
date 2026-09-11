@@ -142,9 +142,11 @@ AAC. ALAC, AIFF, and CAF remain unset until their native gates pass. Independent
 exercise the PCM, SRC, and loudness contracts through `ctest`.
 
 The native acceptance target `parso_native_acceptance_artifacts` renders a 30-second headless
-artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. It is a
-framework-free Linux starting point for the human-listening gate; full fixture analysis and DJ
-scenario coverage remain pending.
+artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. The Linux
+human-listening runner uses the downloaded `gostreyshen_world.mp3` and
+`tea_roots_isrc_usuan1100472.mp3` fixtures as its two decks, then compares native and Python
+renders of the crossfader timeline. The generated-tone target remains a deterministic CTest smoke
+path; see [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md) for the music gate.
 
 The dependency-free Linux host-callback example is built as `parso_linux_host_callback` and
 covered by CTest. Run it with an optional output path to produce a stereo WAV:

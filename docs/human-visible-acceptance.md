@@ -48,22 +48,42 @@ points. The video uses the first 30 seconds by default; set `--max-seconds 0` to
 track. The analysis itself runs on the complete source track before the visible clip is selected,
 except that the `phrase` scenario also keeps the complete source visible for phrase review.
 
-## Linux native headless artifact
+## Linux native music artifact
 
 The framework-free native acceptance seam can be built and run on Linux while the
-Swift analyzer remains Apple-only:
+Swift analyzer remains Apple-only. The deterministic CTest tone remains available
+as a smoke test, but the human-listening gate uses the downloaded real MP3 fixtures:
 
-```bash
-cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-native --target parso_native_acceptance_artifacts
-./build-native/parso_native_acceptance_artifacts \
-  --output-dir /tmp/parso-native-acceptance --seconds 30 \
-  --scenario native-headless-tone
+```text
+Deck A: Tests/Fixtures/audio/gostreyshen_world.mp3
+Deck B: Tests/Fixtures/audio/tea_roots_isrc_usuan1100472.mp3
 ```
 
-This produces `native-headless-tone.wav` and its JSON duration/event sidecar
-from the public C ABI and shared engine. It is an initial render/codec smoke
-artifact; fixture analysis and the full scenario matrix remain pending.
+Run the complete native/Python music gate with:
+
+```bash
+./scripts/download-fixtures.sh
+cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+python3 scripts/run-linux-acceptance.py \
+  --build-dir build-native \
+  --fixture-a gostreyshen_world \
+  --fixture-b tea_roots_isrc_usuan1100472 \
+  --output-dir /tmp/parso-linux-music-review
+```
+
+The runner decodes the first 32 seconds of each real MP3 through the portable
+codec path, loads them into the two native-engine decks, sweeps the crossfader
+for 30 seconds, and repeats the same timeline through Python. It writes native
+and Python WAVs plus JSON sidecars that identify both source MP3 paths.
+
+The generated review WAVs can be played directly through PipeWire:
+
+```bash
+pw-play --volume 0.5 \
+  /tmp/parso-linux-music-review/native/native-crossfader-sweep.wav
+pw-play --volume 0.5 \
+  /tmp/parso-linux-music-review/python/python-crossfader-sweep.wav
+```
 
 Index generated Linux artifacts before review so the files, native commit, format, duration, and
 human status are recorded together:
@@ -79,13 +99,16 @@ duration mismatches. Every valid artifact starts with `reviewStatus: "pending"`;
 listening pass should change that field in a review copy. Generated manifests and media remain
 outside the repository.
 
-The first engine-control review timeline renders two resident decks and sweeps the crossfader over
-the full 30 seconds:
+The lower-level native command is also available when testing a different pair of
+MP3 files:
 
 ```bash
 ./build-native/parso_native_acceptance_artifacts \
   --output-dir /tmp/parso-crossfader-acceptance --seconds 30 \
-  --scenario crossfader-sweep
+  --scenario crossfader-sweep \
+  --input-mp3-a Tests/Fixtures/audio/gostreyshen_world.mp3 \
+  --input-mp3-b Tests/Fixtures/audio/tea_roots_isrc_usuan1100472.mp3 \
+  --fixture-a gostreyshen_world --fixture-b tea_roots_isrc_usuan1100472
 python3 scripts/index-linux-acceptance.py \
   --root /tmp/parso-crossfader-acceptance \
   --output /tmp/parso-crossfader-acceptance/manifest.json
@@ -119,11 +142,10 @@ It builds the native acceptance executable, renders native and Python artifacts,
 
 The waveform is multi-colored by measured frequency energy: blue is low-band, green is mid-band,
 and red is high-band; brightness follows the bucket's peak/RMS intensity. Yellow markers are
-downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. Section
-labels use the analyzer's current best-effort classifications (`intro`,
-`buildup`, `drop`, `verse`, `chorus`, `breakdown`, and `outro`). A generated artifact is an
-acceptance aid, not ground truth: verify questionable phrases by listening and record verified
-values in the fixture ledger.
+downbeats; blue markers are ordinary beats; magenta ticks are engine control events; the white line is the synchronized playhead. The music artifact is an
+acceptance aid, not ground truth: verify audible crossfader behavior and record review status in
+a copy of the manifest. The runner's comparator remains a deterministic parity check, not a
+substitute for listening.
 
 ## Stem separation and CLAP semantic search (Phase 7b/7c)
 
