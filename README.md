@@ -170,8 +170,9 @@ adapter. It launches `pw-cat` workers around the same public callback contract, 
 off the engine render call, supports independent master/monitor/booth targets, and can drain the
 native record tap to WAV. The adapter does not link PipeWire or ALSA into `libparso`; install
 `pipewire-bin` with `scripts/setup-linux.sh` and see [`docs/linux-device-backend.md`](docs/linux-device-backend.md)
-for target discovery and routing. CI uses `--no-device`; route restart and human listening still
-require named Linux hardware.
+for target discovery and routing. CI uses `--no-device`; named-route restart recording can be
+reviewed with [`scripts/run-linux-route-restart-acceptance.py`](scripts/run-linux-route-restart-acceptance.py),
+while physical hot-unplug/latency and human listening still require named Linux hardware.
 
 This currently exercises the shared C++ headless render core, including an allocator-instrumented variable-block RT smoke test, and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also

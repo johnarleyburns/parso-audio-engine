@@ -230,13 +230,16 @@ checks pass on the maintainer Linux host.
 
 The adapter now retries failed `pw-cat` playback/capture processes against the same target with a
 bounded backoff and has deterministic native smoke coverage for one-shot playback and capture failure.
-Remaining CP5/CP6 evidence is route restart/hot-unplug behavior on named hardware, full scenario
-coverage, and human listening sign-off. Installed C11 and C++17 CMake-package consumers exercise
-render/service lifetimes in addition to the Xiph Vorbis codec round trip.
+The named-route recording runner now performs a 30-second playback/capture session, restarts the
+user PipeWire services, validates the recovered WAV and record counters, and writes the standard
+pending-review manifest. Remaining CP5/CP6 evidence is physical hot-unplug/latency behavior and
+human listening sign-off. Installed C11 and C++17 CMake-package consumers exercise render/service
+lifetimes in addition to the Xiph Vorbis codec round trip.
 
 Gate: clean external C/C++ consumers on Linux x86_64/aarch64, headless parity, and live
-playback/capture acceptance on documented hardware. The host callback and PipeWire adapter are
-implemented; route restart and human review remain explicit acceptance gates.
+playback/capture acceptance on documented hardware. The host callback, PipeWire adapter, and
+named-route recording recovery are implemented; physical hot-unplug/latency and human review
+remain explicit acceptance gates.
 
 ### CP6 — Linux human listening acceptance
 
