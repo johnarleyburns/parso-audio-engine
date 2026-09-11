@@ -35,4 +35,12 @@ object ParsoNative {
         channelCount: Int, bitrateKbps: Int
     ): ByteArray?
     @JvmStatic external fun nativeDecodeOggVorbis(encoded: ByteArray): DecodedVorbis?
+    @JvmStatic external fun nativeConvertSampleRate(
+        samples: ByteBuffer, frames: Int, sourceSampleRateHz: Int,
+        destinationSampleRateHz: Int, channelCount: Int, quality: Int
+    ): FloatArray?
+    @JvmStatic external fun nativeMeasureLoudness(
+        samples: ByteBuffer, frames: Int, sampleRateHz: Int,
+        channelCount: Int, targetLufs: Double
+    ): DoubleArray?
 }

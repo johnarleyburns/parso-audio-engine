@@ -3,6 +3,7 @@
 #include <jni.h>
 
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -284,6 +285,54 @@ JNIEXPORT jobject JNICALL Java_com_parsoaudio_ParsoNative_nativeDecodeOggVorbis(
                                      static_cast<jint>(output.channel_count));
     parso_pcm_buffer_release(&output);
     return decoded;
+}
+
+JNIEXPORT jfloatArray JNICALL Java_com_parsoaudio_ParsoNative_nativeConvertSampleRate(
+    JNIEnv *env, jclass, jobject samples, jint frames, jint sourceSampleRateHz,
+    jint destinationSampleRateHz, jint channelCount, jint quality
+) {
+    parso_pcm_buffer_t input{};
+    if (!makePCMInput(env, samples, frames, sourceSampleRateHz, channelCount, &input) ||
+        destinationSampleRateHz <= 0 || quality < 0 || quality > 2) return nullptr;
+    parso_src_options_t options{};
+    parso_pcm_buffer_t output{};
+    if (parso_src_options_init(&options) != PARSO_STATUS_OK ||
+        parso_pcm_buffer_init(&output) != PARSO_STATUS_OK) return nullptr;
+    options.destination_sample_rate_hz = static_cast<uint32_t>(destinationSampleRateHz);
+    options.quality = static_cast<uint32_t>(quality);
+    if (parso_src_convert(&input, &options, &output) != PARSO_STATUS_OK ||
+        output.frames > static_cast<uint64_t>(std::numeric_limits<jsize>::max()) /
+            output.channel_count) {
+        parso_pcm_buffer_release(&output);
+        return nullptr;
+    }
+    const uint64_t sampleCount = output.frames * output.channel_count;
+    jfloatArray converted = env->NewFloatArray(static_cast<jsize>(sampleCount));
+    if (converted) env->SetFloatArrayRegion(converted, 0, static_cast<jsize>(sampleCount), output.samples);
+    parso_pcm_buffer_release(&output);
+    return converted;
+}
+
+JNIEXPORT jdoubleArray JNICALL Java_com_parsoaudio_ParsoNative_nativeMeasureLoudness(
+    JNIEnv *env, jclass, jobject samples, jint frames, jint sampleRateHz,
+    jint channelCount, jdouble targetLufs
+) {
+    parso_pcm_buffer_t input{};
+    if (!makePCMInput(env, samples, frames, sampleRateHz, channelCount, &input) ||
+        !std::isfinite(targetLufs)) return nullptr;
+    parso_loudness_options_t options{};
+    parso_loudness_result_t result{};
+    if (parso_loudness_options_init(&options) != PARSO_STATUS_OK ||
+        parso_loudness_result_init(&result) != PARSO_STATUS_OK) return nullptr;
+    options.target_lufs = targetLufs;
+    if (parso_loudness_measure(&input, &options, &result) != PARSO_STATUS_OK) return nullptr;
+    const jdouble values[] = {
+        result.integrated_lufs, result.true_peak_dbtp,
+        result.gain_to_target_db, result.loudness_range_lu
+    };
+    jdoubleArray output = env->NewDoubleArray(4);
+    if (output) env->SetDoubleArrayRegion(output, 0, 4, values);
+    return output;
 }
 
 } // extern "C"

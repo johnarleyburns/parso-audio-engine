@@ -28,6 +28,13 @@ class ParsoEngineTest {
     }
 
     @Test
+    fun offlineFacadeRejectsHeapBuffersBeforeLoadingNativeRuntime() {
+        assertThrows<IllegalArgumentException> {
+            ParsoOffline.measureLoudness(ByteBuffer.allocate(32), frames = 8, sampleRateHz = 48_000)
+        }
+    }
+
+    @Test
     fun lifecycleAndTransportAreSerializedThroughTheBridge() {
         val bridge = FakeBridge()
         val engine = ParsoEngine.forTesting(native = bridge)

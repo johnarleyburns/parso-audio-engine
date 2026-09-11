@@ -69,5 +69,11 @@ class ParsoEngineInstrumentationTest {
         assertEquals(1, decoded.channelCount)
         assertTrue(decoded.frames > 0)
         assertEquals(decoded.frames, decoded.samples.size)
+        val loudness = ParsoOffline.measureLoudness(samples, frames, sampleRate)
+        assertTrue(loudness.integratedLufs.isFinite())
+        val converted = ParsoOffline.convertSampleRate(samples, frames, sampleRate, 24_000)
+        assertEquals(24_000, converted.sampleRateHz)
+        assertEquals(1, converted.channelCount)
+        assertTrue(kotlin.math.abs(converted.frames - frames / 2) < 32)
     }
 }
