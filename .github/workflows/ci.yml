@@ -199,6 +199,17 @@ jobs:
             --symbol Java_com_parsoaudio_ParsoNative_nativePlay \
             --symbol Java_com_parsoaudio_ParsoNative_nativePause \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRender \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeRecordSetActive \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeRecordDrain \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeRecordDroppedFrames \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeRecordReset \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeAnalysisSummary \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeKey \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeStructure \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeEncodeOggVorbis \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeDecodeOggVorbis \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeConvertSampleRate \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeMeasureLoudness \
             --output "android-abi-${{ matrix.abi }}.json"
           python3 scripts/check-elf-page-size.py \
             --library "build-android-${{ matrix.abi }}/libparso.so" \
