@@ -47,7 +47,10 @@ shared native transport, with convenience methods for absolute seek, key-lock,
 slip, cues, loops, and hot cues. `poll_events()` drains copied state, playhead,
 peak, and end-of-track notifications from the bounded native event ring.
 `MixRecorder` drains the record tap and encodes supported output formats; full
-DJ parity, device IO, and human listening remain separate acceptance gates.
+DJ parity, device IO, and human listening remain separate acceptance gates. Engine
+native calls are serialized per instance, so control, event polling, rendering, and
+close may be coordinated safely across Python threads; the render callback itself
+remains native and must not call into Python.
 
 `MixRecorder` is a control-side recording helper: call `append_engine` after
 each render block is drained, then `encode()` through the shared native WAV,

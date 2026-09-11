@@ -1,6 +1,7 @@
 import math
 import os
 from pathlib import Path
+import threading
 import unittest
 
 from parso_audio import (
@@ -147,6 +148,29 @@ class CodecServicesTests(unittest.TestCase):
         service.close()
         with self.assertRaises(ParsoError):
             _ = service.capabilities
+
+    def test_engine_serializes_render_and_close(self) -> None:
+        engine = Engine(max_frames=64, library_path=self.library)
+        started = threading.Event()
+        errors = []
+
+        def render_until_close() -> None:
+            started.set()
+            try:
+                for _ in range(256):
+                    engine.render(32)
+            except ParsoError as error:
+                if error.status != -6:
+                    errors.append(error)
+
+        worker = threading.Thread(target=render_until_close)
+        worker.start()
+        self.assertTrue(started.wait(1.0))
+        engine.close()
+        worker.join(2.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        engine.close()
 
     def test_headless_engine_renders_bounded_blocks(self) -> None:
         with Engine(max_frames=256, library_path=self.library) as engine:

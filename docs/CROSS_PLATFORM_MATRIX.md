@@ -25,10 +25,10 @@ Python shares the public C ABI and native implementations listed above. Its rele
 
 | Python surface | Implementation status | Required evidence |
 |---|---|---|
-| Buffers / DSP / headless render | Implemented through stdlib `ctypes`, retained deck storage, and bounded native render | 16 binding tests, host runner, and native/Python crossfader parity report pass |
+| Buffers / DSP / headless render | Implemented through stdlib `ctypes`, retained deck storage, and bounded native render | 19 binding tests, host runner, and native/Python crossfader parity report pass |
 | File IO / SRC / loudness / analysis | Implemented native codec/SRC/loudness/summary/waveform services | Real Ogg/FLAC integration, capability errors, and acceptance sidecars pass |
-| DJ controls / mixing / recording | Implemented transport/cue/loop/hot-cue/slip/keylock/crossfader and record tap surfaces | 16 binding tests plus 30-second crossfader/recording example pass; full DJ parity pending |
-| Ownership / concurrency | Context managers, explicit close, retained buffers, serialized control, off-thread event polling | Repeated close, invalid input/handle, event and record-ring tests pass; cancellation/concurrency stress pending |
+| DJ controls / mixing / recording | Implemented transport/cue/loop/hot-cue/slip/keylock/crossfader and record tap surfaces | 19 binding tests plus 30-second crossfader/recording example pass; full DJ parity pending |
+| Ownership / concurrency | Context managers, explicit close, retained buffers, serialized control/render/close calls, off-thread event polling | Repeated close, invalid input/handle, event, record-ring, and threaded close/render tests pass; cancellation stress pending |
 | Linux playback / capture | Python controls the native Linux backend | Python-driven playback/capture example and device tests; callback runs entirely in native code |
 | Packaging / docs | Pure-Python wheel/source build and documented native-library discovery | Wheel build and ABI/load checks pass; fresh-venv installation remains CI-only pending local pip/venv tooling |
 | Human listening | Audio generated through the Python API with matching native artifacts | 30-second crossfader scenarios, index, native/Python A/B, and pending review manifest pass; human sign-off pending |

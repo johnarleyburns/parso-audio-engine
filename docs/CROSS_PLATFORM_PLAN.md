@@ -126,6 +126,10 @@ The public event ABI now drains the native render-to-control ring without exposi
 types. C++, Python, and C# consumers can observe copied transport/playhead/state/peak notifications
 after a render boundary; the audio callback remains allocation-free and non-blocking.
 
+The Python `Engine` now serializes render, control, event, record, and close entry points per
+instance with a reentrant lock. A threaded regression covers a render loop racing an idempotent
+close; native callback work remains outside Python and cancellation/device gates remain separate.
+
 The binding also includes a 30-second minimum `render_acceptance.py` seam that writes actual native
 engine output through the public WAV service plus a JSON duration/event sidecar. It is intentionally
 only the first acceptance artifact and does not claim full FLX4 scenario or analysis coverage.

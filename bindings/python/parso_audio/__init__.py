@@ -7,9 +7,11 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 import ctypes.util
+from functools import wraps
 import math
 import os
 import sys
+import threading
 from typing import Iterable, Optional, Union
 
 
@@ -448,6 +450,17 @@ class _Event(ctypes.Structure):
 
 
 Samples = Union[Iterable[float], memoryview, array]
+
+
+def _engine_synchronized(method):
+    """Serialize Engine native calls and coordinate close with active calls."""
+
+    @wraps(method)
+    def synchronized(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return synchronized
 
 
 class CodecServices:
@@ -973,6 +986,7 @@ class Engine:
     ) -> None:
         if sample_rate_hz <= 0 or max_frames <= 0 or not 2 <= deck_count <= 4:
             raise ValueError("invalid engine sample rate, block size, or deck count")
+        self._lock = threading.RLock()
         self._library = ctypes.CDLL(CodecServices._find_library(library_path))
         self._configure_functions()
         options = _EngineOptions(
@@ -1053,6 +1067,7 @@ class Engine:
         library.parso_engine_record_reset.argtypes = [ctypes.c_void_p]
         library.parso_engine_record_reset.restype = ctypes.c_int32
 
+    @_engine_synchronized
     def close(self) -> None:
         """Destroy the native engine; calling close repeatedly is safe."""
 
@@ -1062,6 +1077,7 @@ class Engine:
             self._handle = ctypes.c_void_p()
             self._deck_buffers.clear()
 
+    @_engine_synchronized
     def __enter__(self) -> "Engine":
         self._ensure_open()
         return self
@@ -1069,6 +1085,7 @@ class Engine:
     def __exit__(self, _exc_type: object, _exc_value: object, _traceback: object) -> None:
         self.close()
 
+    @_engine_synchronized
     def set_master_level(self, level: float) -> None:
         """Set the linear master level used by subsequent renders."""
 
@@ -1081,6 +1098,7 @@ class Engine:
         )
         self._raise_for_status(status, "setting engine control")
 
+    @_engine_synchronized
     def set_crossfader(self, position: float) -> None:
         """Set the A/B crossfader position for subsequent renders.
 
@@ -1108,6 +1126,7 @@ class Engine:
         )
         self._raise_for_status(status, "setting crossfader")
 
+    @_engine_synchronized
     def set_deck_buffer(
         self,
         deck: int,
@@ -1143,6 +1162,7 @@ class Engine:
         self._raise_for_status(status, "setting deck buffer")
         self._deck_buffers[deck] = (channel_planes, planes)
 
+    @_engine_synchronized
     def post_command(
         self,
         command_type: Union[EngineCommand, int],
@@ -1271,6 +1291,7 @@ class Engine:
             f1=math.nan if start_seconds is None else start_seconds,
         )
 
+    @_engine_synchronized
     def render(self, frames: int) -> tuple[array, array]:
         """Render a bounded stereo block into newly allocated managed arrays."""
 
@@ -1290,6 +1311,7 @@ class Engine:
         self._raise_for_status(status, "engine render")
         return left, right
 
+    @_engine_synchronized
     def stats(self) -> EngineStats:
         """Return native render counters and deck topology."""
 
@@ -1300,6 +1322,7 @@ class Engine:
         self._raise_for_status(status, "reading engine stats")
         return EngineStats(stats.master_frame, stats.starved_frames, stats.deck_count)
 
+    @_engine_synchronized
     def poll_events(self, max_events: int = 64) -> list[EngineEvent]:
         """Drain up to ``max_events`` copied notifications from the native ring."""
 
@@ -1319,6 +1342,7 @@ class Engine:
             for event in events[:out_events.value]
         ]
 
+    @_engine_synchronized
     def set_record_active(self, active: bool) -> None:
         """Enable or disable the bounded native master record ring."""
 
@@ -1326,6 +1350,7 @@ class Engine:
         status = self._library.parso_engine_record_set_active(self._handle, int(active))
         self._raise_for_status(status, "setting record state")
 
+    @_engine_synchronized
     def record_drain(self, max_frames: int) -> tuple[array, array]:
         """Drain up to ``max_frames`` from the native master record ring."""
 
@@ -1346,6 +1371,7 @@ class Engine:
         self._raise_for_status(status, "draining record ring")
         return left[:out_frames.value], right[:out_frames.value]
 
+    @_engine_synchronized
     def record_dropped_frames(self) -> int:
         """Return the number of frames discarded because the record ring filled."""
 
@@ -1357,6 +1383,7 @@ class Engine:
         self._raise_for_status(status, "reading record counter")
         return dropped.value
 
+    @_engine_synchronized
     def record_reset(self) -> None:
         """Discard pending record frames and reset the dropped-frame counter."""
 
