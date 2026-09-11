@@ -231,7 +231,7 @@ jobs:
           gradle --project-dir Bindings/ParsoAudioAndroid \
             -PparsoNdkVersion=27.2.12479018 \
             -PparsoCmakeVersion=3.22.1 \
-            testReleaseUnitTest assembleRelease \
+            testReleaseUnitTest assembleRelease assembleDebugAndroidTest \
             publishReleasePublicationToLocalStagingRepository
       - name: Inspect AAR contents
         run: |
