@@ -57,6 +57,13 @@ if (recorded.Left.Length != 256 || recorded.Right.Length != 256 ||
     !recorded.Left.Any(sample => MathF.Abs(sample) > 1.0e-6f) ||
     engine.RecordDroppedFrames() != 0)
     throw new InvalidOperationException("C# native consumer received invalid record-ring data.");
+var recorder = new MixRecorder(48_000, AudioCodec.Flac);
+recorder.Append(recorded.Left, recorded.Right);
+if (recorder.Frames != 256)
+    throw new InvalidOperationException("C# native consumer recorded the wrong frame count.");
+var recording = CodecServices.Decode(recorder.Encode(), AudioCodec.Flac);
+if (recording.Frames != 256 || recording.ChannelCount != 2)
+    throw new InvalidOperationException("C# native consumer received invalid recording bytes.");
 var events = engine.PollEvents();
 if (!events.Any(item => item.Type == EngineEventType.State && item.Deck == 0))
     throw new InvalidOperationException("C# native consumer did not receive a deck state event.");

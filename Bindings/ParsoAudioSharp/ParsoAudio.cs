@@ -962,6 +962,66 @@ public sealed class Engine : IDisposable
     }
 }
 
+/// <summary>Control-side recording helper that drains blocks and encodes supported output.</summary>
+public sealed class MixRecorder
+{
+    private static readonly HashSet<AudioCodec> SupportedCodecs = new()
+    {
+        AudioCodec.Wav, AudioCodec.Flac, AudioCodec.Aac
+    };
+
+    private readonly uint sampleRateHz;
+    private readonly AudioCodec codec;
+    private readonly CodecOptions options;
+    private readonly List<float> samples = new();
+
+    /// <summary>Creates a recorder for stereo control-side PCM.</summary>
+    public MixRecorder(uint sampleRateHz, AudioCodec codec = AudioCodec.Wav,
+                       CodecOptions options = default)
+    {
+        if (sampleRateHz == 0) throw new ArgumentOutOfRangeException(nameof(sampleRateHz));
+        if (!SupportedCodecs.Contains(codec))
+            throw new ArgumentException("Mix recording supports only WAV, FLAC, and AAC.", nameof(codec));
+        this.sampleRateHz = sampleRateHz;
+        this.codec = codec;
+        this.options = options;
+    }
+
+    /// <summary>Gets the number of stereo frames accumulated so far.</summary>
+    public ulong Frames => checked((ulong)(samples.Count / 2));
+
+    /// <summary>Appends one non-empty stereo block copied from the control side.</summary>
+    public void Append(ReadOnlySpan<float> left, ReadOnlySpan<float> right)
+    {
+        if (left.IsEmpty || left.Length != right.Length)
+            throw new ArgumentException("Left and right blocks must have equal non-zero lengths.");
+        for (var index = 0; index < left.Length; index++)
+        {
+            samples.Add(left[index]);
+            samples.Add(right[index]);
+        }
+    }
+
+    /// <summary>Drains one native record block and appends it; returns copied frames.</summary>
+    public uint AppendEngine(Engine engine, uint maxFrames)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        var block = engine.DrainRecord(maxFrames);
+        Append(block.Left, block.Right);
+        return checked((uint)block.Left.Length);
+    }
+
+    /// <summary>Encodes the accumulated stereo stream through the shared codec service.</summary>
+    public byte[] Encode()
+    {
+        if (samples.Count == 0) throw new InvalidOperationException("Cannot encode an empty recording.");
+        return CodecServices.Encode(CollectionsMarshal.AsSpan(samples), sampleRateHz, 2, codec, options);
+    }
+
+    /// <summary>Discards accumulated frames while retaining recorder configuration.</summary>
+    public void Reset() => samples.Clear();
+}
+
 internal sealed class PinnedDeckBuffer : IDisposable
 {
     private readonly GCHandle leftHandle;
