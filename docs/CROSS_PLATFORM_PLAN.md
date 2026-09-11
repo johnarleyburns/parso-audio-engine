@@ -187,8 +187,9 @@ be advertised.
 The Android preview now also exposes `ParsoAnalysis` summary/key/structure calls over borrowed direct
 buffers, `ParsoVorbis` Xiph encode/decode with copied PCM ownership, `ParsoOffline` SRC/loudness
 services, and `ParsoEngine`'s bounded record tap. These surfaces compile through the local Maven AAR
-and an external application consumer; instrumentation covers the native calls but emulator/device
-execution and performance remain hosted gates.
+and an external application consumer. The consumer now includes a runnable sample activity and an
+AndroidJUnit4 end-to-end scenario covering those services plus engine render/record drain;
+instrumentation execution and performance remain hosted emulator/device gates.
 
 Gate: JVM API/lifetime tests, the external AAR consumer build, JNI instrumentation compilation, and
 16 KB page-size validation now pass locally and in CI. Instrumentation execution, emulator behavior,
@@ -207,8 +208,8 @@ contract. The host owns planar output buffers, chooses each bounded callback siz
 `parso_engine_render` once per callback, and drains events/stats only after the callback boundary.
 An optional output path writes the rendered stereo signal as WAV. No device API, allocation,
 logging, or file IO is required by the render call itself; a future ALSA, PipeWire, JACK, or
-application-owned device adapter can connect to this same contract. The installed CMake-package
-consumer exercises the render lifetime path in addition to the Xiph Vorbis codec round trip.
+application-owned device adapter can connect to this same contract. Installed C11 and C++17 CMake-package
+consumers exercise render/service lifetimes in addition to the Xiph Vorbis codec round trip.
 
 Gate: clean external C/C++ consumers on Linux x86_64/aarch64, headless parity, and live playback/capture acceptance on documented hardware. A host callback SDK can ship before an optional device backend clears review.
 

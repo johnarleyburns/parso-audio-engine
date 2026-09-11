@@ -4,8 +4,8 @@ A permissively-licensed (MIT) audio engine that reproduces the **full software
 functionality of a Pioneer DDJ-FLX4** — two decks, a two-channel mixer, hot cues, loops, all eight
 performance-pad modes, Beat FX / Color FX, Smart Fader / Smart CFX, a sampler, mic, monitoring, sync,
 recording, and offline track analysis (BPM, key, waveform, structure, loudness) — with **no copyleft
-dependencies**. Swift is the current Apple API; a portable C/C++ API for Linux and a Kotlin/Android
-wrapper are planned over the same native render and DSP core. See
+dependencies**. Swift is the current Apple API; portable C/C++ and Kotlin/Android preview APIs now
+share the native render and DSP core. See
 [`docs/CROSS_PLATFORM_PLAN.md`](docs/CROSS_PLATFORM_PLAN.md) and the support
 [`docs/CROSS_PLATFORM_MATRIX.md`](docs/CROSS_PLATFORM_MATRIX.md). Portable support is not complete
 until the matrix rows have passed their stated tests and Linux listening review.
@@ -153,8 +153,8 @@ covered by CTest. Run it with an optional output path to produce a stereo WAV:
 
 The application owns the output planes and callback schedule; `parso_engine_render` only fills
 the bounded block. Device adapters remain outside the engine, so ALSA, PipeWire, JACK, or a
-host application's callback can be added without changing the render ABI. The installed package
-consumer also checks this engine path, alongside the Xiph Ogg Vorbis encode/decode service.
+host application's callback can be added without changing the render ABI. Installed C11 and C++17
+package consumers check this engine path alongside the Xiph Ogg Vorbis encode/decode service.
 
 This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also
@@ -178,10 +178,10 @@ var encoded = CodecServices.Encode(samples, 48_000, 2, AudioCodec.OggVorbis);
 var decoded = CodecServices.Decode(encoded, AudioCodec.OggVorbis);
 ```
 
-The CP-PY preview in `bindings/python` provides the matching synchronous offline codec surface
-through standard-library `ctypes`; see [`docs/python.md`](docs/python.md) for native-library
-discovery, ownership, and local verification. It does not yet claim Python analysis, DJ controls,
-recording, device IO, or installed-wheel acceptance.
+The CP-PY preview in `bindings/python` provides synchronous codec, SRC, loudness, summary/key/
+structure analysis, headless DJ controls, and record-tap services through standard-library
+`ctypes`; see [`docs/python.md`](docs/python.md) for native-library discovery, ownership, and
+local verification. Device IO and fresh installed-wheel execution remain separate release gates.
 
 For the Linux native, Windows cross-build, and Android native toolchains on Debian/Ubuntu x86_64, run:
 
