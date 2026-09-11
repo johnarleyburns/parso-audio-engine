@@ -34,17 +34,22 @@ class Scenario:
     name: str
     description: str
     deck_a: str
-    deck_b: str
+    deck_b: str | None
 
 
 SCENARIOS = (
     Scenario("crossfader-sweep", "manual rotary crossfade", "house", "electronic"),
-    Scenario("smart-fader", "BPM match, bass duck, eased transition, echo tail", "electronic", "classical"),
-    Scenario("smart-cfx", "wash, filter, and gated one-knob CFX presets", "classical", "house"),
-    Scenario("beatfx-echo-out", "beat-synced echo-out release and tail", "house", "classical"),
-    Scenario("scratch", "vinyl touch, baby scratch, backspin, transformer, release", "classical", "electronic"),
-    Scenario("loop-and-cue", "cue, hot-cue jump, quantized loop, and exit", "electronic", "house"),
-    Scenario("warm2-isolator", "300 Hz/4 kHz fourth-order three-band master isolator", "house", "electronic"),
+    Scenario("smart-fader", "BPM-matched same-genre transition with bass duck and echo tail", "smart-fader-a", "smart-fader-b"),
+    Scenario("smart-cfx", "one-track wash, filter, and sweep CFX presets", "smart-cfx", None),
+    Scenario("beatfx-echo-out", "beat-synced echo-out release before the incoming track", "beatfx-a", "beatfx-b"),
+    Scenario("scratch", "one-track baby, chirp, scribble, backspin, and transformer scratches", "scratch", None),
+    Scenario("loop-and-cue", "cue, hot-cue jump, quantized loop, and exit before the incoming track", "loop-a", "loop-b"),
+    Scenario("warm2-isolator", "one-track 300 Hz/4 kHz fourth-order three-band master isolator", "warm2", None),
+)
+
+TRACK_SLOTS = (
+    "house", "electronic", "smart-fader-a", "smart-fader-b", "smart-cfx",
+    "beatfx-a", "beatfx-b", "scratch", "loop-a", "loop-b", "warm2",
 )
 
 
@@ -64,8 +69,12 @@ def render_scenario(
 ) -> tuple[array, array, list[dict[str, float | str]]]:
     total_frames = int(seconds * SAMPLE_RATE)
     track_a = tracks[scenario.deck_a]
-    track_b = tracks[scenario.deck_b]
-    events: list[dict[str, float | str]] = [event(0.0, "play-deck-a"), event(0.0, "play-deck-b")]
+    track_b = tracks[scenario.deck_b] if scenario.deck_b else None
+    delayed_deck_b = scenario.name in {"beatfx-echo-out", "loop-and-cue"}
+    isolated_deck = scenario.deck_b is None
+    events: list[dict[str, float | str]] = [event(0.0, "play-deck-a")]
+    if not delayed_deck_b and not isolated_deck:
+        events.append(event(0.0, "play-deck-b"))
     pending: list[tuple[float, str, Callable[[Engine], None]]] = []
 
     def add(time: float, name: str, action: Callable[[Engine], None]) -> None:
@@ -76,26 +85,49 @@ def render_scenario(
     elif scenario.name == "smart-fader":
         events.extend((event(0.0, "smart-fader-start"), event(21.0, "smart-fader-echo-tail"), event(24.0, "smart-fader-complete")))
     elif scenario.name == "smart-cfx":
-        for time, name in ((0.0, "smart-cfx-wash"), (10.0, "smart-cfx-filter"), (20.0, "smart-cfx-gate"), (30.0, "smart-cfx-off")):
+        for time, name in ((0.0, "smart-cfx-wash"), (10.0, "smart-cfx-filter"), (20.0, "smart-cfx-sweep"), (30.0, "smart-cfx-off")):
             events.append(event(time, name))
     elif scenario.name == "beatfx-echo-out":
-        events.extend((event(8.0, "beatfx-echo-out-engage"), event(22.0, "beatfx-echo-out-release")))
+        events.extend((event(8.0, "beatfx-echo-out-engage"),
+                       event(22.0, "beatfx-echo-out-release"),
+                       event(24.0, "play-deck-b-after-echo-tail")))
         add(22.0, "beatfx-echo-out-release", lambda engine: engine.post_command(EngineCommand.BEATFX_RELEASE))
+        add(24.0, "play-deck-b-after-echo-tail", lambda engine: engine.play(1))
     elif scenario.name == "scratch":
-        events.extend((event(6.0, "vinyl-touch"), event(6.15, "baby-scratch-back"), event(6.45, "baby-scratch-forward"), event(6.8, "vinyl-release"), event(12.0, "backspin-start"), event(13.2, "backspin-release"), event(18.0, "transformer-gate"), event(20.0, "transformer-open")))
-        add(6.0, "vinyl-touch", lambda engine: engine.post_command(EngineCommand.JOG_TOUCH, 0, i0=1, i1=1))
-        add(6.15, "baby-scratch-back", lambda engine: engine.post_command(EngineCommand.JOG_MOVE, 0, f0=-18_000.0))
-        add(6.45, "baby-scratch-forward", lambda engine: engine.post_command(EngineCommand.JOG_MOVE, 0, f0=24_000.0))
-        add(6.8, "vinyl-release", lambda engine: engine.post_command(EngineCommand.JOG_RELEASE, 0, i0=1, i1=1))
-        add(12.0, "backspin-start", lambda engine: (engine.set_slip(0, True), engine.post_command(EngineCommand.SET_REVERSE, 0, i0=1)))
-        add(13.2, "backspin-release", lambda engine: engine.post_command(EngineCommand.SET_REVERSE, 0, i0=0))
+        events.extend((event(4.0, "baby-scratch-touch"), event(7.0, "baby-scratch-release"),
+                       event(8.5, "chirp-scratch-touch"), event(11.5, "chirp-scratch-release"),
+                       event(13.0, "backspin-start"), event(14.2, "backspin-release"),
+                       event(18.0, "transformer-gate"), event(20.0, "transformer-open")))
+        add(4.0, "baby-scratch-touch", lambda engine: engine.post_command(EngineCommand.JOG_TOUCH, 0, i0=1, i1=1))
+        baby_pattern = (1800.0, -1800.0, 1500.0, -1500.0, 1200.0, -1200.0,
+                        900.0, -900.0, 650.0, -650.0, 450.0, -450.0)
+        for index, delta in enumerate(baby_pattern):
+            time = 4.12 + index * 0.20
+            events.append(event(time, "baby-scratch-forward" if delta > 0 else "baby-scratch-back"))
+            add(time, "baby-scratch-move", lambda engine, delta=delta:
+                engine.post_command(EngineCommand.JOG_MOVE, 0, f0=delta))
+        add(7.0, "baby-scratch-release", lambda engine: engine.post_command(EngineCommand.JOG_RELEASE, 0, i0=1, i1=1))
+        add(8.5, "chirp-scratch-touch", lambda engine: engine.post_command(EngineCommand.JOG_TOUCH, 0, i0=1, i1=1))
+        chirp_pattern = (700.0, -350.0, 700.0, -350.0, 500.0, -250.0,
+                         500.0, -250.0, 350.0, -175.0, 350.0, -175.0)
+        for index, delta in enumerate(chirp_pattern):
+            time = 8.62 + index * 0.20
+            events.append(event(time, "chirp-scratch-forward" if delta > 0 else "chirp-scratch-back"))
+            add(time, "chirp-scratch-move", lambda engine, delta=delta:
+                engine.post_command(EngineCommand.JOG_MOVE, 0, f0=delta))
+        add(11.5, "chirp-scratch-release", lambda engine: engine.post_command(EngineCommand.JOG_RELEASE, 0, i0=1, i1=1))
+        add(13.0, "backspin-start", lambda engine: (engine.set_slip(0, True), engine.post_command(EngineCommand.SET_REVERSE, 0, i0=1)))
+        add(14.2, "backspin-release", lambda engine: engine.post_command(EngineCommand.SET_REVERSE, 0, i0=0))
     elif scenario.name == "loop-and-cue":
-        events.extend((event(3.0, "set-primary-cue"), event(6.0, "set-hotcue-1"), event(10.0, "quantized-four-beat-loop"), event(18.0, "jump-hotcue-1"), event(24.0, "loop-exit")))
+        events.extend((event(3.0, "set-primary-cue"), event(6.0, "set-hotcue-1"),
+                       event(10.0, "quantized-four-beat-loop"), event(18.0, "jump-hotcue-1"),
+                       event(24.0, "loop-exit"), event(26.0, "play-deck-b-after-loop-cue")))
         add(3.0, "set-primary-cue", lambda engine: engine.set_cue(0))
         add(6.0, "set-hotcue-1", lambda engine: engine.set_hotcue(0, 0))
         add(10.0, "quantized-four-beat-loop", lambda engine: engine.beat_loop(0, 4.0))
         add(18.0, "jump-hotcue-1", lambda engine: engine.jump_hotcue(0, 0))
         add(24.0, "loop-exit", lambda engine: engine.post_command(EngineCommand.RELOOP_EXIT, 0))
+        add(26.0, "play-deck-b-after-loop-cue", lambda engine: engine.play(1))
     elif scenario.name == "warm2-isolator":
         events.extend((event(5.0, "warm2-bass-cut"), event(10.0, "warm2-mid-cut"), event(15.0, "warm2-treble-cut"), event(20.0, "warm2-all-band-boost"), event(25.0, "warm2-flat-restore")))
 
@@ -105,9 +137,11 @@ def render_scenario(
     profile = IsolatorProfile.WARM2 if scenario.name == "warm2-isolator" else IsolatorProfile.GENERIC
     with Engine(max_frames=BLOCK_SIZE, isolator_profile=profile, library_path=library_path) as engine:
         engine.set_deck_buffer(0, track_a.samples, track_a.sample_rate_hz, track_a.channel_count)
-        engine.set_deck_buffer(1, track_b.samples, track_b.sample_rate_hz, track_b.channel_count)
+        if track_b:
+            engine.set_deck_buffer(1, track_b.samples, track_b.sample_rate_hz, track_b.channel_count)
         engine.play(0)
-        engine.play(1)
+        if not delayed_deck_b and not isolated_deck:
+            engine.play(1)
         rendered = 0
         event_index = 0
         while rendered < total_frames:
@@ -147,13 +181,13 @@ def render_scenario(
                     beatfx_kind, beatfx_depth, beatfx_on = 1.0, 0.6, True
             elif scenario.name == "smart-cfx":
                 preset = min(2, int(time / 10.0))
-                beatfx_kind = (0.0, 16.0, 7.0)[preset]
+                beatfx_kind = (2.0, 6.0, 5.0)[preset]
                 beatfx_beats = (0.5, 1.0, 0.5)[preset]
-                beatfx_depth = (0.72, 0.85, 0.75)[preset]
+                beatfx_depth = (0.55, 0.65, 0.60)[preset]
                 beatfx_on = time < 30.0
-                reverb_send = (0.48, 0.0, 0.28)[preset]
+                reverb_send = (0.35, 0.12, 0.25)[preset]
             elif scenario.name == "beatfx-echo-out":
-                crossfader = -0.7 + 1.7 * clamp((time - 4.0) / 22.0, 0.0, 1.0)
+                crossfader = -1.0 if time < 24.0 else -1.0 + 2.0 * clamp((time - 24.0) / 6.0, 0.0, 1.0)
                 if 8.0 <= time < 22.0:
                     beatfx_kind, beatfx_depth, beatfx_on = 1.0, 0.72, True
                 elif time >= 22.0:
@@ -163,7 +197,7 @@ def render_scenario(
                 if 18.0 <= time < 20.0:
                     faders[0] = 0.0 if int((time - 18.0) * 8.0) % 2 else 1.0
             elif scenario.name == "loop-and-cue":
-                crossfader = -0.85 if time < 16.0 else 0.35
+                crossfader = -1.0 if time < 26.0 else -1.0 + 2.0 * clamp((time - 26.0) / 4.0, 0.0, 1.0)
             elif scenario.name == "warm2-isolator":
                 crossfader = -0.15 + 0.3 * clamp((time - 2.0) / 26.0, 0.0, 1.0)
                 if 5.0 <= time < 10.0:
@@ -201,6 +235,7 @@ def render_scenario(
             left.extend(block_left)
             right.extend(block_right)
             rendered += block
+    events.sort(key=lambda item: float(item["time"]))
     return left, right, events
 
 
@@ -262,7 +297,9 @@ def render_all(
     with CodecServices(library_path) as audio:
         for scenario in SCENARIOS:
             left, right, events = render_scenario(scenario, tracks, seconds, library_path)
-            sources = [tracks[scenario.deck_a], tracks[scenario.deck_b]]
+            sources = [tracks[scenario.deck_a]]
+            if scenario.deck_b:
+                sources.append(tracks[scenario.deck_b])
             write_pair(output_dir, f"python-{scenario.name}", scenario.name, scenario.description, left, right, events, sources, audio)
 
 
@@ -281,17 +318,22 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--library", default=None)
     parser.add_argument("--seconds", type=float, default=SCENARIO_SECONDS)
-    for suffix in ("a", "b", "c"):
-        parser.add_argument(f"--input-mp3-{suffix}", type=Path, required=True)
-        parser.add_argument(f"--fixture-{suffix}", required=True)
+    for slot in TRACK_SLOTS:
+        argument_slot = slot.replace("-", "_")
+        parser.add_argument(f"--input-mp3-{slot}", type=Path, required=True,
+                            dest=f"input_mp3_{argument_slot}")
+        parser.add_argument(f"--fixture-{slot}", required=True,
+                            dest=f"fixture_{argument_slot}")
     args = parser.parse_args()
     if args.seconds < SCENARIO_SECONDS:
         parser.error("each scenario must contain at least 30 seconds")
     paths = {
-        "house": (args.input_mp3_a, args.fixture_a),
-        "electronic": (args.input_mp3_b, args.fixture_b),
-        "classical": (args.input_mp3_c, args.fixture_c),
+        slot: (getattr(args, f"input_mp3_{slot.replace('-', '_')}"),
+               getattr(args, f"fixture_{slot.replace('-', '_')}"))
+        for slot in TRACK_SLOTS
     }
+    if len({fixture_id for _, fixture_id in paths.values()}) != len(TRACK_SLOTS):
+        parser.error("every listening slot must use a distinct MP3 fixture")
     tracks = {name: load_track(path, fixture_id, args.seconds, args.library) for name, (path, fixture_id) in paths.items()}
     render_all(args.output_dir, tracks, args.library, args.seconds)
     print(args.output_dir)

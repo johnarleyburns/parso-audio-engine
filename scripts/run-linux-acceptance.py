@@ -11,6 +11,21 @@ import subprocess
 import sys
 
 
+LISTENING_FIXTURES = {
+    "house": "gostreyshen_world",
+    "electronic": "tea_roots_isrc_usuan1100472",
+    "smart-fader-a": "lukas_lucas_impala",
+    "smart-fader-b": "tech_live",
+    "smart-cfx": "porch_blues",
+    "beatfx-a": "mary_stafford_royal_garden_blues",
+    "beatfx-b": "st_louis_blues",
+    "scratch": "upbeat_forever",
+    "loop-a": "divertimento_k131",
+    "loop-b": "divertissement_pizzicato",
+    "warm2": "in_a_heartbeat",
+}
+
+
 def run(command: list[str], *, cwd: Path, environment: dict[str, str] | None = None) -> None:
     print("+", " ".join(command))
     subprocess.run(command, cwd=cwd, env=environment, check=True)
@@ -41,9 +56,8 @@ def main() -> int:
     parser.add_argument("--seconds", type=float, default=30.0)
     parser.add_argument("--tolerance", type=int, default=2)
     parser.add_argument("--fixture-root", type=Path, default=Path("Tests/Fixtures"))
-    parser.add_argument("--fixture-a", default="gostreyshen_world")
-    parser.add_argument("--fixture-b", default="tea_roots_isrc_usuan1100472")
-    parser.add_argument("--fixture-c", default="bach_toccata_fugue_d_minor_norbert_schenk")
+    for slot, default in LISTENING_FIXTURES.items():
+        parser.add_argument(f"--fixture-{slot}", default=default)
     parser.add_argument("--no-build", action="store_true")
     args = parser.parse_args()
     if args.seconds < 30.0:
@@ -64,11 +78,16 @@ def main() -> int:
     python_dir.mkdir()
     library = (repo_root / args.library).resolve() if args.library else build_dir / "libparso.so"
     native_executable = build_dir / "parso_native_acceptance_artifacts"
-    input_mp3_a = fixture_path(fixture_root, args.fixture_a)
-    input_mp3_b = fixture_path(fixture_root, args.fixture_b)
-    input_mp3_c = fixture_path(fixture_root, args.fixture_c)
-    if len({args.fixture_a, args.fixture_b, args.fixture_c}) != 3:
-        parser.error("fixture-a, fixture-b, and fixture-c must be three distinct MP3 fixtures")
+    fixture_ids = {
+        slot: getattr(args, f"fixture_{slot.replace('-', '_')}")
+        for slot in LISTENING_FIXTURES
+    }
+    if len(set(fixture_ids.values())) != len(fixture_ids):
+        parser.error("every listening scenario slot must use a distinct MP3 fixture")
+    input_mp3 = {
+        slot: fixture_path(fixture_root, fixture_id)
+        for slot, fixture_id in fixture_ids.items()
+    }
     if not args.no_build:
         run(["cmake", "--build", str(build_dir), "--target", "parso_native_acceptance_artifacts"],
             cwd=repo_root)
@@ -80,9 +99,9 @@ def main() -> int:
     # Keep one native artifact as the deterministic cross-backend parity anchor.
     run(
         [str(native_executable), "--output-dir", str(native_dir), "--seconds", str(args.seconds),
-         "--scenario", "crossfader-sweep", "--input-mp3-a", str(input_mp3_a),
-         "--input-mp3-b", str(input_mp3_b), "--fixture-a", args.fixture_a,
-         "--fixture-b", args.fixture_b],
+         "--scenario", "crossfader-sweep", "--input-mp3-a", str(input_mp3["house"]),
+         "--input-mp3-b", str(input_mp3["electronic"]), "--fixture-a", fixture_ids["house"],
+         "--fixture-b", fixture_ids["electronic"]],
         cwd=repo_root,
     )
     environment = dict(os.environ)
@@ -91,16 +110,17 @@ def main() -> int:
     environment["PARSO_AUDIO_LIBRARY"] = str(library)
     # Render every named scenario through the same native engine exposed by
     # the Python facade; each scenario gets its own reviewable WAV/JSON pair.
-    run(
-         [sys.executable, str(repo_root / "bindings/python/examples/render_music_scenarios.py"),
-         "--library", str(library), "--output-dir", str(python_dir),
-         "--seconds", str(args.seconds),
-         "--input-mp3-a", str(input_mp3_a), "--fixture-a", args.fixture_a,
-         "--input-mp3-b", str(input_mp3_b), "--fixture-b", args.fixture_b,
-         "--input-mp3-c", str(input_mp3_c), "--fixture-c", args.fixture_c],
-        cwd=repo_root,
-        environment=environment,
-    )
+    python_command = [
+        sys.executable, str(repo_root / "bindings/python/examples/render_music_scenarios.py"),
+        "--library", str(library), "--output-dir", str(python_dir),
+        "--seconds", str(args.seconds),
+    ]
+    for slot in LISTENING_FIXTURES:
+        python_command.extend([
+            f"--input-mp3-{slot}", str(input_mp3[slot]),
+            f"--fixture-{slot}", fixture_ids[slot],
+        ])
+    run(python_command, cwd=repo_root, environment=environment)
 
     manifest = output_dir / "manifest.json"
     run([sys.executable, str(repo_root / "scripts/index-linux-acceptance.py"),
@@ -115,7 +135,7 @@ def main() -> int:
         "schemaVersion": 1,
         "scenario": "all-listening-scenarios",
         "scenarios": ["crossfader-sweep", "smart-fader", "smart-cfx", "beatfx-echo-out", "scratch", "loop-and-cue", "warm2-isolator"],
-        "fixtures": [args.fixture_a, args.fixture_b, args.fixture_c],
+        "fixtures": list(fixture_ids.values()),
         "seconds": args.seconds,
         "manifest": str(manifest),
         "comparison": str(comparison),

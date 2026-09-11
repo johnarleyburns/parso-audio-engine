@@ -143,9 +143,9 @@ exercise the PCM, SRC, and loudness contracts through `ctest`.
 
 The native acceptance target `parso_native_acceptance_artifacts` renders a 30-second headless
 artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. The Linux
-human-listening runner uses three downloaded MP3 fixtures (house, electronic, and classical),
-compares native and Python renders of the crossfader timeline, and renders each named engine
-listening scenario as its own WAV/JSON pair. Python is only the scenario orchestration layer:
+human-listening runner uses a different real MP3 fixture for each listening slot, compares native
+and Python renders of the crossfader timeline, and renders each named engine listening scenario
+as its own WAV/JSON pair. Python is only the scenario orchestration layer:
 those renders still execute the native C ABI and shared C++ DSP. The native CTest
 `native_scenario_smoke` independently exercises the non-crossfader control/command paths,
 including Color FX, Beat FX, reverb, time/pitch, loop/scratch transport, automated transition,

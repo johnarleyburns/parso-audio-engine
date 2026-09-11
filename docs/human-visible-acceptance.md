@@ -52,12 +52,17 @@ except that the `phrase` scenario also keeps the complete source visible for phr
 
 The framework-free native acceptance seam can be built and run on Linux while the
 Swift analyzer remains Apple-only. The deterministic CTest tone remains available
-as a smoke test, but the human-listening gate uses all three downloaded real MP3 fixtures:
+as a smoke test, but the human-listening gate uses a different downloaded real MP3
+fixture for every listening slot:
 
 ```text
-House: Tests/Fixtures/audio/gostreyshen_world.mp3
-Electronic: Tests/Fixtures/audio/tea_roots_isrc_usuan1100472.mp3
-Classical: Tests/Fixtures/audio/bach_toccata_fugue_d_minor_norbert_schenk.mp3
+crossfader-sweep: Tests/Fixtures/audio/gostreyshen_world.mp3 + tea_roots_isrc_usuan1100472.mp3
+smart-fader: Tests/Fixtures/audio/lukas_lucas_impala.mp3 + tech_live.mp3 (122.5/124 BPM)
+smart-cfx: Tests/Fixtures/audio/porch_blues.mp3
+beatfx-echo-out: Tests/Fixtures/audio/mary_stafford_royal_garden_blues.mp3 + st_louis_blues.mp3
+scratch: Tests/Fixtures/audio/upbeat_forever.mp3
+loop-and-cue: Tests/Fixtures/audio/divertimento_k131.mp3 + divertissement_pizzicato.mp3
+warm2-isolator: Tests/Fixtures/audio/in_a_heartbeat.mp3
 ```
 
 Run the complete native/Python music gate with:
@@ -67,18 +72,17 @@ Run the complete native/Python music gate with:
 cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 python3 scripts/run-linux-acceptance.py \
   --build-dir build-native \
-  --fixture-a gostreyshen_world \
-  --fixture-b tea_roots_isrc_usuan1100472 \
-  --fixture-c bach_toccata_fugue_d_minor_norbert_schenk \
   --output-dir /tmp/parso-linux-music-review
 ```
 
-The runner decodes the first 32 seconds of each real MP3 through the portable
-codec path. It keeps the native/Python crossfader render as a parity anchor, then
-renders every engine listening scenario through the native engine behind the Python
-facade: crossfader sweep, Smart Fader, Smart CFX presets, Beat FX echo-out, scratch,
-and loop/cue, plus the WARM2 isolator profile. It writes one separate WAV/JSON pair per scenario,
-so each effect group can be launched and reviewed independently.
+The runner decodes the first 30 seconds of each real MP3 through the portable codec
+path. It keeps the native/Python crossfader render as a parity anchor, then renders
+every engine listening scenario through the native engine behind the Python facade.
+Single-deck scenarios (Smart CFX, scratch, and WARM2) contain one source only.
+Echo-out and loop/cue keep the incoming deck silent until the outgoing effect or
+transport operation has completed. Smart Fader uses the close-BPM pair above,
+starts beat-aligned at frame zero, applies the measured tempo ratio, and transitions
+over the second half of the clip. Every scenario is a separate WAV/JSON pair.
 
 The generated review WAVs can be played directly through PipeWire:
 
@@ -243,10 +247,10 @@ seeing the exact crossfader, EQ, FX, loop, or scratch timeline. Planned scenario
 |---|---|---|
 | `crossfader-sweep` | manual auto/long-cut style crossfades | implemented through `HeadlessDJEngine` |
 | `smart-fader` | BPM match, bass duck, level automation, echo/reverb tail | rendered through portable engine controls |
-| `smart-cfx` | one-knob filter/space/dub-echo chains | rendered as wash/filter/gate preset timeline |
-| `beatfx-echo-out` | tail release and drop timing | rendered through Beat FX release command |
-| `scratch` | vinyl, backspin, baby, transformer, and release behavior | rendered through jog/reverse/fader controls |
-| `loop-and-cue` | quantized loop edges, roll, cue and hot-cue jumps | rendered through transport commands |
+| `smart-cfx` | one-knob filter/space/dub-echo chains on one track | rendered as wash/filter/sweep preset timeline |
+| `beatfx-echo-out` | tail release before the incoming track starts | rendered through Beat FX release, then delayed deck-B start |
+| `scratch` | vinyl, baby, chirp, scribble, backspin, transformer, and release behavior on one track | rendered through jog gestures/reverse/fader controls |
+| `loop-and-cue` | quantized loop edges, roll, cue and hot-cue jumps before the incoming track starts | rendered through transport commands, then delayed deck-B start |
 | `warm2-isolator` | 300 Hz/4 kHz fourth-order low/mid/high master isolation | rendered with the WARM2 engine profile |
 
 “Auto fade”, “long cut”, “bass fade cut”, “drop cut”, and “snap back” should be represented as

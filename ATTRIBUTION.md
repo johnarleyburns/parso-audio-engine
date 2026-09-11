@@ -37,6 +37,15 @@ the exact license (CC0 / CC-BY / CC-BY-SA, etc.) and required attribution before
 | Enrique Granados - danza espanola, op. 37, h. 142 - xii. arabesca | classical | oggVorbis | https://commons.wikimedia.org/wiki/File:Enrique_Granados_-_danza_espanola,_op._37,_h._142_-_xii._arabesca.ogg |
 | Josh Woodward - Ashes - 06 - Anchor | singer-songwriter | oggVorbis | https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_Ashes_-_06_-_Anchor.ogg |
 | Josh Woodward - The Wake - 07 - Invisible Light | singer-songwriter | oggVorbis | https://commons.wikimedia.org/wiki/File:Josh_Woodward_-_The_Wake_-_07_-_Invisible_Light.ogg |
+| Lukas - Lucas IMPALA | house | mp3 | https://commons.wikimedia.org/wiki/File:Lukas_-_Lucas_IMPALA.mp3 |
+| Tech Live (ISRC USUAN1700030) | electronic | mp3 | https://commons.wikimedia.org/wiki/File:Tech_Live_(ISRC_USUAN1700030).mp3 |
+| Porch Blues (ISRC USUAN1100108) | blues | mp3 | https://commons.wikimedia.org/wiki/File:Porch_Blues_(ISRC_USUAN1100108).mp3 |
+| Mary Stafford and Her Jazz Band - Royal Garden Blues | jazz | mp3 | https://commons.wikimedia.org/wiki/File:Mary_Stafford_and_Her_Jazz_Band_-_Royal_Garden_Blues.mp3 |
+| St. Louis Blues - Handy's Memphis Blues Band (1922 recording) | blues | mp3 | https://commons.wikimedia.org/wiki/File:St_Louis_Blues_-_Handy's_Memphis_Blues_Band_(1922_sound_recording).mp3 |
+| Upbeat Forever (ISRC USUAN1500063) | electronic | mp3 | https://commons.wikimedia.org/wiki/File:Upbeat_Forever_(ISRC_USUAN1500063).mp3 |
+| Divertimento K131 (ISRC USUAN1100533) | classical | mp3 | https://commons.wikimedia.org/wiki/File:Divertimento_K131_(ISRC_USUAN1100533).mp3 |
+| Divertissement - Pizzicato from the ballet Sylvia (ISRC USUAN1100256) | classical | mp3 | https://commons.wikimedia.org/wiki/File:Divertissement_-_Pizzicato_(from_the_ballet_Sylvia)_(ISRC_USUAN1100256).mp3 |
+| In a Heartbeat (ISRC USUAN1100197) | electronic | mp3 | https://commons.wikimedia.org/wiki/File:In_a_Heartbeat_(ISRC_USUAN1100197).mp3 |
 
 > To lock verified BPM/key ground truth for regression tests, edit the matching
 > `expected` entry in `Tests/Fixtures/fixtures.json`.

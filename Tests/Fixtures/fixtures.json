@@ -223,5 +223,61 @@
       "roles": ["stems"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
       "note": "Vocal-forward full-band track added for the Phase 7b/7c stem-separation human-listening review (docs/human-visible-acceptance.md); not used for BPM/key assertions.",
       "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } }
+    ,
+    { "id": "lukas_lucas_impala", "filename": "Lukas_-_Lucas_IMPALA.mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Lukas_-_Lucas_IMPALA.mp3",
+      "sourceFormat": "mp3", "genre": "house", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Listening fixture: close-BPM house source for the beat-matched Smart Fader scenario.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "tech_live", "filename": "Tech_Live_(ISRC_USUAN1700030).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Tech_Live_(ISRC_USUAN1700030).mp3",
+      "sourceFormat": "mp3", "genre": "electronic", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Listening fixture: close-BPM electronic source paired with Lucas IMPALA for Smart Fader.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "porch_blues", "filename": "Porch_Blues_(ISRC_USUAN1100108).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Porch_Blues_(ISRC_USUAN1100108).mp3",
+      "sourceFormat": "mp3", "genre": "blues", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "mary_stafford_royal_garden_blues", "filename": "Mary_Stafford_and_Her_Jazz_Band_-_Royal_Garden_Blues.mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Mary_Stafford_and_Her_Jazz_Band_-_Royal_Garden_Blues.mp3",
+      "sourceFormat": "mp3", "genre": "jazz", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "st_louis_blues", "filename": "St_Louis_Blues_-_Handy's_Memphis_Blues_Band_(1922_sound_recording).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:St_Louis_Blues_-_Handy's_Memphis_Blues_Band_(1922_sound_recording).mp3",
+      "sourceFormat": "mp3", "genre": "blues", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "upbeat_forever", "filename": "Upbeat_Forever_(ISRC_USUAN1500063).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Upbeat_Forever_(ISRC_USUAN1500063).mp3",
+      "sourceFormat": "mp3", "genre": "electronic", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "divertimento_k131", "filename": "Divertimento_K131_(ISRC_USUAN1100533).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Divertimento_K131_(ISRC_USUAN1100533).mp3",
+      "sourceFormat": "mp3", "genre": "classical", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "divertissement_pizzicato", "filename": "Divertissement_-_Pizzicato_(from_the_ballet_Sylvia)_(ISRC_USUAN1100256).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Divertissement_-_Pizzicato_(from_the_ballet_Sylvia)_(ISRC_USUAN1100256).mp3",
+      "sourceFormat": "mp3", "genre": "classical", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+
+    { "id": "in_a_heartbeat", "filename": "In_a_Heartbeat_(ISRC_USUAN1100197).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:In_a_Heartbeat_(ISRC_USUAN1100197).mp3",
+      "sourceFormat": "mp3", "genre": "electronic", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } }
   ]
 }
