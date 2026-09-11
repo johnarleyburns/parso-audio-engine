@@ -39,6 +39,7 @@ struct Options {
     std::string recordPath;
     std::string pipeWireCommand = "pw-cat";
     uint32_t maxRecoveries = kDefaultMaxRecoveries;
+    bool allowOutputGaps = false;
 };
 
 struct Block {
@@ -116,7 +117,7 @@ bool parseOptions(int argc, char **argv, Options *options) {
                 "usage: %s [--seconds N] [--input-wav PATH] [--record PATH]\n"
                 "       [--output-target NAME] [--monitor-target NAME]\n"
                 "       [--booth-target NAME] [--capture [--capture-target NAME]]\n"
-                "       [--pw-cat PATH] [--max-recoveries N]\n"
+                "       [--pw-cat PATH] [--max-recoveries N] [--allow-output-gaps]\n"
                 "       [--no-device]\n", argv[0]);
             return false;
         }
@@ -147,6 +148,8 @@ bool parseOptions(int argc, char **argv, Options *options) {
         } else if (argument == "--max-recoveries") {
             std::string value;
             if (!next(&value) || !parseUnsigned(value.c_str(), &options->maxRecoveries)) return false;
+        } else if (argument == "--allow-output-gaps") {
+            options->allowOutputGaps = true;
         } else {
             return false;
         }
@@ -740,7 +743,7 @@ int main(int argc, char **argv) {
     requireStatus(parso_stats_init(&stats), "stats init");
     requireStatus(parso_engine_get_stats(engine, &stats), "stats");
     const bool ok = rendered == totalFrames && stats.master_frame == rendered &&
-                    maxPeak > 1.0e-5f && droppedBlocks == 0 &&
+                    maxPeak > 1.0e-5f && (options.allowOutputGaps || droppedBlocks == 0) &&
                     !streamFailed.load(std::memory_order_acquire) && recordOk;
     std::printf("linux PipeWire host: %llu frames, peak %.6f, capture blocks %llu, "
                 "recorded %llu, dropped record frames %llu\n",
@@ -749,6 +752,8 @@ int main(int argc, char **argv) {
                 static_cast<unsigned long long>(recorded),
                 static_cast<unsigned long long>(recordDropped));
     std::printf("stream recoveries %u\n", streamRecoveries.load(std::memory_order_relaxed));
+    std::printf("dropped output blocks %llu\n",
+                static_cast<unsigned long long>(droppedBlocks));
     if (useDevice && !ok) {
         std::fprintf(stderr, "linux_pipewire_host: device stream underrun or render failure\n");
     }
