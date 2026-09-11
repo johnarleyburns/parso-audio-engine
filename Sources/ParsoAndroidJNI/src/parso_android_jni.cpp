@@ -206,4 +206,30 @@ JNIEXPORT jdoubleArray JNICALL Java_com_parsoaudio_ParsoNative_nativeStructure(
     return output;
 }
 
+JNIEXPORT jbyteArray JNICALL Java_com_parsoaudio_ParsoNative_nativeEncodeOggVorbis(
+    JNIEnv *env, jclass, jobject samples, jint frames, jint sampleRateHz,
+    jint channelCount, jint bitrateKbps
+) {
+    parso_pcm_buffer_t input{};
+    if (!makePCMInput(env, samples, frames, sampleRateHz, channelCount, &input) ||
+        bitrateKbps < 8 || bitrateKbps > 512) return nullptr;
+    parso_codec_options_t options{};
+    parso_bytes_t output{};
+    if (parso_codec_options_init(&options) != PARSO_STATUS_OK ||
+        parso_bytes_init(&output) != PARSO_STATUS_OK) return nullptr;
+    options.bitrate_kbps = static_cast<uint32_t>(bitrateKbps);
+    if (parso_codec_write(&input, PARSO_CODEC_OGG_VORBIS, &options, &output) != PARSO_STATUS_OK ||
+        output.size_bytes > static_cast<uint64_t>(std::numeric_limits<jsize>::max())) {
+        parso_bytes_release(&output);
+        return nullptr;
+    }
+    jbyteArray encoded = env->NewByteArray(static_cast<jsize>(output.size_bytes));
+    if (encoded) {
+        env->SetByteArrayRegion(encoded, 0, static_cast<jsize>(output.size_bytes),
+                                reinterpret_cast<const jbyte *>(output.data));
+    }
+    parso_bytes_release(&output);
+    return encoded;
+}
+
 } // extern "C"

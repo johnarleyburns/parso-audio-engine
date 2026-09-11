@@ -16,6 +16,13 @@ class ParsoEngineTest {
     }
 
     @Test
+    fun vorbisFacadeRejectsHeapBuffersBeforeLoadingNativeRuntime() {
+        assertThrows<IllegalArgumentException> {
+            ParsoVorbis.encode(ByteBuffer.allocate(32), frames = 8, sampleRateHz = 48_000)
+        }
+    }
+
+    @Test
     fun lifecycleAndTransportAreSerializedThroughTheBridge() {
         val bridge = FakeBridge()
         val engine = ParsoEngine.forTesting(native = bridge)

@@ -45,4 +45,24 @@ class ParsoEngineInstrumentationTest {
         assertTrue(sections.isNotEmpty())
         assertEquals(0, sections.first().kind)
     }
+
+    @Test
+    fun nativeXiphVorbisEncoderReturnsOggBytes() {
+        val sampleRate = 48_000
+        val frames = sampleRate / 4
+        val samples = ByteBuffer.allocateDirect(frames * Float.SIZE_BYTES)
+            .order(ByteOrder.nativeOrder())
+        val floats = samples.asFloatBuffer()
+        for (index in 0 until frames) {
+            floats.put(index, (0.25 * kotlin.math.sin(
+                2.0 * Math.PI * 440.0 * index / sampleRate,
+            )).toFloat())
+        }
+        val encoded = ParsoVorbis.encode(samples, frames, sampleRate)
+        assertTrue(encoded.size > 64)
+        assertEquals('O'.code.toByte(), encoded[0])
+        assertEquals('g'.code.toByte(), encoded[1])
+        assertEquals('g'.code.toByte(), encoded[2])
+        assertEquals('S'.code.toByte(), encoded[3])
+    }
 }
