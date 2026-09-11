@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the native/Python Linux music crossfader acceptance gate."""
+"""Build and run the native/Python Linux music listening acceptance gate."""
 
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ def main() -> int:
     parser.add_argument("--fixture-root", type=Path, default=Path("Tests/Fixtures"))
     parser.add_argument("--fixture-a", default="gostreyshen_world")
     parser.add_argument("--fixture-b", default="tea_roots_isrc_usuan1100472")
+    parser.add_argument("--fixture-c", default="bach_toccata_fugue_d_minor_norbert_schenk")
     parser.add_argument("--no-build", action="store_true")
     args = parser.parse_args()
     if args.seconds < 30.0:
@@ -65,6 +66,9 @@ def main() -> int:
     native_executable = build_dir / "parso_native_acceptance_artifacts"
     input_mp3_a = fixture_path(fixture_root, args.fixture_a)
     input_mp3_b = fixture_path(fixture_root, args.fixture_b)
+    input_mp3_c = fixture_path(fixture_root, args.fixture_c)
+    if len({args.fixture_a, args.fixture_b, args.fixture_c}) != 3:
+        parser.error("fixture-a, fixture-b, and fixture-c must be three distinct MP3 fixtures")
     if not args.no_build:
         run(["cmake", "--build", str(build_dir), "--target", "parso_native_acceptance_artifacts"],
             cwd=repo_root)
@@ -73,6 +77,7 @@ def main() -> int:
     if not library.is_file():
         parser.error(f"native library is missing: {library}")
 
+    # Keep one native artifact as the deterministic cross-backend parity anchor.
     run(
         [str(native_executable), "--output-dir", str(native_dir), "--seconds", str(args.seconds),
          "--scenario", "crossfader-sweep", "--input-mp3-a", str(input_mp3_a),
@@ -84,12 +89,15 @@ def main() -> int:
     python_path = str(repo_root / "bindings/python")
     environment["PYTHONPATH"] = python_path + os.pathsep + environment.get("PYTHONPATH", "")
     environment["PARSO_AUDIO_LIBRARY"] = str(library)
+    # Render every named scenario and one concatenated listen-all file through
+    # the same native engine exposed by the Python facade.
     run(
-         [sys.executable, str(repo_root / "bindings/python/examples/render_acceptance.py"),
-         "--library", str(library), "--scenario", "crossfader-sweep",
-         "--output-dir", str(python_dir), "--seconds", str(args.seconds),
-         "--input-mp3-a", str(input_mp3_a), "--input-mp3-b", str(input_mp3_b),
-         "--fixture-a", args.fixture_a, "--fixture-b", args.fixture_b],
+         [sys.executable, str(repo_root / "bindings/python/examples/render_music_scenarios.py"),
+         "--library", str(library), "--output-dir", str(python_dir),
+         "--seconds", str(args.seconds),
+         "--input-mp3-a", str(input_mp3_a), "--fixture-a", args.fixture_a,
+         "--input-mp3-b", str(input_mp3_b), "--fixture-b", args.fixture_b,
+         "--input-mp3-c", str(input_mp3_c), "--fixture-c", args.fixture_c],
         cwd=repo_root,
         environment=environment,
     )
@@ -105,12 +113,13 @@ def main() -> int:
     report = json.loads(comparison.read_text(encoding="utf-8"))
     summary = {
         "schemaVersion": 1,
-        "scenario": "crossfader-sweep",
-        "fixtureA": args.fixture_a,
-        "fixtureB": args.fixture_b,
+        "scenario": "all-listening-scenarios",
+        "scenarios": ["crossfader-sweep", "smart-fader", "smart-cfx", "beatfx-echo-out", "scratch", "loop-and-cue"],
+        "fixtures": [args.fixture_a, args.fixture_b, args.fixture_c],
         "seconds": args.seconds,
         "manifest": str(manifest),
         "comparison": str(comparison),
+        "listenAll": str(python_dir / "python-all-listening-scenarios.wav"),
         "passed": bool(report.get("passed")),
     }
     summary_path = output_dir / "summary.json"

@@ -1546,10 +1546,23 @@ PARSO_API parso_status_t parso_control_init(parso_control_t *control) {
     control->master_level = 0.8f;
     control->limiter_ceiling_db = -0.3f;
     control->limiter_enabled = 1.0f;
+    control->beatfx_beats = 0.5f;
+    control->beatfx_depth = 0.5f;
+    control->beatfx_xpad = -1.0f;
+    control->master_reverb_size = 0.6f;
+    control->master_reverb_decay = 0.6f;
+    control->master_reverb_damp = 0.5f;
+    control->master_eq_low = 0.0f;
+    control->master_eq_mid = 0.0f;
+    control->master_eq_high = 0.0f;
     for (uint32_t index = 0; index < PARSO_MAX_DECKS; ++index) {
         control->xfade_assign[index] = 2.0f;
         control->fader[index] = 1.0f;
         control->trim[index] = 0.5f;
+        control->color_param[index] = 0.5f;
+        control->deck_time_ratio[index] = 1.0f;
+        control->deck_pitch[index] = 0.0f;
+        control->deck_keylock[index] = 0.0f;
     }
     return PARSO_STATUS_OK;
 }
@@ -1673,6 +1686,32 @@ PARSO_API parso_status_t parso_engine_set_control(
             nativeControl.xfade_assign[index] = control->xfade_assign[index];
             nativeControl.fader[index] = control->fader[index];
             nativeControl.trim[index] = control->trim[index];
+            nativeControl.eq_low[index] = control->eq_low[index];
+            nativeControl.eq_mid[index] = control->eq_mid[index];
+            nativeControl.eq_high[index] = control->eq_high[index];
+            nativeControl.color_amount[index] = control->color_amount[index];
+            nativeControl.color_kind[index] = control->color_kind[index];
+            nativeControl.color_param[index] = control->color_param[index];
+        }
+        nativeControl.beatfx_kind = control->beatfx_kind;
+        nativeControl.beatfx_beats = control->beatfx_beats;
+        nativeControl.beatfx_depth = control->beatfx_depth;
+        nativeControl.beatfx_assign = control->beatfx_assign;
+        nativeControl.beatfx_on = control->beatfx_on;
+        nativeControl.beatfx_xpad = control->beatfx_xpad;
+        nativeControl.beatfx_band = control->beatfx_band;
+        nativeControl.master_reverb_send = control->master_reverb_send;
+        nativeControl.master_reverb_size = control->master_reverb_size;
+        nativeControl.master_reverb_decay = control->master_reverb_decay;
+        nativeControl.master_reverb_damp = control->master_reverb_damp;
+        nativeControl.master_reverb_mode = control->master_reverb_mode;
+        nativeControl.master_eq_low = control->master_eq_low;
+        nativeControl.master_eq_mid = control->master_eq_mid;
+        nativeControl.master_eq_high = control->master_eq_high;
+        for (uint32_t index = 0; index < PARSO_MAX_DECKS; ++index) {
+            nativeControl.deck_time_ratio[index] = control->deck_time_ratio[index];
+            nativeControl.deck_pitch[index] = control->deck_pitch[index];
+            nativeControl.deck_keylock[index] = control->deck_keylock[index];
         }
         pe_set_control(engine->handle.engine, &nativeControl);
         lastError = "ok";

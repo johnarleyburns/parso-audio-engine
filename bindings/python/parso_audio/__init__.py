@@ -387,6 +387,31 @@ class _Control(ctypes.Structure):
         ("xfade_assign", ctypes.c_float * 4),
         ("fader", ctypes.c_float * 4),
         ("trim", ctypes.c_float * 4),
+        ("mic_level", ctypes.c_float),
+        ("eq_low", ctypes.c_float * 4),
+        ("eq_mid", ctypes.c_float * 4),
+        ("eq_high", ctypes.c_float * 4),
+        ("color_amount", ctypes.c_float * 4),
+        ("color_kind", ctypes.c_float * 4),
+        ("color_param", ctypes.c_float * 4),
+        ("beatfx_kind", ctypes.c_float),
+        ("beatfx_beats", ctypes.c_float),
+        ("beatfx_depth", ctypes.c_float),
+        ("beatfx_assign", ctypes.c_float),
+        ("beatfx_on", ctypes.c_float),
+        ("beatfx_xpad", ctypes.c_float),
+        ("beatfx_band", ctypes.c_float),
+        ("master_reverb_send", ctypes.c_float),
+        ("master_reverb_size", ctypes.c_float),
+        ("master_reverb_decay", ctypes.c_float),
+        ("master_reverb_damp", ctypes.c_float),
+        ("master_reverb_mode", ctypes.c_float),
+        ("master_eq_low", ctypes.c_float),
+        ("master_eq_mid", ctypes.c_float),
+        ("master_eq_high", ctypes.c_float),
+        ("deck_time_ratio", ctypes.c_float * 4),
+        ("deck_pitch", ctypes.c_float * 4),
+        ("deck_keylock", ctypes.c_float * 4),
     ]
 
 
@@ -1125,6 +1150,78 @@ class Engine:
             self._handle, ctypes.byref(control)
         )
         self._raise_for_status(status, "setting crossfader")
+
+    @_engine_synchronized
+    def set_mixer_controls(
+        self,
+        *,
+        crossfader: float = 0.0,
+        master_level: float = 0.8,
+        xfade_assign: tuple[float, float, float, float] = (0.0, 1.0, 2.0, 2.0),
+        fader: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        trim: tuple[float, float, float, float] = (1.0, 1.0, 0.5, 0.5),
+        eq_low: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        eq_mid: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        eq_high: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        color_amount: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        color_kind: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        color_param: tuple[float, float, float, float] = (0.5, 0.5, 0.5, 0.5),
+        beatfx_kind: float = 0.0,
+        beatfx_beats: float = 0.5,
+        beatfx_depth: float = 0.5,
+        beatfx_assign: float = 0.0,
+        beatfx_on: bool = False,
+        beatfx_xpad: float = -1.0,
+        beatfx_band: float = 0.0,
+        master_reverb_send: float = 0.0,
+        master_reverb_size: float = 0.6,
+        master_reverb_decay: float = 0.6,
+        master_reverb_damp: float = 0.5,
+        master_reverb_mode: float = 0.0,
+        master_eq_low: float = 0.0,
+        master_eq_mid: float = 0.0,
+        master_eq_high: float = 0.0,
+        deck_time_ratio: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        deck_pitch: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        deck_keylock: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+    ) -> None:
+        """Publish the portable mixer/FX snapshot used by offline scenarios."""
+
+        self._ensure_open()
+        control = _Control(size=ctypes.sizeof(_Control), abi_version=self._ABI_VERSION)
+        self._call("control initialization", self._library.parso_control_init, control)
+        control.crossfader = crossfader
+        control.master_level = master_level
+        for name, values in (
+            ("xfade_assign", xfade_assign), ("fader", fader), ("trim", trim),
+            ("eq_low", eq_low), ("eq_mid", eq_mid), ("eq_high", eq_high),
+            ("color_amount", color_amount), ("color_kind", color_kind),
+            ("color_param", color_param),
+            ("deck_time_ratio", deck_time_ratio), ("deck_pitch", deck_pitch),
+            ("deck_keylock", deck_keylock),
+        ):
+            if len(values) != 4:
+                raise ValueError(f"{name} must contain four deck values")
+            target = getattr(control, name)
+            for index, value in enumerate(values):
+                target[index] = value
+        control.beatfx_kind = beatfx_kind
+        control.beatfx_beats = beatfx_beats
+        control.beatfx_depth = beatfx_depth
+        control.beatfx_assign = beatfx_assign
+        control.beatfx_on = float(beatfx_on)
+        control.beatfx_xpad = beatfx_xpad
+        control.beatfx_band = beatfx_band
+        control.master_reverb_send = master_reverb_send
+        control.master_reverb_size = master_reverb_size
+        control.master_reverb_decay = master_reverb_decay
+        control.master_reverb_damp = master_reverb_damp
+        control.master_reverb_mode = master_reverb_mode
+        control.master_eq_low = master_eq_low
+        control.master_eq_mid = master_eq_mid
+        control.master_eq_high = master_eq_high
+        status = self._library.parso_engine_set_control(self._handle, ctypes.byref(control))
+        self._raise_for_status(status, "setting mixer controls")
 
     @_engine_synchronized
     def set_deck_buffer(

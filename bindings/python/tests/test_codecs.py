@@ -266,6 +266,27 @@ class CodecServicesTests(unittest.TestCase):
             events = engine.poll_events()
             self.assertTrue(any(event.type == EngineEventType.STATE and event.deck == 0 for event in events))
 
+    def test_headless_engine_publishes_mixer_eq_and_fx_controls(self) -> None:
+        samples = [0.2 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0) for index in range(9_600)]
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_deck_buffer(0, samples, 48_000, 1)
+            engine.set_mixer_controls(
+                xfade_assign=(2.0, 2.0, 2.0, 2.0),
+                eq_low=(-70.0, 0.0, 0.0, 0.0),
+                color_kind=(0.0, 0.0, 0.0, 0.0),
+                color_amount=(-0.8, 0.0, 0.0, 0.0),
+                beatfx_kind=16.0,
+                beatfx_beats=1.0,
+                beatfx_depth=0.8,
+                beatfx_assign=3.0,
+                beatfx_on=True,
+                master_reverb_send=0.25,
+            )
+            engine.play(0)
+            left, right = engine.render(256)
+            self.assertEqual(len(left), len(right))
+            self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
+
     def test_headless_engine_rejects_invalid_command_deck(self) -> None:
         with Engine(max_frames=64, library_path=self.library) as engine:
             with self.assertRaises(ValueError):

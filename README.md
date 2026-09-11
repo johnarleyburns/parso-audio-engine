@@ -143,10 +143,11 @@ exercise the PCM, SRC, and loudness contracts through `ctest`.
 
 The native acceptance target `parso_native_acceptance_artifacts` renders a 30-second headless
 artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. The Linux
-human-listening runner uses the downloaded `gostreyshen_world.mp3` and
-`tea_roots_isrc_usuan1100472.mp3` fixtures as its two decks, then compares native and Python
-renders of the crossfader timeline. The generated-tone target remains a deterministic CTest smoke
-path; see [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md) for the music gate.
+human-listening runner uses three downloaded MP3 fixtures (house, electronic, and classical),
+compares native and Python renders of the crossfader timeline, and renders all six named engine
+listening scenarios plus one concatenated listen-all WAV. The generated-tone target remains a
+deterministic CTest smoke path; see [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md)
+for the music gate.
 
 The dependency-free Linux host-callback example is built as `parso_linux_host_callback` and
 covered by CTest. Run it with an optional output path to produce a stereo WAV:

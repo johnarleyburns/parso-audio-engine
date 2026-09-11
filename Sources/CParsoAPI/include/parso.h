@@ -241,6 +241,35 @@ typedef struct {
     float trim[PARSO_MAX_DECKS];
     /* Mic capture gain, 0...1. Appended to preserve the existing field order. */
     float mic_level;
+    /* Portable headless mixer controls used by Linux acceptance artifacts.
+     * These are appended so the original transport/mix prefix remains stable. */
+    float eq_low[PARSO_MAX_DECKS];
+    float eq_mid[PARSO_MAX_DECKS];
+    float eq_high[PARSO_MAX_DECKS];
+    float color_amount[PARSO_MAX_DECKS];
+    float color_kind[PARSO_MAX_DECKS];
+    float color_param[PARSO_MAX_DECKS];
+    float beatfx_kind;
+    float beatfx_beats;
+    float beatfx_depth;
+    float beatfx_assign;
+    float beatfx_on;
+    float beatfx_xpad;
+    float beatfx_band;
+    float master_reverb_send;
+    float master_reverb_size;
+    float master_reverb_decay;
+    float master_reverb_damp;
+    float master_reverb_mode;
+    /* Global three-band isolator, dB. The portable core currently uses
+     * 200 Hz / 2 kHz crossovers; an API-level Warm2 profile can be added
+     * without changing this control shape. */
+    float master_eq_low;
+    float master_eq_mid;
+    float master_eq_high;
+    float deck_time_ratio[PARSO_MAX_DECKS];
+    float deck_pitch[PARSO_MAX_DECKS];
+    float deck_keylock[PARSO_MAX_DECKS];
 } parso_control_t;
 
 /* Planar, non-interleaved, borrowed 32-bit float PCM. */

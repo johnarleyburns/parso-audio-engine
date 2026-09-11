@@ -48,15 +48,16 @@ points. The video uses the first 30 seconds by default; set `--max-seconds 0` to
 track. The analysis itself runs on the complete source track before the visible clip is selected,
 except that the `phrase` scenario also keeps the complete source visible for phrase review.
 
-## Linux native music artifact
+## Linux native music artifacts
 
 The framework-free native acceptance seam can be built and run on Linux while the
 Swift analyzer remains Apple-only. The deterministic CTest tone remains available
-as a smoke test, but the human-listening gate uses the downloaded real MP3 fixtures:
+as a smoke test, but the human-listening gate uses all three downloaded real MP3 fixtures:
 
 ```text
-Deck A: Tests/Fixtures/audio/gostreyshen_world.mp3
-Deck B: Tests/Fixtures/audio/tea_roots_isrc_usuan1100472.mp3
+House: Tests/Fixtures/audio/gostreyshen_world.mp3
+Electronic: Tests/Fixtures/audio/tea_roots_isrc_usuan1100472.mp3
+Classical: Tests/Fixtures/audio/bach_toccata_fugue_d_minor_norbert_schenk.mp3
 ```
 
 Run the complete native/Python music gate with:
@@ -68,21 +69,31 @@ python3 scripts/run-linux-acceptance.py \
   --build-dir build-native \
   --fixture-a gostreyshen_world \
   --fixture-b tea_roots_isrc_usuan1100472 \
+  --fixture-c bach_toccata_fugue_d_minor_norbert_schenk \
   --output-dir /tmp/parso-linux-music-review
 ```
 
 The runner decodes the first 32 seconds of each real MP3 through the portable
-codec path, loads them into the two native-engine decks, sweeps the crossfader
-for 30 seconds, and repeats the same timeline through Python. It writes native
-and Python WAVs plus JSON sidecars that identify both source MP3 paths.
+codec path. It keeps the native/Python crossfader render as a parity anchor, then
+renders every engine listening scenario through the native engine behind the Python
+facade: crossfader sweep, Smart Fader, Smart CFX presets, Beat FX echo-out, scratch,
+and loop/cue. It writes one WAV/JSON pair per scenario plus a concatenated
+`python-all-listening-scenarios.wav` containing every scenario in order.
 
 The generated review WAVs can be played directly through PipeWire:
 
 ```bash
 pw-play --volume 0.5 \
-  /tmp/parso-linux-music-review/native/native-crossfader-sweep.wav
+  /tmp/parso-linux-music-review/python/python-all-listening-scenarios.wav
+```
+
+To listen to an individual scenario:
+
+```bash
 pw-play --volume 0.5 \
-  /tmp/parso-linux-music-review/python/python-crossfader-sweep.wav
+  /tmp/parso-linux-music-review/python/python-smart-fader.wav
+pw-play --volume 0.5 \
+  /tmp/parso-linux-music-review/python/python-smart-cfx.wav
 ```
 
 Index generated Linux artifacts before review so the files, native commit, format, duration, and
@@ -226,11 +237,11 @@ seeing the exact crossfader, EQ, FX, loop, or scratch timeline. Planned scenario
 | Scenario | Review target | Current status |
 |---|---|---|
 | `crossfader-sweep` | manual auto/long-cut style crossfades | implemented through `HeadlessDJEngine` |
-| `smart-fader` | BPM match, bass duck, level automation, echo/reverb tail | Smart Fader automation incomplete |
-| `smart-cfx` | one-knob filter/space/dub-echo chains | Smart CFX rendering incomplete |
-| `beatfx-echo-out` | tail release and drop timing | engine scenario adapter next |
-| `scratch` | vinyl, backspin, baby, transformer, and release behavior | scratch fixture scenarios next |
-| `loop-and-cue` | quantized loop edges, roll, cue and hot-cue jumps | controls implemented; artifact adapter next |
+| `smart-fader` | BPM match, bass duck, level automation, echo/reverb tail | rendered through portable engine controls |
+| `smart-cfx` | one-knob filter/space/dub-echo chains | rendered as wash/filter/gate preset timeline |
+| `beatfx-echo-out` | tail release and drop timing | rendered through Beat FX release command |
+| `scratch` | vinyl, backspin, baby, transformer, and release behavior | rendered through jog/reverse/fader controls |
+| `loop-and-cue` | quantized loop edges, roll, cue and hot-cue jumps | rendered through transport commands |
 
 “Auto fade”, “long cut”, “bass fade cut”, “drop cut”, and “snap back” should be represented as
 named event timelines once their engine automation is implemented. The harness must not synthesize
