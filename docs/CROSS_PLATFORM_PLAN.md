@@ -106,6 +106,11 @@ Windows-targeted assembly; native DLL loading remains a Windows-only gate.
 The C# `Engine` binding also exposes activation, bounded drain, dropped-frame inspection, and reset
 for the native master record ring; the Windows consumer includes that smoke path.
 
+The Windows-targeted C# binding now also exposes native SRC/loudness results and a control-side
+`MixRecorder` that accumulates drained stereo blocks and encodes WAV/FLAC/AAC. Linux executes the
+managed consumer against the native shared library; native Windows DLL loading remains the release
+authority.
+
 It now also copies and pins deck PCM planes, retains the pointer table until replacement or close,
 and queues the portable play/pause commands. Linux verifies the managed assembly; signal and DLL
 lifetime execution remains a native-Windows gate.
