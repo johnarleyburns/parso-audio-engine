@@ -161,6 +161,7 @@ install_dependencies() {
         zip \
         ca-certificates \
         file \
+        pipewire-bin \
         openjdk-17-jdk \
         python3 \
         mingw-w64 \

@@ -156,6 +156,14 @@ the bounded block. Device adapters remain outside the engine, so ALSA, PipeWire,
 host application's callback can be added without changing the render ABI. Installed C11 and C++17
 package consumers check this engine path alongside the Xiph Ogg Vorbis encode/decode service.
 
+For live Linux playback and capture, `parso_linux_pipewire_host` provides the optional device
+adapter. It launches `pw-cat` workers around the same public callback contract, keeps system I/O
+off the engine render call, supports independent master/monitor/booth targets, and can drain the
+native record tap to WAV. The adapter does not link PipeWire or ALSA into `libparso`; install
+`pipewire-bin` with `scripts/setup-linux.sh` and see [`docs/linux-device-backend.md`](docs/linux-device-backend.md)
+for target discovery and routing. CI uses `--no-device`; route restart and human listening still
+require named Linux hardware.
+
 This currently exercises the shared C++ headless render core, including an allocator-instrumented variable-block RT smoke test, and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also
 builds the JNI shared library for `arm64-v8a` and `x86_64` and checks its exported symbols; Android Gradle/AAR, emulator, and device gates

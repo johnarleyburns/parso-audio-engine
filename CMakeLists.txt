@@ -779,6 +779,27 @@ if(PARSO_BUILD_TESTS)
             set_tests_properties(linux_host_callback PROPERTIES
                 LABELS "native;linux;host-callback;consumer;cxx17"
             )
+
+            find_package(Threads REQUIRED)
+            add_executable(parso_linux_pipewire_host
+                Tools/LinuxPipeWireHost/main.cpp
+            )
+            target_link_libraries(parso_linux_pipewire_host PRIVATE
+                $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+                $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+                Threads::Threads
+            )
+            target_include_directories(parso_linux_pipewire_host PRIVATE
+                Sources/CParsoAPI/include
+            )
+            add_test(NAME linux_pipewire_host
+                COMMAND parso_linux_pipewire_host
+                    --no-device --seconds 1
+                    --record "${CMAKE_CURRENT_BINARY_DIR}/linux-pipewire-smoke.wav"
+            )
+            set_tests_properties(linux_pipewire_host PROPERTIES
+                LABELS "native;linux;pipewire;host;capture;recording;consumer;cxx17"
+            )
         endif()
     endif()
 endif()

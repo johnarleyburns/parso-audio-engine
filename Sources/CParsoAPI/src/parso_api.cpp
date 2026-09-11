@@ -1829,6 +1829,56 @@ PARSO_API parso_status_t parso_engine_render(
     }
 }
 
+PARSO_API parso_status_t parso_engine_render_monitor(
+    parso_engine_t *engine,
+    const parso_output_view_t *output
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (!output) return fail(PARSO_STATUS_INVALID_ARGUMENT, "output is null");
+        const parso_status_t headerStatus = checkHeader(
+            output->size, output->abi_version, kMinimumOutputSize
+        );
+        if (headerStatus != PARSO_STATUS_OK) return headerStatus;
+        if (output->frames == 0 || output->frames > engine->handle.maxFrames ||
+            (!output->left && !output->right)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "invalid output view");
+        }
+        pe_render_monitor(engine->handle.engine, output->left, output->right,
+                          static_cast<int>(output->frames));
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while rendering monitor");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_render_booth(
+    parso_engine_t *engine,
+    const parso_output_view_t *output
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (!output) return fail(PARSO_STATUS_INVALID_ARGUMENT, "output is null");
+        const parso_status_t headerStatus = checkHeader(
+            output->size, output->abi_version, kMinimumOutputSize
+        );
+        if (headerStatus != PARSO_STATUS_OK) return headerStatus;
+        if (output->frames == 0 || output->frames > engine->handle.maxFrames ||
+            (!output->left && !output->right)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "invalid output view");
+        }
+        pe_render_booth(engine->handle.engine, output->left, output->right,
+                        static_cast<int>(output->frames));
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while rendering booth");
+    }
+}
+
 PARSO_API parso_status_t parso_engine_poll_events(
     parso_engine_t *engine, parso_event_t *events, uint32_t maxEvents,
     uint32_t *outEvents

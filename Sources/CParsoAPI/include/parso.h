@@ -473,6 +473,20 @@ PARSO_API parso_status_t parso_engine_render(
     parso_engine_t *engine,
     const parso_output_view_t *output
 );
+/* Render the headphone/monitor bus for the same callback block immediately
+ * after parso_engine_render. The output view is caller-owned and uses the
+ * engine's negotiated sample rate and frame limit. */
+PARSO_API parso_status_t parso_engine_render_monitor(
+    parso_engine_t *engine,
+    const parso_output_view_t *output
+);
+/* Render the booth bus from the most recently rendered master block. Call
+ * once per cycle, immediately after parso_engine_render, with the same frame
+ * count. */
+PARSO_API parso_status_t parso_engine_render_booth(
+    parso_engine_t *engine,
+    const parso_output_view_t *output
+);
 /* Drain up to max_events without blocking. Events are copied into caller-owned storage. */
 PARSO_API parso_status_t parso_engine_poll_events(
     parso_engine_t *engine, parso_event_t *events, uint32_t max_events,

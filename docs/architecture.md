@@ -42,8 +42,9 @@ JVM, and platform framework types do not cross that ABI.
   display-link drains them on `@MainActor` and republishes via `@Observable`.
 - **Bindings:** C and C++ callers serialize control operations as documented by the native facade;
   Kotlin calls are serialized by a dedicated dispatcher and never enter the audio callback. JNI and
-  JVM allocation stay off the callback. Linux's first device contract is a host-supplied callback;
-  Android's is an Oboe callback.
+  JVM allocation stay off the callback. Linux's first device contract is a host-supplied callback,
+  with the optional PipeWire `pw-cat` adapter providing process-isolated device streams; Android's
+  is an Oboe callback.
 
 ## Two playback-rate modes
 - **Varispeed** (scratch, pitch-bend, vinyl jog): fractional-rate resampling — pitch & tempo coupled.
