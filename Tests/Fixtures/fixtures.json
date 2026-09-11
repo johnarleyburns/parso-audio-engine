@@ -279,5 +279,12 @@
       "sourceFormat": "mp3", "genre": "electronic", "beatBased": true,
       "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
       "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } }
+    ,
+    { "id": "stringed_disco", "filename": "Stringed_Disco_(ISRC_USUAN1100059).mp3",
+      "commonsPage": "https://commons.wikimedia.org/wiki/File:Stringed_Disco_(ISRC_USUAN1100059).mp3",
+      "sourceFormat": "mp3", "genre": "disco", "beatBased": true,
+      "roles": ["listening", "decode-mp3"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "note": "Listening fixture: distinct disco source for the crossfader scenario; not used for Smart Fader.",
+      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } }
   ]
 }

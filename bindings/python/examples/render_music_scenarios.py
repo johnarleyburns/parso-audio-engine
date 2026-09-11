@@ -83,7 +83,7 @@ def render_scenario(
     if scenario.name == "crossfader-sweep":
         events.extend((event(0.0, "crossfader-start-minus-one"), event(seconds, "crossfader-end-plus-one")))
     elif scenario.name == "smart-fader":
-        events.extend((event(0.0, "smart-fader-start"), event(21.0, "smart-fader-echo-tail"), event(24.0, "smart-fader-complete")))
+        events.extend((event(0.0, "smart-fader-start-house-pair"), event(21.0, "smart-fader-echo-tail"), event(24.0, "smart-fader-complete")))
     elif scenario.name == "smart-cfx":
         for time, name in ((0.0, "smart-cfx-wash"), (10.0, "smart-cfx-filter"), (20.0, "smart-cfx-sweep"), (30.0, "smart-cfx-off")):
             events.append(event(time, name))

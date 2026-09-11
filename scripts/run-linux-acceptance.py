@@ -12,10 +12,10 @@ import sys
 
 
 LISTENING_FIXTURES = {
-    "house": "gostreyshen_world",
+    "house": "stringed_disco",
     "electronic": "tea_roots_isrc_usuan1100472",
     "smart-fader-a": "lukas_lucas_impala",
-    "smart-fader-b": "tech_live",
+    "smart-fader-b": "gostreyshen_world",
     "smart-cfx": "porch_blues",
     "beatfx-a": "mary_stafford_royal_garden_blues",
     "beatfx-b": "st_louis_blues",

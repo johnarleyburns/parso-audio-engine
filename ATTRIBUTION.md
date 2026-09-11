@@ -46,6 +46,7 @@ the exact license (CC0 / CC-BY / CC-BY-SA, etc.) and required attribution before
 | Divertimento K131 (ISRC USUAN1100533) | classical | mp3 | https://commons.wikimedia.org/wiki/File:Divertimento_K131_(ISRC_USUAN1100533).mp3 |
 | Divertissement - Pizzicato from the ballet Sylvia (ISRC USUAN1100256) | classical | mp3 | https://commons.wikimedia.org/wiki/File:Divertissement_-_Pizzicato_(from_the_ballet_Sylvia)_(ISRC_USUAN1100256).mp3 |
 | In a Heartbeat (ISRC USUAN1100197) | electronic | mp3 | https://commons.wikimedia.org/wiki/File:In_a_Heartbeat_(ISRC_USUAN1100197).mp3 |
+| Stringed Disco (ISRC USUAN1100059) | disco | mp3 | https://commons.wikimedia.org/wiki/File:Stringed_Disco_(ISRC_USUAN1100059).mp3 |
 
 > To lock verified BPM/key ground truth for regression tests, edit the matching
 > `expected` entry in `Tests/Fixtures/fixtures.json`.

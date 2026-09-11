@@ -56,8 +56,8 @@ as a smoke test, but the human-listening gate uses a different downloaded real M
 fixture for every listening slot:
 
 ```text
-crossfader-sweep: Tests/Fixtures/audio/gostreyshen_world.mp3 + tea_roots_isrc_usuan1100472.mp3
-smart-fader: Tests/Fixtures/audio/lukas_lucas_impala.mp3 + tech_live.mp3 (122.5/124 BPM)
+crossfader-sweep: Tests/Fixtures/audio/stringed_disco.mp3 + tea_roots_isrc_usuan1100472.mp3
+smart-fader: Tests/Fixtures/audio/lukas_lucas_impala.mp3 + gostreyshen_world.mp3 (122.5/123 BPM, both house)
 smart-cfx: Tests/Fixtures/audio/porch_blues.mp3
 beatfx-echo-out: Tests/Fixtures/audio/mary_stafford_royal_garden_blues.mp3 + st_louis_blues.mp3
 scratch: Tests/Fixtures/audio/upbeat_forever.mp3
