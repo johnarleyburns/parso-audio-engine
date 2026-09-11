@@ -66,11 +66,12 @@ static int run_engine_smoke(void)
 
 int main(void)
 {
-    enum { frames = 1024 };
+    enum { frames = 48000 * 2 };
     float samples[frames];
     parso_capabilities_t capabilities;
     parso_codec_options_t options;
     parso_pcm_buffer_t input;
+    parso_pcm_buffer_t converted;
     parso_pcm_buffer_t decoded;
     parso_bytes_t encoded;
     parso_key_options_t key_options;
@@ -78,6 +79,9 @@ int main(void)
     parso_structure_options_t structure_options;
     parso_analysis_options_t analysis_options;
     parso_analysis_result_t analysis;
+    parso_src_options_t src_options;
+    parso_loudness_options_t loudness_options;
+    parso_loudness_result_t loudness;
     parso_structure_section_t sections[8];
     float waveform_min[8];
     float waveform_max[8];
@@ -91,13 +95,17 @@ int main(void)
         (capabilities.encode_containers & PARSO_CONTAINER_OGG_VORBIS) == 0 ||
         parso_codec_options_init(&options) != PARSO_STATUS_OK ||
         parso_pcm_buffer_init(&input) != PARSO_STATUS_OK ||
+        parso_pcm_buffer_init(&converted) != PARSO_STATUS_OK ||
         parso_pcm_buffer_init(&decoded) != PARSO_STATUS_OK ||
         parso_bytes_init(&encoded) != PARSO_STATUS_OK ||
         parso_key_options_init(&key_options) != PARSO_STATUS_OK ||
         parso_key_result_init(&key) != PARSO_STATUS_OK ||
         parso_structure_options_init(&structure_options) != PARSO_STATUS_OK ||
         parso_analysis_options_init(&analysis_options) != PARSO_STATUS_OK ||
-        parso_analysis_result_init(&analysis) != PARSO_STATUS_OK) {
+        parso_analysis_result_init(&analysis) != PARSO_STATUS_OK ||
+        parso_src_options_init(&src_options) != PARSO_STATUS_OK ||
+        parso_loudness_options_init(&loudness_options) != PARSO_STATUS_OK ||
+        parso_loudness_result_init(&loudness) != PARSO_STATUS_OK) {
         fprintf(stderr, "installed consumer: initialization failed: %s\n", parso_last_error());
         return 1;
     }
@@ -105,6 +113,8 @@ int main(void)
     input.frames = frames;
     input.channel_count = 1;
     input.sample_rate_hz = 48000;
+    src_options.destination_sample_rate_hz = 24000;
+    loudness_options.target_lufs = -14.0;
     if (parso_key_measure(&input, &key_options, &key) != PARSO_STATUS_OK ||
         key.tonic_pitch_class >= 12 ||
         parso_structure_measure(&input, &structure_options, sections, 8, &section_count) !=
@@ -113,7 +123,11 @@ int main(void)
             analysis.duration_seconds <= 0.0 || !isfinite(analysis.rms) ||
             !isfinite(analysis.peak) ||
         parso_waveform_generate(&input, 8, waveform_min, waveform_max) != PARSO_STATUS_OK ||
-            waveform_min[0] > waveform_max[0] || !isfinite(waveform_max[0])) {
+            waveform_min[0] > waveform_max[0] || !isfinite(waveform_max[0]) ||
+        parso_src_convert(&input, &src_options, &converted) != PARSO_STATUS_OK ||
+            converted.frames == 0 || converted.sample_rate_hz != 24000 ||
+        parso_loudness_measure(&input, &loudness_options, &loudness) != PARSO_STATUS_OK ||
+            !isfinite(loudness.true_peak_dbtp)) {
         fprintf(stderr, "installed consumer: analysis ABI failed: %s\n", parso_last_error());
         parso_bytes_release(&encoded);
         input.samples = NULL;
@@ -137,6 +151,7 @@ int main(void)
     }
     parso_pcm_buffer_release(&decoded);
     parso_bytes_release(&encoded);
+    parso_pcm_buffer_release(&converted);
     input.samples = NULL;
     parso_pcm_buffer_release(&input);
     return run_engine_smoke();
