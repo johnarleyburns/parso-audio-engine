@@ -228,6 +228,8 @@ copyleft runtime dependency. The `--no-device` path is deterministic CTest cover
 sink/source, explicit target routing, continuous short-source playback, and record/capture smoke
 checks pass on the maintainer Linux host.
 
+The adapter now retries failed `pw-cat` playback/capture processes against the same target with a
+bounded backoff and has deterministic native smoke coverage for one-shot playback and capture failure.
 Remaining CP5/CP6 evidence is route restart/hot-unplug behavior on named hardware, full scenario
 coverage, and human listening sign-off. Installed C11 and C++17 CMake-package consumers exercise
 render/service lifetimes in addition to the Xiph Vorbis codec round trip.

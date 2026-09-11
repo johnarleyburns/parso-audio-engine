@@ -25,6 +25,7 @@ constexpr uint32_t kSampleRate = 48000;
 constexpr uint32_t kBlockFrames = 256;
 constexpr uint32_t kQueueBlocks = 64;
 constexpr uint32_t kMaxSeconds = 3600;
+constexpr uint32_t kDefaultMaxRecoveries = 8;
 
 struct Options {
     uint32_t seconds = 5;
@@ -36,6 +37,8 @@ struct Options {
     std::string boothTarget;
     std::string captureTarget;
     std::string recordPath;
+    std::string pipeWireCommand = "pw-cat";
+    uint32_t maxRecoveries = kDefaultMaxRecoveries;
 };
 
 struct Block {
@@ -113,6 +116,7 @@ bool parseOptions(int argc, char **argv, Options *options) {
                 "usage: %s [--seconds N] [--input-wav PATH] [--record PATH]\n"
                 "       [--output-target NAME] [--monitor-target NAME]\n"
                 "       [--booth-target NAME] [--capture [--capture-target NAME]]\n"
+                "       [--pw-cat PATH] [--max-recoveries N]\n"
                 "       [--no-device]\n", argv[0]);
             return false;
         }
@@ -138,6 +142,11 @@ bool parseOptions(int argc, char **argv, Options *options) {
             options->capture = true;
         } else if (argument == "--record") {
             if (!next(&options->recordPath)) return false;
+        } else if (argument == "--pw-cat") {
+            if (!next(&options->pipeWireCommand)) return false;
+        } else if (argument == "--max-recoveries") {
+            std::string value;
+            if (!next(&value) || !parseUnsigned(value.c_str(), &options->maxRecoveries)) return false;
         } else {
             return false;
         }
@@ -168,7 +177,8 @@ bool pipeWireTargetExists(const std::string &target) {
 
 class ChildStream final {
 public:
-    bool start(bool playback, const std::string &target) {
+    bool start(bool playback, const std::string &target,
+               const std::string &command = "pw-cat") {
         int descriptors[2] = {-1, -1};
         if (pipe(descriptors) != 0) return false;
         const pid_t child = fork();
@@ -184,7 +194,7 @@ public:
             close(descriptors[1]);
 
             std::vector<std::string> arguments{
-                "pw-cat", playback ? "--playback" : "--record", "--raw",
+                command, playback ? "--playback" : "--record", "--raw",
                 "--format", "f32", "--rate", "48000", "--channels", "2",
                 "--channel-map", "FL,FR", "--latency", "256"
             };
@@ -204,6 +214,8 @@ public:
         fd_ = playback ? descriptors[1] : descriptors[0];
         close(playback ? descriptors[0] : descriptors[1]);
         playback_ = playback;
+        target_ = target;
+        command_ = command;
         return true;
     }
 
@@ -241,16 +253,30 @@ public:
         }
     }
 
+    void requestStop() noexcept {
+        const pid_t child = pid_.load(std::memory_order_acquire);
+        if (child > 0) kill(child, SIGTERM);
+    }
+
+    bool restart() {
+        closeDescriptor();
+        terminateChild();
+        return start(playback_, target_, command_);
+    }
+
     void stop() noexcept {
         closeDescriptor();
-        if (pid_ <= 0) return;
-        if (!playback_) kill(pid_, SIGTERM);
-        int status = 0;
-        while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {}
-        pid_ = -1;
+        terminateChild();
     }
 
 private:
+    void terminateChild() noexcept {
+        const pid_t child = pid_.exchange(-1, std::memory_order_acq_rel);
+        if (child <= 0) return;
+        kill(child, SIGTERM);
+        int status = 0;
+        while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    }
     bool writeBytes(const void *data, std::size_t size) noexcept {
         const auto *bytes = static_cast<const uint8_t *>(data);
         while (size > 0) {
@@ -267,12 +293,36 @@ private:
     }
 
     int fd_ = -1;
-    pid_t pid_ = -1;
+    std::atomic<pid_t> pid_{-1};
     bool playback_ = false;
+    std::string target_;
+    std::string command_ = "pw-cat";
 };
 
+bool recoverStream(ChildStream *stream, std::atomic<bool> *stop,
+                   std::atomic<bool> *failed, std::atomic<uint32_t> *recoveries,
+                   uint32_t maxRecoveries, const char *label) {
+    for (uint32_t attempt = 1; attempt <= maxRecoveries; ++attempt) {
+        if (stop->load(std::memory_order_acquire)) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10u * attempt));
+        if (stop->load(std::memory_order_acquire)) return false;
+        if (stream->restart()) {
+            recoveries->fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr, "linux_pipewire_host: recovered %s stream (attempt %u)\n",
+                         label, attempt);
+            return true;
+        }
+    }
+    failed->store(true, std::memory_order_release);
+    std::fprintf(stderr, "linux_pipewire_host: unable to recover %s stream after %u attempts\n",
+                 label, maxRecoveries);
+    return false;
+}
+
 void outputWorker(BlockQueue *queue, ChildStream *stream,
-                  std::atomic<bool> *stop, std::atomic<bool> *failed) {
+                  std::atomic<bool> *stop, std::atomic<bool> *failed,
+                  std::atomic<uint32_t> *recoveries, uint32_t maxRecoveries,
+                  const char *label) {
     const Block *block = nullptr;
     while (!stop->load(std::memory_order_acquire) || queue->readable() != 0) {
         if (!queue->beginRead(&block)) {
@@ -280,19 +330,26 @@ void outputWorker(BlockQueue *queue, ChildStream *stream,
             continue;
         }
         if (!stream->writeAll(block->left.data(), block->right.data())) {
-            failed->store(true, std::memory_order_release);
             queue->endRead();
-            return;
+            if (stop->load(std::memory_order_acquire)) return;
+            if (!recoverStream(stream, stop, failed, recoveries, maxRecoveries, label)) return;
+            continue;
         }
         queue->endRead();
     }
 }
 
 void captureWorker(BlockQueue *queue, ChildStream *stream,
-                   std::atomic<bool> *stop, std::atomic<uint64_t> *blocks) {
+                   std::atomic<bool> *stop, std::atomic<bool> *failed,
+                   std::atomic<uint32_t> *recoveries, uint32_t maxRecoveries,
+                   const char *label, std::atomic<uint64_t> *blocks) {
     std::array<float, kBlockFrames * 2u> interleaved{};
     while (!stop->load(std::memory_order_acquire)) {
-        if (!stream->readAll(interleaved.data())) return;
+        if (!stream->readAll(interleaved.data())) {
+            if (stop->load(std::memory_order_acquire)) return;
+            if (!recoverStream(stream, stop, failed, recoveries, maxRecoveries, label)) return;
+            continue;
+        }
         Block *block = nullptr;
         if (queue->beginWrite(&block)) {
             for (uint32_t frame = 0; frame < kBlockFrames; ++frame) {
@@ -402,9 +459,10 @@ bool loadInput(const Options &options, std::vector<float> *generated,
     return true;
 }
 
-bool startOutput(const std::string &target, ChildStream *stream) {
+bool startOutput(const std::string &target, const std::string &command,
+                 ChildStream *stream) {
     if (target.empty() && stream == nullptr) return false;
-    return stream->start(true, target);
+    return stream->start(true, target, command);
 }
 
 } // namespace
@@ -465,10 +523,13 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (useDevice &&
-        (!startOutput(options.outputTarget, &outputStream) ||
-         (!options.monitorTarget.empty() && !startOutput(options.monitorTarget, &monitorStream)) ||
-         (!options.boothTarget.empty() && !startOutput(options.boothTarget, &boothStream)) ||
-         (options.capture && !captureStream.start(false, options.captureTarget)))) {
+        (!startOutput(options.outputTarget, options.pipeWireCommand, &outputStream) ||
+         (!options.monitorTarget.empty() &&
+          !startOutput(options.monitorTarget, options.pipeWireCommand, &monitorStream)) ||
+         (!options.boothTarget.empty() &&
+          !startOutput(options.boothTarget, options.pipeWireCommand, &boothStream)) ||
+         (options.capture &&
+          !captureStream.start(false, options.captureTarget, options.pipeWireCommand)))) {
         std::fprintf(stderr, "linux_pipewire_host: failed to start a PipeWire stream\n");
         captureStream.stop();
         boothStream.stop();
@@ -484,25 +545,31 @@ int main(int argc, char **argv) {
     BlockQueue boothQueue;
     BlockQueue captureQueue;
     std::atomic<bool> stop{false};
-    std::atomic<bool> outputFailed{false};
+    std::atomic<bool> streamFailed{false};
+    std::atomic<uint32_t> streamRecoveries{0};
     std::atomic<uint64_t> capturedBlocks{0};
     std::thread outputThread;
     std::thread monitorThread;
     std::thread boothThread;
     std::thread captureThread;
     if (useDevice) {
-        outputThread = std::thread(outputWorker, &outputQueue, &outputStream, &stop, &outputFailed);
+        outputThread = std::thread(outputWorker, &outputQueue, &outputStream, &stop,
+                                   &streamFailed, &streamRecoveries,
+                                   options.maxRecoveries, "master");
         if (!options.monitorTarget.empty()) {
             monitorThread = std::thread(outputWorker, &monitorQueue, &monitorStream,
-                                        &stop, &outputFailed);
+                                        &stop, &streamFailed, &streamRecoveries,
+                                        options.maxRecoveries, "monitor");
         }
         if (!options.boothTarget.empty()) {
             boothThread = std::thread(outputWorker, &boothQueue, &boothStream,
-                                      &stop, &outputFailed);
+                                      &stop, &streamFailed, &streamRecoveries,
+                                      options.maxRecoveries, "booth");
         }
         if (options.capture) {
             captureThread = std::thread(captureWorker, &captureQueue, &captureStream,
-                                        &stop, &capturedBlocks);
+                                        &stop, &streamFailed, &streamRecoveries,
+                                        options.maxRecoveries, "capture", &capturedBlocks);
         }
     }
 
@@ -632,10 +699,14 @@ int main(int argc, char **argv) {
                 std::chrono::duration<double>(static_cast<double>(rendered) / kSampleRate));
             std::this_thread::sleep_until(deadline);
         }
-        if (outputFailed.load(std::memory_order_acquire)) stop.store(true, std::memory_order_release);
+        if (streamFailed.load(std::memory_order_acquire)) stop.store(true, std::memory_order_release);
     }
 
     stop.store(true, std::memory_order_release);
+    captureStream.requestStop();
+    outputStream.requestStop();
+    monitorStream.requestStop();
+    boothStream.requestStop();
     if (captureThread.joinable()) captureThread.join();
     if (outputThread.joinable()) outputThread.join();
     if (monitorThread.joinable()) monitorThread.join();
@@ -666,17 +737,19 @@ int main(int argc, char **argv) {
     requireStatus(parso_stats_init(&stats), "stats init");
     requireStatus(parso_engine_get_stats(engine, &stats), "stats");
     const bool ok = rendered == totalFrames && stats.master_frame == rendered &&
-                    maxPeak > 1.0e-5f && droppedBlocks == 0 && !outputFailed.load();
+                    maxPeak > 1.0e-5f && droppedBlocks == 0 &&
+                    !streamFailed.load(std::memory_order_acquire);
     std::printf("linux PipeWire host: %llu frames, peak %.6f, capture blocks %llu, "
                 "recorded %llu, dropped record frames %llu\n",
                 static_cast<unsigned long long>(rendered), static_cast<double>(maxPeak),
                 static_cast<unsigned long long>(capturedBlocks.load()),
                 static_cast<unsigned long long>(recorded),
                 static_cast<unsigned long long>(recordDropped));
+    std::printf("stream recoveries %u\n", streamRecoveries.load(std::memory_order_relaxed));
     if (useDevice && !ok) {
         std::fprintf(stderr, "linux_pipewire_host: device stream underrun or render failure\n");
     }
     parso_engine_destroy(&engine);
     parso_pcm_buffer_release(&decoded);
-    return ok ? 0 : 1;
+    return ok && !streamFailed.load(std::memory_order_acquire) ? 0 : 1;
 }

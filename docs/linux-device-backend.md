@@ -54,8 +54,29 @@ to discover them. Monitor and booth outputs can be routed independently:
 
 `--no-device` runs the same engine, queue, routing, capture-silence, and record
 contract without launching a system stream. It is the deterministic CTest
-smoke path and is suitable for CI. Device route changes, unplug/replug, and
-human listening remain hardware acceptance checks.
+smoke path and is suitable for CI. If a live `pw-cat` process exits because a
+route disappears, the worker retries the same target up to eight times with a
+short backoff. Override that budget with `--max-recoveries N`; the host exits
+with an error when the route cannot be restored. `--pw-cat PATH` selects a
+compatible stream client and is intended for deterministic host tests or
+custom PipeWire installations.
+
+The deterministic recovery smoke uses `Tests/Native/fake_pw_cat.sh` to
+terminate playback and capture once, verify both workers restart, and complete
+the render/record session. This proves process-failure recovery without
+pretending to validate a physical unplug/replug. Named-device route changes,
+latency continuity, and human listening remain hardware acceptance checks.
+
+Run that smoke directly after building the host:
+
+```bash
+state=$(mktemp -d /tmp/parso-pipewire-recovery-state.XXXXXX)
+record=$(mktemp /tmp/parso-pipewire-recovery.XXXXXX.wav)
+PARSO_FAKE_PW_CAT_STATE_DIR="$state" \
+  ./build-linux/parso_linux_pipewire_host \
+  --pw-cat "$PWD/Tests/Native/fake_pw_cat.sh" \
+  --capture --seconds 1 --record "$record"
+```
 
 The adapter does not link the project against PipeWire or ALSA libraries. This
 keeps the shipping native library dependency-free and avoids adding a
