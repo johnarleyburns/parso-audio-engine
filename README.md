@@ -55,6 +55,8 @@ source of truth and the test suite remains the executable specification.
 - Apple API: **iOS 17+, iPadOS 17+, macCatalyst 17+, macOS 14+, watchOS 10+** (see `Package.swift`).
 - Native preview API: Linux x86_64/aarch64 with a documented glibc baseline; Android API 26+ with
   arm64-v8a and x86_64 AAR artifacts. These portable targets are not yet shipping.
+- Linux setup additionally uses `ffmpeg`, `python3-pip`, and `python3-venv` for acceptance video
+  and fresh-package checks; `pipewire-bin` is needed only for live device playback/capture.
 - To run the real-audio fixture tests: `curl` + `python3` (both come with the Xcode command-line tools).
 
 ## Install (Swift Package Manager)

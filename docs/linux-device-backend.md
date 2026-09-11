@@ -18,7 +18,8 @@ by the control side and can be written to a WAV file.
 ## Build and run
 
 The setup script installs `pipewire-bin`, which provides `pw-cat` on Debian and
-Ubuntu:
+Ubuntu. It also installs `ffmpeg`, `python3-pip`, and `python3-venv` for the
+Linux acceptance and packaging checks:
 
 ```bash
 ./scripts/setup-linux.sh --no-android --no-windows-cross-build

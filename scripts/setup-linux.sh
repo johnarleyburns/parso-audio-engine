@@ -161,9 +161,12 @@ install_dependencies() {
         zip \
         ca-certificates \
         file \
+        ffmpeg \
         pipewire-bin \
         openjdk-17-jdk \
         python3 \
+        python3-pip \
+        python3-venv \
         mingw-w64 \
         gcc-mingw-w64-x86-64 \
         g++-mingw-w64-x86-64 \
