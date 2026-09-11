@@ -36,8 +36,10 @@ if(NOT build_status EQUAL 0)
 endif()
 
 set(consumer_executable "${consumer_build_dir}/installed_c_consumer")
+set(cpp_consumer_executable "${consumer_build_dir}/installed_cpp_consumer")
 if(WIN32)
     set(consumer_executable "${consumer_executable}.exe")
+    set(cpp_consumer_executable "${cpp_consumer_executable}.exe")
     set(runtime_path "PATH=${PARSO_PACKAGE_INSTALL_DIR}/bin;$ENV{PATH}")
 elseif(APPLE)
     set(runtime_path "DYLD_LIBRARY_PATH=${PARSO_PACKAGE_INSTALL_DIR}/lib:$ENV{DYLD_LIBRARY_PATH}")
@@ -50,4 +52,11 @@ execute_process(
 )
 if(NOT run_status EQUAL 0)
     message(FATAL_ERROR "installed consumer failed: ${run_status}")
+endif()
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "${runtime_path}" "${cpp_consumer_executable}"
+    RESULT_VARIABLE cpp_run_status
+)
+if(NOT cpp_run_status EQUAL 0)
+    message(FATAL_ERROR "installed C++ consumer failed: ${cpp_run_status}")
 endif()
