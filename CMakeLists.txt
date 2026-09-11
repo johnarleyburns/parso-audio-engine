@@ -815,3 +815,17 @@ if(PARSO_BUILD_TESTS)
         endif()
     endif()
 endif()
+
+if(PARSO_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET parso_linux_pipewire_host)
+    add_test(NAME linux_pipewire_recovery_recording
+        COMMAND ${CMAKE_COMMAND}
+            -DPARSO_HOST=$<TARGET_FILE:parso_linux_pipewire_host>
+            -DPARSO_FAKE_COMMAND=${CMAKE_SOURCE_DIR}/Tests/Native/fake_pw_cat.sh
+            -DPARSO_STATE_DIR=${CMAKE_CURRENT_BINARY_DIR}/linux-pipewire-recovery-state
+            -DPARSO_RECORD_PATH=${CMAKE_CURRENT_BINARY_DIR}/linux-pipewire-recovery.wav
+            -P ${CMAKE_SOURCE_DIR}/Tests/Native/run_pipewire_recovery.cmake
+    )
+    set_tests_properties(linux_pipewire_recovery_recording PROPERTIES
+        LABELS "native;linux;pipewire;recovery;capture;recording;consumer;cxx17"
+    )
+endif()

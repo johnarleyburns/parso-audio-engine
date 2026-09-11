@@ -63,7 +63,9 @@ custom PipeWire installations.
 
 The deterministic recovery smoke uses `Tests/Native/fake_pw_cat.sh` to
 terminate playback and capture once, verify both workers restart, and complete
-the render/record session. This proves process-failure recovery without
+the render/record session. The CTest gate also verifies that the native record
+tap contains the full one-second session and that its WAV output is non-empty.
+This proves process-failure recovery without
 pretending to validate a physical unplug/replug. Named-device route changes,
 latency continuity, and human listening remain hardware acceptance checks.
 

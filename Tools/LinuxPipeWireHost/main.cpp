@@ -717,20 +717,23 @@ int main(int argc, char **argv) {
     outputStream.stop();
 
     uint64_t recordDropped = 0;
+    bool recordOk = true;
     if (!options.recordPath.empty()) {
         if (recorded < totalFrames) {
             uint32_t drained = 0;
-            requireStatus(parso_engine_record_drain(
+            recordOk = requireStatus(parso_engine_record_drain(
                 engine, recordedLeft.data() + recorded, recordedRight.data() + recorded,
                 static_cast<uint32_t>(totalFrames - recorded), &drained), "final record drain");
             recorded += drained;
         }
-        requireStatus(parso_engine_record_dropped_frames(engine, &recordDropped),
-                      "record dropped frames");
-        requireStatus(parso_engine_record_set_active(engine, 0), "record inactive");
+        recordOk = requireStatus(parso_engine_record_dropped_frames(engine, &recordDropped),
+                                  "record dropped frames") && recordOk;
+        recordOk = requireStatus(parso_engine_record_set_active(engine, 0),
+                                  "record inactive") && recordOk;
+        recordOk = recorded == totalFrames && recordDropped == 0 && recordOk;
         recordedLeft.resize(recorded);
         recordedRight.resize(recorded);
-        if (!writeRecording(options.recordPath, recordedLeft, recordedRight)) stop.store(true);
+        if (!writeRecording(options.recordPath, recordedLeft, recordedRight)) recordOk = false;
     }
 
     parso_stats_t stats;
@@ -738,7 +741,7 @@ int main(int argc, char **argv) {
     requireStatus(parso_engine_get_stats(engine, &stats), "stats");
     const bool ok = rendered == totalFrames && stats.master_frame == rendered &&
                     maxPeak > 1.0e-5f && droppedBlocks == 0 &&
-                    !streamFailed.load(std::memory_order_acquire);
+                    !streamFailed.load(std::memory_order_acquire) && recordOk;
     std::printf("linux PipeWire host: %llu frames, peak %.6f, capture blocks %llu, "
                 "recorded %llu, dropped record frames %llu\n",
                 static_cast<unsigned long long>(rendered), static_cast<double>(maxPeak),
