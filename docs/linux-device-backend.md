@@ -89,6 +89,16 @@ PARSO_FAKE_PW_CAT_STATE_DIR="$state" \
 On a named-device Linux host, record the route-restart acceptance with the
 same native engine and then restart the user PipeWire services while it runs:
 
+The repeatable runner below also writes the WAV, host log, JSON sidecar, and
+the standard pending-review manifest:
+
+```bash
+./scripts/run-linux-route-restart-acceptance.py \
+  --output-dir /tmp/parso-linux-route-restart-review \
+  --output-target alsa_output.pci-0000_00_1f.3.analog-stereo \
+  --capture-target alsa_input.pci-0000_00_1f.3.analog-stereo
+```
+
 ```bash
 ./build-native/parso_linux_pipewire_host \
   --seconds 10 \
