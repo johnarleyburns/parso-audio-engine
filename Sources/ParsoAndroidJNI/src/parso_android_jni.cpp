@@ -206,6 +206,33 @@ JNIEXPORT jlongArray JNICALL Java_com_parsoaudio_ParsoNative_nativePollEvents(
     return output;
 }
 
+JNIEXPORT jbyteArray JNICALL Java_com_parsoaudio_ParsoNative_nativeEncodeRecording(
+    JNIEnv *env, jclass, jobject samples, jint frames, jint sampleRateHz,
+    jint channelCount, jint codec, jint bitrateKbps, jint quality
+) {
+    parso_pcm_buffer_t input{};
+    if (!makePCMInput(env, samples, frames, sampleRateHz, channelCount, &input) ||
+        codec <= 0 || bitrateKbps < 0 || quality < 0) return nullptr;
+    parso_codec_options_t options{};
+    parso_bytes_t encoded{};
+    if (parso_codec_options_init(&options) != PARSO_STATUS_OK ||
+        parso_bytes_init(&encoded) != PARSO_STATUS_OK) return nullptr;
+    options.bitrate_kbps = static_cast<uint32_t>(bitrateKbps);
+    options.quality = static_cast<uint32_t>(quality);
+    if (parso_codec_write(&input, static_cast<uint32_t>(codec), &options, &encoded) !=
+            PARSO_STATUS_OK || encoded.size_bytes > static_cast<uint64_t>(INT32_MAX)) {
+        parso_bytes_release(&encoded);
+        return nullptr;
+    }
+    jbyteArray output = env->NewByteArray(static_cast<jsize>(encoded.size_bytes));
+    if (output && encoded.size_bytes > 0) {
+        env->SetByteArrayRegion(output, 0, static_cast<jsize>(encoded.size_bytes),
+                                reinterpret_cast<const jbyte *>(encoded.data));
+    }
+    parso_bytes_release(&encoded);
+    return output;
+}
+
 JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRender(
     JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint frames
 ) {

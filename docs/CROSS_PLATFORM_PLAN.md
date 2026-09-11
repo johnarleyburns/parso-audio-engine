@@ -192,7 +192,8 @@ be advertised.
 
 The Android preview now also exposes `ParsoAnalysis` summary/key/structure calls over borrowed direct
 buffers, `ParsoVorbis` Xiph encode/decode with copied PCM ownership, `ParsoOffline` SRC/loudness
-services, and `ParsoEngine`'s bounded record tap. These surfaces compile through the local Maven AAR
+services, `ParsoEngine`'s bounded record tap, and the control-side `ParsoRecorder` for WAV, FLAC,
+and AAC output through the shared codec service. These surfaces compile through the local Maven AAR
 and an external application consumer. The consumer now includes a runnable sample activity and an
 AndroidJUnit4 end-to-end scenario covering those services plus engine render/record drain;
 instrumentation execution and performance remain hosted emulator/device gates.

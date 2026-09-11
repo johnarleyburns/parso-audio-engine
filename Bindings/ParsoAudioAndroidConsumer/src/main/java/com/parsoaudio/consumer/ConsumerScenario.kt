@@ -3,8 +3,10 @@ package com.parsoaudio.consumer
 import com.parsoaudio.ParsoAnalysis
 import com.parsoaudio.ParsoEngine
 import com.parsoaudio.ParsoOffline
+import com.parsoaudio.ParsoRecorder
 import com.parsoaudio.ParsoVorbis
 import com.parsoaudio.EngineCommand
+import com.parsoaudio.RecordingFormat
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -48,6 +50,16 @@ object ConsumerScenario {
             val recordLeft = directFloats(RENDER_FRAMES)
             val recordRight = directFloats(RENDER_FRAMES)
             recorded = engine.drainRecord(recordLeft, recordRight, RENDER_FRAMES)
+            if (recorded > 0) {
+                val recorder = ParsoRecorder(SAMPLE_RATE_HZ, RecordingFormat.WAV)
+                recorder.append(recordLeft, recordRight, recorded)
+                val recording = recorder.encode()
+                check(recording.size > 44)
+                check(recording[0] == 'R'.code.toByte())
+                check(recording[1] == 'I'.code.toByte())
+                check(recording[2] == 'F'.code.toByte())
+                check(recording[3] == 'F'.code.toByte())
+            }
             dropped = engine.recordDroppedFrames()
             check(engine.stats().deckCount == 2)
             events = engine.pollEvents().size

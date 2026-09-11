@@ -202,6 +202,7 @@ jobs:
             --symbol Java_com_parsoaudio_ParsoNative_nativePostCommand \
             --symbol Java_com_parsoaudio_ParsoNative_nativeGetStats \
             --symbol Java_com_parsoaudio_ParsoNative_nativePollEvents \
+            --symbol Java_com_parsoaudio_ParsoNative_nativeEncodeRecording \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRender \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRecordSetActive \
             --symbol Java_com_parsoaudio_ParsoNative_nativeRecordDrain \

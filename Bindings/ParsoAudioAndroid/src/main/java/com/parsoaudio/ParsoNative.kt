@@ -26,6 +26,10 @@ object ParsoNative {
     ): Boolean
     @JvmStatic external fun nativeGetStats(handle: Long): LongArray?
     @JvmStatic external fun nativePollEvents(handle: Long, maxEvents: Int): LongArray?
+    @JvmStatic external fun nativeEncodeRecording(
+        samples: ByteBuffer, frames: Int, sampleRateHz: Int,
+        channelCount: Int, codec: Int, bitrateKbps: Int, quality: Int
+    ): ByteArray?
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int
     ): Int

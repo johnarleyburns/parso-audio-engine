@@ -83,5 +83,13 @@ class ParsoEngineInstrumentationTest {
         assertEquals(24_000, converted.sampleRateHz)
         assertEquals(1, converted.channelCount)
         assertTrue(kotlin.math.abs(converted.frames - frames / 2) < 32)
+
+        val recorder = ParsoRecorder(sampleRate, RecordingFormat.WAV)
+        recorder.append(samples, samples, frames)
+        val wav = recorder.encode()
+        assertEquals('R'.code.toByte(), wav[0])
+        assertEquals('I'.code.toByte(), wav[1])
+        assertEquals('F'.code.toByte(), wav[2])
+        assertEquals('F'.code.toByte(), wav[3])
     }
 }

@@ -35,6 +35,21 @@ class ParsoEngineTest {
     }
 
     @Test
+    fun recorderValidatesAndCopiesControlSideBlocksBeforeLoadingNativeRuntime() {
+        val recorder = ParsoRecorder(48_000)
+        val left = directFloats(4)
+        val right = directFloats(4)
+
+        recorder.append(left, right, 4)
+        assertEquals(4, recorder.frames)
+        recorder.reset()
+        assertEquals(0, recorder.frames)
+        assertThrows<IllegalArgumentException> {
+            recorder.append(ByteBuffer.allocate(16), right, 4)
+        }
+    }
+
+    @Test
     fun lifecycleAndTransportAreSerializedThroughTheBridge() {
         val bridge = FakeBridge()
         val engine = ParsoEngine.forTesting(native = bridge)
