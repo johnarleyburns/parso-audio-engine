@@ -34,17 +34,20 @@ The current offline gate covers WAV, FLAC, Xiph Ogg Vorbis, Opus, MP3, and AAC
 where the loaded native capability bits advertise them. `convert_sample_rate`
 and `measure_loudness` expose the native SRC and EBU R128 services. `analyze`
 provides the shared deterministic duration, RMS, peak, and energy-envelope BPM
-summary, and `waveform` returns caller-sized min/max buckets. Key, structure,
-ALAC, AIFF, CAF, and device IO remain explicit future gates.
+summary; `estimate_key` and `structure` cover the portable key/structure slice;
+and `waveform` returns caller-sized min/max buckets. ALAC, AIFF, CAF, and device
+IO remain explicit future gates.
 
-`Engine` provides bounded stereo headless rendering and a master-level control;
+`Engine` provides bounded stereo headless rendering, master-level and crossfader
+controls, copied stats, and event polling;
 `set_deck_buffer` copies and retains planar channel storage until replacement or
 close, and `play`/`pause` queue the portable transport commands. `post_command`
 exposes the versioned command payload (`i0`/`i1`/`i2` and `f0`/`f1`) for the
 shared native transport, with convenience methods for absolute seek, key-lock,
-and slip. `poll_events()` drains copied state, playhead, peak, and end-of-track
-notifications from the bounded native event ring. Device IO,
-analysis, broader DJ controls, and device IO remain explicit future gates.
+slip, cues, loops, and hot cues. `poll_events()` drains copied state, playhead,
+peak, and end-of-track notifications from the bounded native event ring.
+`MixRecorder` drains the record tap and encodes supported output formats; full
+DJ parity, device IO, and human listening remain separate acceptance gates.
 
 `MixRecorder` is a control-side recording helper: call `append_engine` after
 each render block is drained, then `encode()` through the shared native WAV,
