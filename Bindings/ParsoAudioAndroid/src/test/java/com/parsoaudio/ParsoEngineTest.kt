@@ -41,10 +41,11 @@ class ParsoEngineTest {
 
         engine.play(0)
         engine.pause(0)
+        engine.setMix(-1.0f, 0.75f)
         engine.close()
         engine.close()
 
-        assertEquals(listOf("play:0", "pause:0"), bridge.operations)
+        assertEquals(listOf("play:0", "pause:0", "mix:-1.0:0.75"), bridge.operations)
         assertEquals(1, bridge.destroyCount)
     }
 
@@ -70,6 +71,8 @@ class ParsoEngineTest {
         shifted.position(4)
         assertThrows<IllegalArgumentException> { engine.render(shifted, right, 8) }
         assertThrows<IllegalArgumentException> { engine.render(left, right, 9) }
+        assertThrows<IllegalArgumentException> { engine.setMix(1.1f) }
+        assertThrows<IllegalArgumentException> { engine.setMix(0.0f, -0.1f) }
     }
 
     private fun directFloats(frames: Int): ByteBuffer =
@@ -116,6 +119,11 @@ class ParsoEngineTest {
 
         override fun pause(handle: Long, deck: Int): Boolean {
             operations += "pause:$deck"
+            return true
+        }
+
+        override fun setMix(handle: Long, crossfader: Float, masterLevel: Float): Boolean {
+            operations += "mix:$crossfader:$masterLevel"
             return true
         }
 

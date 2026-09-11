@@ -17,6 +17,9 @@ object ParsoNative {
     ): Boolean
     @JvmStatic external fun nativePlay(handle: Long, deck: Int): Boolean
     @JvmStatic external fun nativePause(handle: Long, deck: Int): Boolean
+    @JvmStatic external fun nativeSetMix(
+        handle: Long, crossfader: Float, masterLevel: Float
+    ): Boolean
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int
     ): Int

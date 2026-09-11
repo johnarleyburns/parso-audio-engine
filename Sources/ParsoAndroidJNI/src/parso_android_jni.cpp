@@ -119,6 +119,22 @@ JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativePause(
         ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativeSetMix(
+    JNIEnv *, jclass, jlong handle, jfloat crossfader, jfloat masterLevel
+) {
+    parso_engine_t *engine = fromHandle(handle);
+    if (!engine || !std::isfinite(crossfader) || !std::isfinite(masterLevel) ||
+        crossfader < -1.0f || crossfader > 1.0f || masterLevel < 0.0f || masterLevel > 1.0f) {
+        return JNI_FALSE;
+    }
+    parso_control_t control{};
+    if (parso_control_init(&control) != PARSO_STATUS_OK) return JNI_FALSE;
+    control.crossfader = crossfader;
+    control.master_level = masterLevel;
+    return parso_engine_set_control(engine, &control) == PARSO_STATUS_OK
+        ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRender(
     JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint frames
 ) {

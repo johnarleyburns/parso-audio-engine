@@ -38,6 +38,7 @@ object ConsumerScenario {
         var dropped = 0L
         ParsoEngine(maxFrames = RENDER_FRAMES).use { engine ->
             engine.setDeckBuffer(0, monoPlane(ANALYSIS_FRAMES), monoPlane(ANALYSIS_FRAMES), ANALYSIS_FRAMES)
+            engine.setMix(-1.0f, 0.9f)
             engine.setRecordActive(true)
             engine.play(0)
             rendered = engine.render(renderLeft, renderRight, RENDER_FRAMES)

@@ -17,6 +17,7 @@ internal interface NativeEngineBridge {
     ): Boolean
     fun play(handle: Long, deck: Int): Boolean
     fun pause(handle: Long, deck: Int): Boolean
+    fun setMix(handle: Long, crossfader: Float, masterLevel: Float): Boolean
     fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int
     fun setRecordActive(handle: Long, active: Boolean): Boolean
     fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int
@@ -45,6 +46,9 @@ private object JniEngineBridge : NativeEngineBridge {
     override fun play(handle: Long, deck: Int): Boolean = ParsoNative.nativePlay(handle, deck)
 
     override fun pause(handle: Long, deck: Int): Boolean = ParsoNative.nativePause(handle, deck)
+
+    override fun setMix(handle: Long, crossfader: Float, masterLevel: Float): Boolean =
+        ParsoNative.nativeSetMix(handle, crossfader, masterLevel)
 
     override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int =
         ParsoNative.nativeRender(handle, left, right, frames)
@@ -129,6 +133,19 @@ class ParsoEngine private constructor(
         val handle = requireOpen()
         require(deck in 0 until deckCount) { "deck is out of range" }
         check(native.pause(handle, deck)) { "native pause command was rejected" }
+    }
+
+    /** Set the shared mixer crossfader and master level from the control thread. */
+    fun setMix(crossfader: Float, masterLevel: Float = 1.0f) {
+        require(crossfader.isFinite() && crossfader in -1.0f..1.0f) {
+            "crossfader must be finite and between -1 and 1"
+        }
+        require(masterLevel.isFinite() && masterLevel in 0.0f..1.0f) {
+            "master level must be finite and between 0 and 1"
+        }
+        check(native.setMix(requireOpen(), crossfader, masterLevel)) {
+            "native mixer control was rejected"
+        }
     }
 
     /** Fill caller-owned stereo direct buffers and return the rendered frame count. */
