@@ -181,6 +181,17 @@ class KeyResult:
 
 
 @dataclass(frozen=True)
+class StructureSection:
+    """Caller-owned deterministic energy/novelty structure section."""
+
+    start_seconds: float
+    kind: str
+    bar: int
+    energy: float
+    confidence: float
+
+
+@dataclass(frozen=True)
 class EngineStats:
     """Snapshot of native headless render counters."""
 
@@ -327,6 +338,26 @@ class _KeyResult(ctypes.Structure):
         ("is_minor", ctypes.c_uint32),
         ("camelot_number", ctypes.c_uint32),
         ("camelot_letter", ctypes.c_uint32),
+        ("confidence", ctypes.c_double),
+    ]
+
+
+class _StructureOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("bpm", ctypes.c_double),
+        ("max_sections", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32 * 2),
+    ]
+
+
+class _StructureSection(ctypes.Structure):
+    _fields_ = [
+        ("start_seconds", ctypes.c_double),
+        ("kind", ctypes.c_uint32),
+        ("bar", ctypes.c_uint32),
+        ("energy", ctypes.c_double),
         ("confidence", ctypes.c_double),
     ]
 
@@ -517,6 +548,13 @@ class CodecServices:
             ctypes.POINTER(_PcmBuffer), ctypes.POINTER(_KeyOptions), ctypes.POINTER(_KeyResult),
         ]
         library.parso_key_measure.restype = ctypes.c_int32
+        library.parso_structure_options_init.argtypes = [ctypes.POINTER(_StructureOptions)]
+        library.parso_structure_options_init.restype = ctypes.c_int32
+        library.parso_structure_measure.argtypes = [
+            ctypes.POINTER(_PcmBuffer), ctypes.POINTER(_StructureOptions),
+            ctypes.POINTER(_StructureSection), ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32),
+        ]
+        library.parso_structure_measure.restype = ctypes.c_int32
         library.parso_waveform_generate.argtypes = [
             ctypes.POINTER(_PcmBuffer), ctypes.c_uint32,
             ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
@@ -832,6 +870,52 @@ class CodecServices:
             int(result.tonic_pitch_class), bool(result.is_minor),
             int(result.camelot_number), "A" if result.camelot_letter else "B",
             result.confidence,
+        )
+
+    def structure(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        bpm: float = 120.0,
+        max_sections: int = 256,
+    ) -> tuple[StructureSection, ...]:
+        """Segment PCM using deterministic beat-energy novelty boundaries."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        if not math.isfinite(bpm) or not 30.0 <= bpm <= 300.0 or not 1 <= max_sections <= 4096:
+            raise ValueError("structure options are invalid")
+        native_input = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer), abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=sample_rate_hz,
+        )
+        options = _StructureOptions(
+            size=ctypes.sizeof(_StructureOptions), abi_version=self._ABI_VERSION,
+            bpm=bpm, max_sections=max_sections,
+        )
+        self._call("structure-options initialization", self._library.parso_structure_options_init, options)
+        options.bpm = bpm
+        options.max_sections = max_sections
+        output = (_StructureSection * max_sections)()
+        count = ctypes.c_uint32()
+        status = self._library.parso_structure_measure(
+            ctypes.byref(native_input), ctypes.byref(options), output,
+            max_sections, ctypes.byref(count),
+        )
+        self._raise_for_status(status, "structure measurement")
+        kinds = ("intro", "buildup", "drop", "verse", "chorus", "breakdown", "outro", "unknown")
+        return tuple(
+            StructureSection(item.start_seconds, kinds[item.kind] if item.kind < len(kinds) else "unknown",
+                             item.bar, item.energy, item.confidence)
+            for item in output[:count.value]
         )
 
     def _native_options(self, options: Optional[CodecOptions]) -> _CodecOptions:
@@ -1391,6 +1475,7 @@ __all__ = [
     "EngineStats",
     "LoudnessResult",
     "KeyResult",
+    "StructureSection",
     "MixRecorder",
     "OfflineService",
     "ParsoError",

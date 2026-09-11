@@ -221,6 +221,10 @@ public readonly record struct KeyResult(
     uint TonicPitchClass, bool IsMinor, uint CamelotNumber, string CamelotLetter,
     double Confidence);
 
+/// <summary>One deterministic energy/novelty structure boundary.</summary>
+public readonly record struct StructureSection(
+    double StartSeconds, uint Kind, uint Bar, double Energy, double Confidence);
+
 /// <summary>Provides ownership-safe managed access to native offline codec services.</summary>
 public static unsafe class CodecServices
 {
@@ -415,6 +419,53 @@ public static unsafe class CodecServices
         ThrowIfFailed(status, "key measurement");
         return new KeyResult(result.TonicPitchClass, result.IsMinor != 0,
             result.CamelotNumber, result.CamelotLetter == 1 ? "A" : "B", result.Confidence);
+    }
+
+    /// <summary>Segments borrowed PCM into bounded energy/novelty sections.</summary>
+    public static unsafe StructureSection[] Structure(ReadOnlySpan<float> samples, uint sampleRateHz,
+                                                       uint channelCount, double bpm = 120.0,
+                                                       uint maxSections = 256)
+    {
+        if (samples.IsEmpty) throw new ArgumentException("Samples cannot be empty.", nameof(samples));
+        if (channelCount is < 1 or > 2 || sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("PCM format must have one or two channels and a valid sample rate.");
+        if (!double.IsFinite(bpm) || bpm is < 30.0 or > 300.0 || maxSections is 0 or > 4096)
+            throw new ArgumentOutOfRangeException(nameof(bpm));
+        var options = new NativeMethods.StructureOptions
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.StructureOptions>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        var status = NativeMethods.StructureOptionsInit(ref options);
+        ThrowIfFailed(status, "structure-options initialization");
+        options.Bpm = bpm;
+        options.MaxSections = maxSections;
+        var result = new NativeMethods.StructureSection[maxSections];
+        var input = new NativeMethods.PcmBuffer
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.PcmBuffer>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Frames = checked((ulong)(samples.Length / (int)channelCount)),
+            ChannelCount = channelCount,
+            SampleRateHz = sampleRateHz
+        };
+        uint count = 0;
+        fixed (float* samplePointer = samples)
+        fixed (NativeMethods.StructureSection* resultPointer = result)
+        {
+            input.Samples = (nint)samplePointer;
+            status = NativeMethods.StructureMeasure(ref input, ref options, resultPointer,
+                maxSections, ref count);
+        }
+        ThrowIfFailed(status, "structure measurement");
+        var managed = new StructureSection[count];
+        for (var index = 0; index < count; index++)
+        {
+            var item = result[index];
+            managed[index] = new StructureSection(item.StartSeconds, item.Kind, item.Bar,
+                item.Energy, item.Confidence);
+        }
+        return managed;
     }
 
     /// <summary>Generates caller-sized mono min/max waveform envelopes.</summary>
@@ -964,6 +1015,27 @@ internal static unsafe partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct StructureOptions
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal double Bpm;
+        internal uint MaxSections;
+        internal uint Reserved0;
+        internal uint Reserved1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct StructureSection
+    {
+        internal double StartSeconds;
+        internal uint Kind;
+        internal uint Bar;
+        internal double Energy;
+        internal double Confidence;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct EngineOptions
     {
         internal uint Size;
@@ -1121,6 +1193,14 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("parso", EntryPoint = "parso_key_measure")]
     internal static partial int KeyMeasure(ref PcmBuffer input, ref KeyOptions options,
         ref KeyResult result);
+
+    [LibraryImport("parso", EntryPoint = "parso_structure_options_init")]
+    internal static partial int StructureOptionsInit(ref StructureOptions options);
+
+    [LibraryImport("parso", EntryPoint = "parso_structure_measure")]
+    internal static partial int StructureMeasure(ref PcmBuffer input,
+        ref StructureOptions options, StructureSection* sections, uint capacity,
+        ref uint outCount);
 
     [LibraryImport("parso", EntryPoint = "parso_waveform_generate")]
     internal static partial int WaveformGenerate(ref PcmBuffer input, uint bucketCount,

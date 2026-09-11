@@ -17,6 +17,7 @@ int main(void) {
     float samples[frames];
     static float key_samples[frames];
     static float click_track[analysis_frames];
+    static float structure_samples[analysis_frames];
     for (uint32_t index = 0; index < frames; ++index) {
         samples[index] = 0.25f;
     }
@@ -30,6 +31,15 @@ int main(void) {
                                      0.20 * sin(6.283185307179586 * 261.63 * time) +
                                      0.20 * sin(6.283185307179586 * 329.63 * time));
     }
+    for (uint32_t index = 96000; index < 192000; ++index) {
+        structure_samples[index] = (float)(0.1 * sin(6.283185307179586 * 110.0 * index / 48000.0));
+    }
+    for (uint32_t index = 192000; index < 288000; ++index) {
+        structure_samples[index] = (float)(0.5 * sin(6.283185307179586 * 220.0 * index / 48000.0));
+    }
+    for (uint32_t index = 288000; index < analysis_frames; ++index) {
+        structure_samples[index] = (float)(0.1 * sin(6.283185307179586 * 110.0 * index / 48000.0));
+    }
 
     parso_capabilities_t capabilities;
     parso_pcm_buffer_t input;
@@ -41,6 +51,9 @@ int main(void) {
     parso_analysis_result_t analysis;
     parso_key_options_t key_options;
     parso_key_result_t key;
+    parso_structure_options_t structure_options;
+    parso_structure_section_t structure[16];
+    uint32_t structure_count = 0;
     float waveform_min[4];
     float waveform_max[4];
     if (!require_ok(parso_capabilities_init(&capabilities), "capabilities init") ||
@@ -58,7 +71,8 @@ int main(void) {
         !require_ok(parso_analysis_options_init(&analysis_options), "analysis options init") ||
         !require_ok(parso_analysis_result_init(&analysis), "analysis result init") ||
         !require_ok(parso_key_options_init(&key_options), "key options init") ||
-        !require_ok(parso_key_result_init(&key), "key result init")) return 1;
+        !require_ok(parso_key_result_init(&key), "key result init") ||
+        !require_ok(parso_structure_options_init(&structure_options), "structure options init")) return 1;
 
     input.samples = samples;
     input.frames = frames;
@@ -117,6 +131,20 @@ int main(void) {
         fprintf(stderr, "public_c_services_consumer: invalid key result tonic=%u mode=%u camelot=%u%c confidence=%f\n",
                 key.tonic_pitch_class, key.is_minor, key.camelot_number,
                 key.camelot_letter ? 'A' : 'B', key.confidence);
+        parso_pcm_buffer_release(&converted);
+        input.samples = NULL;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+    parso_pcm_buffer_t structure_input = {
+        .size = sizeof(parso_pcm_buffer_t), .abi_version = PARSO_ABI_VERSION,
+        .samples = structure_samples, .frames = analysis_frames,
+        .channel_count = 1, .sample_rate_hz = 48000
+    };
+    if (!require_ok(parso_structure_measure(&structure_input, &structure_options,
+                                           structure, 16, &structure_count), "structure measure") ||
+        structure_count < 3 || structure[0].kind != 0 || structure[1].start_seconds <= 0.0) {
+        fprintf(stderr, "public_c_services_consumer: invalid structure count=%u\n", structure_count);
         parso_pcm_buffer_release(&converted);
         input.samples = NULL;
         parso_pcm_buffer_release(&input);

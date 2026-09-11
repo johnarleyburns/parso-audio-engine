@@ -151,7 +151,9 @@ min/max buckets. The C11 consumer, Python binding, and C# consumer exercise the 
 the native and Python 30-second artifacts include analysis and waveform JSON. A follow-on
 `parso_key_measure` service now ports the Swift HPCP/Krumhansl-Schmuckler contract with a
 dependency-free radix-2 STFT, and C11/Python/C# consumers cover a rooted A-minor vector. Structure
-remains a separate gate; the portable analysis surface still does not claim full Swift parity.
+now has a bounded caller-owned `parso_structure_measure` service that mirrors Swift's deterministic
+energy/coarse-band/zero-crossing novelty segmenter; C11/C++17/Python/C# consumers cover synthetic
+transitions. Full phrase/self-similarity parity remains a separate gate.
 
 The CP3 codec sub-phase now vendors Xiph libogg 1.3.5 plus libvorbis 1.3.7 (BSD-style), replacing
 the former stb_vorbis decode-only target. The public byte ABI exposes Ogg Vorbis read/write through

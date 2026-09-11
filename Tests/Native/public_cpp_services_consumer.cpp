@@ -19,6 +19,9 @@ int main() {
     parso_loudness_result_t loudness{};
     parso_key_options_t keyOptions{};
     parso_key_result_t key{};
+    parso_structure_options_t structureOptions{};
+    parso_structure_section_t sections[8]{};
+    uint32_t sectionCount = 0;
     if (parso_capabilities_init(&capabilities) != PARSO_STATUS_OK ||
         parso_capabilities_get(&capabilities) != PARSO_STATUS_OK ||
         (capabilities.offline_services & PARSO_OFFLINE_SERVICE_SRC) == 0 ||
@@ -28,7 +31,8 @@ int main() {
         parso_loudness_options_init(&loudnessOptions) != PARSO_STATUS_OK ||
         parso_loudness_result_init(&loudness) != PARSO_STATUS_OK ||
         parso_key_options_init(&keyOptions) != PARSO_STATUS_OK ||
-        parso_key_result_init(&key) != PARSO_STATUS_OK) return 1;
+        parso_key_result_init(&key) != PARSO_STATUS_OK ||
+        parso_structure_options_init(&structureOptions) != PARSO_STATUS_OK) return 1;
 
     input.samples = samples;
     input.frames = frames;
@@ -58,6 +62,15 @@ int main() {
     if (codecInput.estimateKey(keyOptions, &key) != PARSO_STATUS_OK ||
         key.tonic_pitch_class >= 12 || key.camelot_number < 1 || key.camelot_number > 12) {
         std::fprintf(stderr, "public_cpp_services_consumer: invalid key result: %s\n",
+                     parso_last_error());
+        codecInput.cHandle()->samples = nullptr;
+        input.samples = nullptr;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+    if (codecInput.measureStructure(structureOptions, sections, 8, &sectionCount) != PARSO_STATUS_OK ||
+        sectionCount == 0 || sections[0].kind > 7) {
+        std::fprintf(stderr, "public_cpp_services_consumer: invalid structure result: %s\n",
                      parso_last_error());
         codecInput.cHandle()->samples = nullptr;
         input.samples = nullptr;

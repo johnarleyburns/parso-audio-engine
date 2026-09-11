@@ -11,6 +11,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -46,6 +47,8 @@ constexpr uint32_t kMinimumKeyOptionsSize =
     static_cast<uint32_t>(sizeof(parso_key_options_t));
 constexpr uint32_t kMinimumKeyResultSize =
     static_cast<uint32_t>(sizeof(parso_key_result_t));
+constexpr uint32_t kMinimumStructureOptionsSize =
+    static_cast<uint32_t>(sizeof(parso_structure_options_t));
 
 thread_local const char *lastError = "ok";
 
@@ -222,6 +225,21 @@ parso_status_t validateKeyOptions(const parso_key_options_t *options) noexcept {
 parso_status_t validateKeyResult(parso_key_result_t *result) noexcept {
     if (!result) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key result is null");
     return checkHeader(result->size, result->abi_version, kMinimumKeyResultSize);
+}
+
+parso_status_t validateStructureOptions(
+    const parso_structure_options_t *options) noexcept {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "structure options are null");
+    const parso_status_t status = checkHeader(
+        options->size, options->abi_version, kMinimumStructureOptionsSize
+    );
+    if (status != PARSO_STATUS_OK) return status;
+    if ((options->bpm != 0.0 &&
+         (!std::isfinite(options->bpm) || options->bpm < 30.0 || options->bpm > 300.0)) ||
+        options->max_sections > 4096) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "structure options are invalid");
+    }
+    return PARSO_STATUS_OK;
 }
 
 double keyProfileCorrelation(const double *chroma, const double *profile) noexcept {
@@ -1328,6 +1346,147 @@ PARSO_API parso_status_t parso_key_measure(
         return fail(PARSO_STATUS_OUT_OF_MEMORY, "key analysis allocation failed");
     } catch (...) {
         return fail(PARSO_STATUS_INTERNAL, "exception caught while measuring key");
+    }
+}
+
+PARSO_API parso_status_t parso_structure_options_init(
+    parso_structure_options_t *options) {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "structure options are null");
+    std::memset(options, 0, sizeof(*options));
+    options->size = sizeof(*options);
+    options->abi_version = PARSO_ABI_VERSION;
+    options->bpm = 120.0;
+    options->max_sections = 256;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_structure_measure(
+    const parso_pcm_buffer_t *input, const parso_structure_options_t *options,
+    parso_structure_section_t *sections, uint32_t capacity, uint32_t *out_count
+) {
+    try {
+        if (!out_count) return fail(PARSO_STATUS_INVALID_ARGUMENT, "structure count is null");
+        *out_count = 0;
+        const parso_status_t inputStatus = validatePCMBuffer(input);
+        if (inputStatus != PARSO_STATUS_OK) return inputStatus;
+        const parso_status_t optionsStatus = validateStructureOptions(options);
+        if (optionsStatus != PARSO_STATUS_OK) return optionsStatus;
+        if (!sections && capacity != 0) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "structure output is null");
+        }
+        if (input->frames == 0) return PARSO_STATUS_OK;
+
+        const double bpm = options->bpm == 0.0 ? 120.0 : options->bpm;
+        const double beatPeriod = 60.0 / bpm;
+        const double duration = static_cast<double>(input->frames) /
+                                static_cast<double>(input->sample_rate_hz);
+        const uint64_t beatCount = std::max<uint64_t>(
+            1u, static_cast<uint64_t>(std::ceil(duration / beatPeriod)));
+        struct Feature { double values[5]; };
+        std::vector<Feature> features;
+        features.reserve(static_cast<size_t>(beatCount));
+        for (uint64_t beat = 0; beat < beatCount; ++beat) {
+            const uint64_t start = std::min<uint64_t>(input->frames,
+                static_cast<uint64_t>(static_cast<double>(beat) * beatPeriod * input->sample_rate_hz));
+            const uint64_t end = std::min<uint64_t>(input->frames,
+                std::max<uint64_t>(start + 1u,
+                    static_cast<uint64_t>(static_cast<double>(beat + 1u) * beatPeriod *
+                                          input->sample_rate_hz)));
+            if (start >= end) continue;
+            double energy = 0.0;
+            double low = 0.0;
+            double mid = 0.0;
+            double high = 0.0;
+            uint64_t crossings = 0;
+            double previous = 0.0;
+            for (uint64_t frame = start; frame < end; ++frame) {
+                double value = 0.0;
+                for (uint32_t channel = 0; channel < input->channel_count; ++channel) {
+                    const float raw = input->samples[frame * input->channel_count + channel];
+                    value += std::isfinite(raw) ? static_cast<double>(raw) : 0.0;
+                }
+                value /= static_cast<double>(input->channel_count);
+                energy += value * value;
+                const double magnitude = std::abs(value);
+                if (magnitude > 0.35) high += value * value;
+                else if (magnitude > 0.1) mid += value * value;
+                else low += value * value;
+                if (frame > start && ((value >= 0.0) != (previous >= 0.0))) ++crossings;
+                previous = value;
+            }
+            const double count = static_cast<double>(end - start);
+            features.push_back({{
+                std::sqrt(energy / count), low / count, mid / count,
+                high / count, static_cast<double>(crossings) / count
+            }});
+        }
+        if (features.empty()) return PARSO_STATUS_OK;
+        double maximumEnergy = 0.0;
+        for (const Feature &feature : features) maximumEnergy = std::max(maximumEnergy, feature.values[0]);
+        auto cosineDistance = [](const Feature &lhs, const Feature &rhs) noexcept {
+            double dot = 0.0;
+            double lhsNorm = 0.0;
+            double rhsNorm = 0.0;
+            for (size_t index = 0; index < 5; ++index) {
+                dot += lhs.values[index] * rhs.values[index];
+                lhsNorm += lhs.values[index] * lhs.values[index];
+                rhsNorm += rhs.values[index] * rhs.values[index];
+            }
+            const double denominator = std::sqrt(lhsNorm * rhsNorm);
+            return denominator > 0.0 ? 1.0 - dot / denominator : 1.0;
+        };
+        std::vector<uint32_t> boundaries{0};
+        uint32_t lastBoundary = 0;
+        for (uint32_t index = 1; index < features.size(); ++index) {
+            const double novelty = cosineDistance(features[index - 1], features[index]);
+            const double nextNovelty = index + 1 == features.size()
+                ? novelty : cosineDistance(features[index], features[index + 1]);
+            const double energyChange = std::abs(
+                features[index].values[0] - features[index - 1].values[0]);
+            if (index + 1 == features.size() || novelty >= nextNovelty) {
+                if (energyChange > std::max(0.02 * maximumEnergy, 0.08) &&
+                    index - lastBoundary >= 4) {
+                    boundaries.push_back(index);
+                    lastBoundary = index;
+                }
+            }
+        }
+        if (boundaries.size() == 1 && features.size() > 8) {
+            const uint32_t quarter = std::max<size_t>(1, features.size() / 4);
+            boundaries.push_back(quarter);
+            boundaries.push_back(std::min<size_t>(features.size() - 1, quarter * 2));
+        }
+        std::sort(boundaries.begin(), boundaries.end());
+        boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+        const uint32_t maximumSections = options->max_sections == 0 ? 256u : options->max_sections;
+        if (boundaries.size() > maximumSections) {
+            return fail(PARSO_STATUS_INVALID_SIZE, "structure result exceeds maximum sections");
+        }
+        *out_count = static_cast<uint32_t>(boundaries.size());
+        if (capacity < *out_count) return fail(PARSO_STATUS_INVALID_SIZE, "structure output is too small");
+        for (size_t position = 0; position < boundaries.size(); ++position) {
+            const uint32_t beat = boundaries[position];
+            const double energy = features[std::min<size_t>(beat, features.size() - 1)].values[0];
+            uint32_t kind = 7; // unknown
+            if (position == 0) kind = 0; // intro
+            else if (energy > maximumEnergy * 0.75) kind = 2; // drop
+            else if (energy < maximumEnergy * 0.25) kind = 5; // breakdown
+            sections[position].start_seconds = std::min(
+                duration, static_cast<double>(beat) * beatPeriod);
+            sections[position].kind = kind;
+            sections[position].bar = beat / 4u + 1u;
+            sections[position].energy = energy;
+            sections[position].confidence = std::min(1.0,
+                std::abs(energy - (position == 0 ? 0.0 :
+                    features[boundaries[position - 1]].values[0])) /
+                std::max(0.08, maximumEnergy));
+        }
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "structure analysis allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while measuring structure");
     }
 }
 

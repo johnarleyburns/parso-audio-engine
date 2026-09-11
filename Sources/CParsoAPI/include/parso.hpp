@@ -100,6 +100,12 @@ public:
         return parso_key_measure(&value_, &options, result);
     }
 
+    parso_status_t measureStructure(const parso_structure_options_t &options,
+                                    parso_structure_section_t *sections,
+                                    uint32_t capacity, uint32_t *outCount) const noexcept {
+        return parso_structure_measure(&value_, &options, sections, capacity, outCount);
+    }
+
     const float *samples() const noexcept { return value_.samples; }
     uint64_t frames() const noexcept { return value_.frames; }
     uint32_t channels() const noexcept { return value_.channel_count; }

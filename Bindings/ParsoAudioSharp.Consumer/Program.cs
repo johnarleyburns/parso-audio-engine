@@ -21,6 +21,9 @@ var key = CodecServices.EstimateKey(tone, 48_000, 1);
 if (key.TonicPitchClass >= 12 || key.CamelotNumber is < 1 or > 12 ||
     key.CamelotLetter is not ("A" or "B") || !double.IsFinite(key.Confidence))
     throw new InvalidOperationException("C# native consumer received invalid key result.");
+var sections = CodecServices.Structure(tone, 48_000, 1);
+if (sections.Length == 0 || sections[0].Kind > 7 || sections[0].StartSeconds < 0.0)
+    throw new InvalidOperationException("C# native consumer received invalid structure result.");
 var waveform = CodecServices.Waveform(tone, 48_000, 1, 8);
 if (waveform.Min.Length != 8 || waveform.Max.Length != 8 ||
     waveform.Min.Zip(waveform.Max).Any(pair => pair.First > pair.Second))

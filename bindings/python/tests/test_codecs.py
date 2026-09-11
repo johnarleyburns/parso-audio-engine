@@ -88,6 +88,17 @@ class CodecServicesTests(unittest.TestCase):
         self.assertEqual((result.camelot_number, result.camelot_letter), (8, "A"))
         self.assertGreater(result.confidence, 0.3)
 
+    def test_structure_sections(self) -> None:
+        samples = [0.0] * (48_000 * 8)
+        for index in range(48_000 * 2, 48_000 * 4):
+            samples[index] = 0.5 * math.sin(2.0 * math.pi * 110.0 * index / 48_000.0)
+        for index in range(48_000 * 4, 48_000 * 6):
+            samples[index] = 0.8 * math.sin(2.0 * math.pi * 220.0 * index / 48_000.0)
+        sections = self.audio.structure(samples, 48_000, 1, bpm=120.0)
+        self.assertGreaterEqual(len(sections), 3)
+        self.assertEqual(sections[0].kind, "intro")
+        self.assertTrue(all(section.start_seconds >= 0.0 for section in sections))
+
     def test_waveform_min_max_summary(self) -> None:
         samples = [math.sin(2.0 * math.pi * index / 32.0) for index in range(1_024)]
         minimum, maximum = self.audio.waveform(samples, 48_000, 1, 32)

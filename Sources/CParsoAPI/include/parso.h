@@ -215,6 +215,22 @@ typedef struct {
 typedef struct {
     uint32_t size;
     uint32_t abi_version;
+    double bpm;              /* 0: implementation default (120) */
+    uint32_t max_sections;   /* 0: implementation default (256) */
+    uint32_t reserved[2];
+} parso_structure_options_t;
+
+typedef struct {
+    double start_seconds;
+    uint32_t kind;           /* intro, buildup, drop, verse, chorus, breakdown, outro, unknown */
+    uint32_t bar;
+    double energy;
+    double confidence;
+} parso_structure_section_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
     float crossfader;
     float xfade_curve;
     float master_level;
@@ -402,6 +418,14 @@ PARSO_API parso_status_t parso_key_result_init(parso_key_result_t *result);
 PARSO_API parso_status_t parso_key_measure(
     const parso_pcm_buffer_t *input, const parso_key_options_t *options,
     parso_key_result_t *result
+);
+PARSO_API parso_status_t parso_structure_options_init(parso_structure_options_t *options);
+/* Writes caller-owned section records. If capacity is too small, no records
+ * are written, *out_count reports the required count, and INVALID_SIZE is
+ * returned. */
+PARSO_API parso_status_t parso_structure_measure(
+    const parso_pcm_buffer_t *input, const parso_structure_options_t *options,
+    parso_structure_section_t *sections, uint32_t capacity, uint32_t *out_count
 );
 /* Generate bucketed mono min/max envelopes into caller-owned arrays. */
 PARSO_API parso_status_t parso_waveform_generate(
