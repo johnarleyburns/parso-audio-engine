@@ -73,6 +73,11 @@ int main(void)
     parso_pcm_buffer_t input;
     parso_pcm_buffer_t decoded;
     parso_bytes_t encoded;
+    parso_key_options_t key_options;
+    parso_key_result_t key;
+    parso_structure_options_t structure_options;
+    parso_structure_section_t sections[8];
+    uint32_t section_count = 0;
     uint32_t index;
 
     for (index = 0; index < frames; ++index)
@@ -83,7 +88,10 @@ int main(void)
         parso_codec_options_init(&options) != PARSO_STATUS_OK ||
         parso_pcm_buffer_init(&input) != PARSO_STATUS_OK ||
         parso_pcm_buffer_init(&decoded) != PARSO_STATUS_OK ||
-        parso_bytes_init(&encoded) != PARSO_STATUS_OK) {
+        parso_bytes_init(&encoded) != PARSO_STATUS_OK ||
+        parso_key_options_init(&key_options) != PARSO_STATUS_OK ||
+        parso_key_result_init(&key) != PARSO_STATUS_OK ||
+        parso_structure_options_init(&structure_options) != PARSO_STATUS_OK) {
         fprintf(stderr, "installed consumer: initialization failed: %s\n", parso_last_error());
         return 1;
     }
@@ -91,6 +99,16 @@ int main(void)
     input.frames = frames;
     input.channel_count = 1;
     input.sample_rate_hz = 48000;
+    if (parso_key_measure(&input, &key_options, &key) != PARSO_STATUS_OK ||
+        key.tonic_pitch_class >= 12 ||
+        parso_structure_measure(&input, &structure_options, sections, 8, &section_count) !=
+            PARSO_STATUS_OK || section_count == 0 || sections[0].kind > 7) {
+        fprintf(stderr, "installed consumer: analysis ABI failed: %s\n", parso_last_error());
+        parso_bytes_release(&encoded);
+        input.samples = NULL;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
     if (parso_codec_write(&input, PARSO_CODEC_OGG_VORBIS, &options, &encoded) != PARSO_STATUS_OK ||
         encoded.size_bytes < 4 || encoded.data[0] != 'O' || encoded.data[1] != 'g' ||
         encoded.data[2] != 'g' || encoded.data[3] != 'S' ||
