@@ -74,8 +74,8 @@ targets: [
 ## Portable native SDK preview
 
 The cross-platform work starts with the existing C/C++ real-time targets and a versioned, C-clean
-facade. Linux will get a C11/C++17 SDK built with CMake and a host-callback render example before
-an optional device backend. Android will package the same native library in an AAR with a small JNI
+facade. Linux provides a C11/C++17 SDK built with CMake, a host-callback render example, and an
+optional PipeWire device adapter. Android will package the same native library in an AAR with a small JNI
 bridge and Oboe device adapter. Control and offline work move into shared native services gradually;
 Swift remains a compatibility API during that migration. No Swift runtime or Apple framework will be
 required by the native artifacts.

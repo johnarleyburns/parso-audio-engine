@@ -45,7 +45,7 @@ Swift SDK       Kotlin Android SDK       Linux C/C++ API      Windows C/C++ API
                                     |
                       CParsoEngine -> CParsoDSP
 
-Device adapters: Apple existing backend | Android Oboe | Linux host callback/backend | Windows WASAPI (later)
+Device adapters: Apple existing backend | Android Oboe | Linux PipeWire host callback/backend | Windows WASAPI (later)
 Builds:          SwiftPM               | Gradle + CMake | CMake                       | CMake/MSVC
 Python packaging: Python build frontend + native CMake artifacts -> wheel / source distribution
 ```
@@ -218,15 +218,23 @@ latency performance.
 3. Cover device enumeration, negotiated rate/layout, bounded conversion buffers, hot unplug, capture, master/cue/booth routing, and graceful shutdown. Report missing hardware routing as unavailable.
 4. Provide headless render-to-WAV and live C/C++ mixer examples. Package versioned libraries, SONAME, headers, symbols, notices, and reproducible source-build instructions; establish the glibc floor in CI containers.
 
-The dependency-free `parso_linux_host_callback` example now supplies the first host callback
-contract. The host owns planar output buffers, chooses each bounded callback size, invokes
-`parso_engine_render` once per callback, and drains events/stats only after the callback boundary.
-An optional output path writes the rendered stereo signal as WAV. No device API, allocation,
-logging, or file IO is required by the render call itself; a future ALSA, PipeWire, JACK, or
-application-owned device adapter can connect to this same contract. Installed C11 and C++17 CMake-package
-consumers exercise render/service lifetimes in addition to the Xiph Vorbis codec round trip.
+The dependency-free `parso_linux_host_callback` example supplies the host callback contract. The
+host owns planar output buffers, chooses each bounded callback size, invokes `parso_engine_render`,
+and drains events/stats only after the callback boundary. `parso_linux_pipewire_host` now supplies
+the optional live adapter: `pw-cat` playback/capture processes are isolated behind bounded SPSC
+queues, master/monitor/booth buses are independently routable, and the record tap is drained to
+WAV. The native library still links no PipeWire or ALSA library, so this adapter adds no prohibited
+copyleft runtime dependency. The `--no-device` path is deterministic CTest coverage; live default
+sink/source, explicit target routing, continuous short-source playback, and record/capture smoke
+checks pass on the maintainer Linux host.
 
-Gate: clean external C/C++ consumers on Linux x86_64/aarch64, headless parity, and live playback/capture acceptance on documented hardware. A host callback SDK can ship before an optional device backend clears review.
+Remaining CP5/CP6 evidence is route restart/hot-unplug behavior on named hardware, full scenario
+coverage, and human listening sign-off. Installed C11 and C++17 CMake-package consumers exercise
+render/service lifetimes in addition to the Xiph Vorbis codec round trip.
+
+Gate: clean external C/C++ consumers on Linux x86_64/aarch64, headless parity, and live
+playback/capture acceptance on documented hardware. The host callback and PipeWire adapter are
+implemented; route restart and human review remain explicit acceptance gates.
 
 ### CP6 — Linux human listening acceptance
 
