@@ -153,6 +153,19 @@ bool requireStatus(parso_status_t status, const char *operation) noexcept {
     return false;
 }
 
+bool pipeWireTargetExists(const std::string &target) {
+    if (target.empty()) return true;
+    FILE *listing = popen("pw-cli ls Node", "r");
+    if (!listing) return false;
+    bool found = false;
+    std::array<char, 512> line{};
+    while (fgets(line.data(), static_cast<int>(line.size()), listing)) {
+        if (std::strstr(line.data(), target.c_str())) found = true;
+    }
+    const int status = pclose(listing);
+    return found && status == 0;
+}
+
 class ChildStream final {
 public:
     bool start(bool playback, const std::string &target) {
@@ -441,6 +454,16 @@ int main(int argc, char **argv) {
     ChildStream boothStream;
     ChildStream captureStream;
     const bool useDevice = !options.noDevice;
+    if (useDevice &&
+        (!pipeWireTargetExists(options.outputTarget) ||
+         !pipeWireTargetExists(options.monitorTarget) ||
+         !pipeWireTargetExists(options.boothTarget) ||
+         !pipeWireTargetExists(options.captureTarget))) {
+        std::fprintf(stderr, "linux_pipewire_host: requested PipeWire target was not found\n");
+        parso_engine_destroy(&engine);
+        parso_pcm_buffer_release(&decoded);
+        return 1;
+    }
     if (useDevice &&
         (!startOutput(options.outputTarget, &outputStream) ||
          (!options.monitorTarget.empty() && !startOutput(options.monitorTarget, &monitorStream)) ||
