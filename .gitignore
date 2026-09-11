@@ -6,6 +6,7 @@ build/
 build-native/
 build-native-sanitize/
 build-linux-sanitize/
+build-linux-static/
 build-linux/
 build-windows-cross/
 build-android-*/
