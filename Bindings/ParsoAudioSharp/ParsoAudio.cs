@@ -216,6 +216,11 @@ public readonly record struct DecodedPcm(
 public readonly record struct AnalysisResult(
     double DurationSeconds, double Rms, double Peak, double Bpm, double BpmConfidence);
 
+/// <summary>Portable HPCP/Krumhansl-Schmuckler key estimate.</summary>
+public readonly record struct KeyResult(
+    uint TonicPitchClass, bool IsMinor, uint CamelotNumber, string CamelotLetter,
+    double Confidence);
+
 /// <summary>Provides ownership-safe managed access to native offline codec services.</summary>
 public static unsafe class CodecServices
 {
@@ -363,6 +368,53 @@ public static unsafe class CodecServices
         ThrowIfFailed(status, "analysis measurement");
         return new AnalysisResult(result.DurationSeconds, result.Rms, result.Peak,
             result.Bpm, result.BpmConfidence);
+    }
+
+    /// <summary>Estimates pitch class and mode on borrowed PCM.</summary>
+    public static KeyResult EstimateKey(ReadOnlySpan<float> samples, uint sampleRateHz,
+                                        uint channelCount, uint windowFrames = 8192,
+                                        uint hopFrames = 4096, uint minMidi = 36,
+                                        uint maxMidi = 96)
+    {
+        if (samples.IsEmpty) throw new ArgumentException("Samples cannot be empty.", nameof(samples));
+        if (channelCount is < 1 or > 2 || sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("PCM format must have one or two channels and a valid sample rate.");
+        if (windowFrames == 0 || hopFrames == 0 || minMidi > maxMidi || maxMidi > 127)
+            throw new ArgumentOutOfRangeException(nameof(windowFrames));
+        var options = new NativeMethods.KeyOptions
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.KeyOptions>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        var status = NativeMethods.KeyOptionsInit(ref options);
+        ThrowIfFailed(status, "key-options initialization");
+        options.WindowFrames = windowFrames;
+        options.HopFrames = hopFrames;
+        options.MinMidi = minMidi;
+        options.MaxMidi = maxMidi;
+        var result = new NativeMethods.KeyResult
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.KeyResult>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        status = NativeMethods.KeyResultInit(ref result);
+        ThrowIfFailed(status, "key-result initialization");
+        var input = new NativeMethods.PcmBuffer
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.PcmBuffer>(),
+            AbiVersion = NativeMethods.AbiVersion,
+            Frames = checked((ulong)(samples.Length / (int)channelCount)),
+            ChannelCount = channelCount,
+            SampleRateHz = sampleRateHz
+        };
+        fixed (float* samplePointer = samples)
+        {
+            input.Samples = (nint)samplePointer;
+            status = NativeMethods.KeyMeasure(ref input, ref options, ref result);
+        }
+        ThrowIfFailed(status, "key measurement");
+        return new KeyResult(result.TonicPitchClass, result.IsMinor != 0,
+            result.CamelotNumber, result.CamelotLetter == 1 ? "A" : "B", result.Confidence);
     }
 
     /// <summary>Generates caller-sized mono min/max waveform envelopes.</summary>
@@ -889,6 +941,29 @@ internal static unsafe partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct KeyOptions
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint WindowFrames;
+        internal uint HopFrames;
+        internal uint MinMidi;
+        internal uint MaxMidi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KeyResult
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint TonicPitchClass;
+        internal uint IsMinor;
+        internal uint CamelotNumber;
+        internal uint CamelotLetter;
+        internal double Confidence;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct EngineOptions
     {
         internal uint Size;
@@ -1036,6 +1111,16 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("parso", EntryPoint = "parso_analysis_measure")]
     internal static partial int AnalysisMeasure(ref PcmBuffer input, ref AnalysisOptions options,
         ref AnalysisResult result);
+
+    [LibraryImport("parso", EntryPoint = "parso_key_options_init")]
+    internal static partial int KeyOptionsInit(ref KeyOptions options);
+
+    [LibraryImport("parso", EntryPoint = "parso_key_result_init")]
+    internal static partial int KeyResultInit(ref KeyResult result);
+
+    [LibraryImport("parso", EntryPoint = "parso_key_measure")]
+    internal static partial int KeyMeasure(ref PcmBuffer input, ref KeyOptions options,
+        ref KeyResult result);
 
     [LibraryImport("parso", EntryPoint = "parso_waveform_generate")]
     internal static partial int WaveformGenerate(ref PcmBuffer input, uint bucketCount,

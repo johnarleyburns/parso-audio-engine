@@ -15,12 +15,20 @@ int main(void) {
     enum { frames = 48000 };
     enum { analysis_frames = 384000 };
     float samples[frames];
+    static float key_samples[frames];
     static float click_track[analysis_frames];
     for (uint32_t index = 0; index < frames; ++index) {
         samples[index] = 0.25f;
     }
     for (uint32_t beat = 0; beat < analysis_frames; beat += 24000) {
         for (uint32_t index = beat; index < beat + 128; ++index) click_track[index] = 1.0f;
+    }
+    for (uint32_t index = 0; index < frames; ++index) {
+        const double time = (double)index / 48000.0;
+        key_samples[index] = (float)(0.25 * sin(6.283185307179586 * 110.0 * time) +
+                                     0.20 * sin(6.283185307179586 * 220.0 * time) +
+                                     0.20 * sin(6.283185307179586 * 261.63 * time) +
+                                     0.20 * sin(6.283185307179586 * 329.63 * time));
     }
 
     parso_capabilities_t capabilities;
@@ -31,6 +39,8 @@ int main(void) {
     parso_loudness_result_t loudness;
     parso_analysis_options_t analysis_options;
     parso_analysis_result_t analysis;
+    parso_key_options_t key_options;
+    parso_key_result_t key;
     float waveform_min[4];
     float waveform_max[4];
     if (!require_ok(parso_capabilities_init(&capabilities), "capabilities init") ||
@@ -46,7 +56,9 @@ int main(void) {
         !require_ok(parso_loudness_options_init(&loudness_options), "loudness options init") ||
         !require_ok(parso_loudness_result_init(&loudness), "loudness result init") ||
         !require_ok(parso_analysis_options_init(&analysis_options), "analysis options init") ||
-        !require_ok(parso_analysis_result_init(&analysis), "analysis result init")) return 1;
+        !require_ok(parso_analysis_result_init(&analysis), "analysis result init") ||
+        !require_ok(parso_key_options_init(&key_options), "key options init") ||
+        !require_ok(parso_key_result_init(&key), "key result init")) return 1;
 
     input.samples = samples;
     input.frames = frames;
@@ -90,6 +102,21 @@ int main(void) {
                     "waveform generate") || waveform_min[0] > waveform_max[0] ||
         waveform_max[0] < 0.9f) {
         fprintf(stderr, "public_c_services_consumer: invalid waveform result\n");
+        parso_pcm_buffer_release(&converted);
+        input.samples = NULL;
+        parso_pcm_buffer_release(&input);
+        return 1;
+    }
+    parso_pcm_buffer_t key_input = {
+        .size = sizeof(parso_pcm_buffer_t), .abi_version = PARSO_ABI_VERSION,
+        .samples = key_samples, .frames = frames, .channel_count = 1, .sample_rate_hz = 48000
+    };
+    if (!require_ok(parso_key_measure(&key_input, &key_options, &key), "key measure") ||
+        key.tonic_pitch_class != 9 || key.is_minor != 1 || key.camelot_number != 8 ||
+        key.camelot_letter != 1 || key.confidence < 0.3) {
+        fprintf(stderr, "public_c_services_consumer: invalid key result tonic=%u mode=%u camelot=%u%c confidence=%f\n",
+                key.tonic_pitch_class, key.is_minor, key.camelot_number,
+                key.camelot_letter ? 'A' : 'B', key.confidence);
         parso_pcm_buffer_release(&converted);
         input.samples = NULL;
         parso_pcm_buffer_release(&input);

@@ -42,6 +42,10 @@ constexpr uint32_t kMinimumAnalysisOptionsSize =
     static_cast<uint32_t>(sizeof(parso_analysis_options_t));
 constexpr uint32_t kMinimumAnalysisResultSize =
     static_cast<uint32_t>(sizeof(parso_analysis_result_t));
+constexpr uint32_t kMinimumKeyOptionsSize =
+    static_cast<uint32_t>(sizeof(parso_key_options_t));
+constexpr uint32_t kMinimumKeyResultSize =
+    static_cast<uint32_t>(sizeof(parso_key_result_t));
 
 thread_local const char *lastError = "ok";
 
@@ -198,6 +202,56 @@ parso_status_t validateAnalysisOptions(const parso_analysis_options_t *options) 
 parso_status_t validateAnalysisResult(parso_analysis_result_t *result) noexcept {
     if (!result) return fail(PARSO_STATUS_INVALID_ARGUMENT, "analysis result is null");
     return checkHeader(result->size, result->abi_version, kMinimumAnalysisResultSize);
+}
+
+parso_status_t validateKeyOptions(const parso_key_options_t *options) noexcept {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key options are null");
+    const parso_status_t status = checkHeader(
+        options->size, options->abi_version, kMinimumKeyOptionsSize
+    );
+    if (status != PARSO_STATUS_OK) return status;
+    if (options->window_frames > 16384 || options->hop_frames > 16384 ||
+        options->min_midi > 127 || options->max_midi > 127 ||
+        (options->min_midi != 0 && options->max_midi != 0 &&
+         options->min_midi > options->max_midi)) {
+        return fail(PARSO_STATUS_INVALID_ARGUMENT, "key options are invalid");
+    }
+    return PARSO_STATUS_OK;
+}
+
+parso_status_t validateKeyResult(parso_key_result_t *result) noexcept {
+    if (!result) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key result is null");
+    return checkHeader(result->size, result->abi_version, kMinimumKeyResultSize);
+}
+
+double keyProfileCorrelation(const double *chroma, const double *profile) noexcept {
+    double chromaMean = 0.0;
+    double profileMean = 0.0;
+    for (size_t index = 0; index < 12; ++index) {
+        chromaMean += chroma[index];
+        profileMean += profile[index];
+    }
+    chromaMean /= 12.0;
+    profileMean /= 12.0;
+    double numerator = 0.0;
+    double chromaVariance = 0.0;
+    double profileVariance = 0.0;
+    for (size_t index = 0; index < 12; ++index) {
+        const double a = chroma[index] - chromaMean;
+        const double b = profile[index] - profileMean;
+        numerator += a * b;
+        chromaVariance += a * a;
+        profileVariance += b * b;
+    }
+    const double denominator = std::sqrt(chromaVariance * profileVariance);
+    return denominator > 1.0e-12 ? numerator / denominator : 0.0;
+}
+
+constexpr double kPi = 3.141592653589793238462643383279502884;
+
+uint32_t camelotMinorNumber(uint32_t tonic) noexcept {
+    static constexpr uint32_t numbers[12] = {5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10};
+    return numbers[tonic % 12];
 }
 
 parso_status_t copyPCM(const std::vector<float> &samples, uint32_t sampleRate,
@@ -1095,6 +1149,185 @@ PARSO_API parso_status_t parso_analysis_measure(
         return fail(PARSO_STATUS_OUT_OF_MEMORY, "analysis allocation failed");
     } catch (...) {
         return fail(PARSO_STATUS_INTERNAL, "exception caught while measuring analysis");
+    }
+}
+
+PARSO_API parso_status_t parso_key_options_init(parso_key_options_t *options) {
+    if (!options) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key options are null");
+    std::memset(options, 0, sizeof(*options));
+    options->size = sizeof(*options);
+    options->abi_version = PARSO_ABI_VERSION;
+    options->window_frames = 8192;
+    options->hop_frames = 4096;
+    options->min_midi = 36;
+    options->max_midi = 96;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_key_result_init(parso_key_result_t *result) {
+    if (!result) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key result is null");
+    std::memset(result, 0, sizeof(*result));
+    result->size = sizeof(*result);
+    result->abi_version = PARSO_ABI_VERSION;
+    return PARSO_STATUS_OK;
+}
+
+PARSO_API parso_status_t parso_key_measure(
+    const parso_pcm_buffer_t *input, const parso_key_options_t *options,
+    parso_key_result_t *result
+) {
+    try {
+        const parso_status_t resultStatus = validateKeyResult(result);
+        if (resultStatus != PARSO_STATUS_OK) return resultStatus;
+        const parso_status_t inputStatus = validatePCMBuffer(input);
+        if (inputStatus != PARSO_STATUS_OK) return inputStatus;
+        const parso_status_t optionsStatus = validateKeyOptions(options);
+        if (optionsStatus != PARSO_STATUS_OK) return optionsStatus;
+        if (input->frames == 0) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key input is empty");
+
+        const uint32_t requestedWindow = options->window_frames == 0 ? 8192u : options->window_frames;
+        uint32_t window = static_cast<uint32_t>(std::min<uint64_t>(
+            input->frames, requestedWindow));
+        const uint32_t hop = options->hop_frames == 0 ? 4096u : options->hop_frames;
+        const uint32_t minMidi = options->min_midi == 0 ? 36u : options->min_midi;
+        const uint32_t maxMidi = options->max_midi == 0 ? 96u : options->max_midi;
+        if (window < 32 || minMidi > maxMidi) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "key input or MIDI range is invalid");
+        }
+
+        // This is the portable counterpart to Swift's STFT/HPCP path. It
+        // computes a dependency-free radix-2 FFT, folds each positive-frequency
+        // bin onto its nearest pitch class, and correlates the aggregate
+        // against the normative Krumhansl-Schmuckler profiles. The service is
+        // offline and therefore does not affect RT safety.
+        static constexpr double majorProfile[12] = {
+            6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19,
+            2.39, 3.66, 2.29, 2.88
+        };
+        static constexpr double minorProfile[12] = {
+            6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75,
+            3.98, 2.69, 3.34, 3.17
+        };
+        // A short final window is still useful for callers analyzing a clip
+        // shorter than the nominal STFT size; keep the FFT power-of-two.
+        while ((window & (window - 1u)) != 0u) window &= window - 1u;
+        if (window < 32) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key FFT window is too small");
+        const uint32_t fftSize = window <= 4096u ? window * 4u : window;
+        std::vector<double> real(fftSize, 0.0);
+        std::vector<double> imaginary(fftSize, 0.0);
+        double aggregate[12] = {};
+        uint64_t frameCount = 0;
+        const uint64_t lastStart = input->frames > window ? input->frames - window : 0;
+        for (uint64_t start = 0; start <= lastStart; start += hop) {
+            double chroma[12] = {};
+            double chromaNorm = 0.0;
+            std::fill(real.begin(), real.end(), 0.0);
+            std::fill(imaginary.begin(), imaginary.end(), 0.0);
+            for (uint32_t offset = 0; offset < window; ++offset) {
+                const uint64_t frame = start + offset;
+                double sample = 0.0;
+                for (uint32_t channel = 0; channel < input->channel_count; ++channel) {
+                    const float raw = input->samples[frame * input->channel_count + channel];
+                    sample += std::isfinite(raw) ? static_cast<double>(raw) : 0.0;
+                }
+                sample /= static_cast<double>(input->channel_count);
+                real[offset] = sample * (0.5 - 0.5 * std::cos(
+                    2.0 * kPi * static_cast<double>(offset) / static_cast<double>(window)));
+                imaginary[offset] = 0.0;
+            }
+            for (uint32_t index = 1, reversed = 0; index < fftSize; ++index) {
+                uint32_t bit = fftSize >> 1u;
+                for (; reversed & bit; bit >>= 1u) reversed ^= bit;
+                reversed ^= bit;
+                if (index < reversed) {
+                    std::swap(real[index], real[reversed]);
+                    std::swap(imaginary[index], imaginary[reversed]);
+                }
+            }
+            for (uint32_t length = 2; length <= fftSize; length <<= 1u) {
+                const double angle = -2.0 * kPi / static_cast<double>(length);
+                const double stepCos = std::cos(angle);
+                const double stepSin = std::sin(angle);
+                for (uint32_t base = 0; base < fftSize; base += length) {
+                    double oscillatorCos = 1.0;
+                    double oscillatorSin = 0.0;
+                    const uint32_t half = length / 2u;
+                    for (uint32_t offset = 0; offset < half; ++offset) {
+                        const uint32_t left = base + offset;
+                        const uint32_t right = left + half;
+                        const double productReal = oscillatorCos * real[right] -
+                                                   oscillatorSin * imaginary[right];
+                        const double productImaginary = oscillatorCos * imaginary[right] +
+                                                        oscillatorSin * real[right];
+                        const double leftReal = real[left];
+                        const double leftImaginary = imaginary[left];
+                        real[left] = leftReal + productReal;
+                        imaginary[left] = leftImaginary + productImaginary;
+                        real[right] = leftReal - productReal;
+                        imaginary[right] = leftImaginary - productImaginary;
+                        const double nextCos = oscillatorCos * stepCos - oscillatorSin * stepSin;
+                        oscillatorSin = oscillatorSin * stepCos + oscillatorCos * stepSin;
+                        oscillatorCos = nextCos;
+                    }
+                }
+            }
+            for (uint32_t bin = 1; bin <= fftSize / 2u; ++bin) {
+                const double frequency = static_cast<double>(bin) *
+                                         static_cast<double>(input->sample_rate_hz) /
+                                         static_cast<double>(fftSize);
+                if (frequency < 20.0 || frequency > 8000.0) continue;
+                const double midiValue = 69.0 + 12.0 * std::log2(frequency / 440.0);
+                const int midi = static_cast<int>(std::llround(midiValue));
+                if (midi < static_cast<int>(minMidi) || midi > static_cast<int>(maxMidi)) continue;
+                const double magnitude = std::sqrt(real[bin] * real[bin] +
+                                                   imaginary[bin] * imaginary[bin]);
+                chroma[static_cast<uint32_t>(midi) % 12u] += magnitude;
+                chromaNorm += magnitude;
+            }
+            if (chromaNorm > 1.0e-12) {
+                for (double &value : chroma) value /= chromaNorm;
+                for (size_t index = 0; index < 12; ++index) aggregate[index] += chroma[index];
+                ++frameCount;
+            }
+            if (start > lastStart - std::min<uint64_t>(hop, lastStart)) break;
+        }
+        if (frameCount == 0) return fail(PARSO_STATUS_INVALID_ARGUMENT, "key spectrum is empty");
+        for (double &value : aggregate) value /= static_cast<double>(frameCount);
+
+        uint32_t bestTonic = 0;
+        uint32_t bestMinor = 0;
+        double bestScore = -std::numeric_limits<double>::infinity();
+        double secondBest = -std::numeric_limits<double>::infinity();
+        for (uint32_t tonic = 0; tonic < 12; ++tonic) {
+            double rotated[12] = {};
+            for (size_t index = 0; index < 12; ++index) rotated[index] = aggregate[(tonic + index) % 12];
+            for (uint32_t minor = 0; minor < 2; ++minor) {
+                const double score = keyProfileCorrelation(
+                    rotated, minor == 0 ? majorProfile : minorProfile);
+                if (score > bestScore) {
+                    secondBest = bestScore;
+                    bestScore = score;
+                    bestTonic = tonic;
+                    bestMinor = minor;
+                } else if (score > secondBest) {
+                    secondBest = score;
+                }
+            }
+        }
+        const double margin = std::max(0.0, bestScore - secondBest);
+        result->tonic_pitch_class = bestTonic;
+        result->is_minor = bestMinor;
+        result->camelot_number = bestMinor == 1
+            ? camelotMinorNumber(bestTonic)
+            : camelotMinorNumber((bestTonic + 9u) % 12u);
+        result->camelot_letter = bestMinor;
+        result->confidence = std::min(1.0, margin / 0.2);
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (const std::bad_alloc &) {
+        return fail(PARSO_STATUS_OUT_OF_MEMORY, "key analysis allocation failed");
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while measuring key");
     }
 }
 

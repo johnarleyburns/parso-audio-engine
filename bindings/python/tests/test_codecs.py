@@ -72,6 +72,22 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(result.bpm, 118.0)
         self.assertLess(result.bpm, 122.0)
 
+    def test_key_estimate(self) -> None:
+        samples = []
+        for index in range(48_000):
+            time = index / 48_000.0
+            samples.append(
+                0.25 * math.sin(2.0 * math.pi * 110.0 * time)
+                + 0.20 * math.sin(2.0 * math.pi * 220.0 * time)
+                + 0.20 * math.sin(2.0 * math.pi * 261.63 * time)
+                + 0.20 * math.sin(2.0 * math.pi * 329.63 * time)
+            )
+        result = self.audio.estimate_key(samples, 48_000, 1)
+        self.assertEqual(result.tonic_pitch_class, 9)
+        self.assertTrue(result.is_minor)
+        self.assertEqual((result.camelot_number, result.camelot_letter), (8, "A"))
+        self.assertGreater(result.confidence, 0.3)
+
     def test_waveform_min_max_summary(self) -> None:
         samples = [math.sin(2.0 * math.pi * index / 32.0) for index in range(1_024)]
         minimum, maximum = self.audio.waveform(samples, 48_000, 1, 32)

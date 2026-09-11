@@ -190,6 +190,28 @@ typedef struct {
     double bpm_confidence;
 } parso_analysis_result_t;
 
+/* Deterministic portable key analysis. Pitch classes use C=0...B=11;
+ * mode is 0 for major and 1 for minor; Camelot letters use 0 for B (major)
+ * and 1 for A (minor). The result is written in place and owns no memory. */
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint32_t window_frames; /* 0: implementation default (8192) */
+    uint32_t hop_frames;    /* 0: implementation default (4096) */
+    uint32_t min_midi;      /* 0: implementation default (36) */
+    uint32_t max_midi;      /* 0: implementation default (96) */
+} parso_key_options_t;
+
+typedef struct {
+    uint32_t size;
+    uint32_t abi_version;
+    uint32_t tonic_pitch_class;
+    uint32_t is_minor;
+    uint32_t camelot_number;
+    uint32_t camelot_letter; /* 0: B/major, 1: A/minor */
+    double confidence;
+} parso_key_result_t;
+
 typedef struct {
     uint32_t size;
     uint32_t abi_version;
@@ -374,6 +396,12 @@ PARSO_API parso_status_t parso_analysis_result_init(parso_analysis_result_t *res
 PARSO_API parso_status_t parso_analysis_measure(
     const parso_pcm_buffer_t *input, const parso_analysis_options_t *options,
     parso_analysis_result_t *result
+);
+PARSO_API parso_status_t parso_key_options_init(parso_key_options_t *options);
+PARSO_API parso_status_t parso_key_result_init(parso_key_result_t *result);
+PARSO_API parso_status_t parso_key_measure(
+    const parso_pcm_buffer_t *input, const parso_key_options_t *options,
+    parso_key_result_t *result
 );
 /* Generate bucketed mono min/max envelopes into caller-owned arrays. */
 PARSO_API parso_status_t parso_waveform_generate(

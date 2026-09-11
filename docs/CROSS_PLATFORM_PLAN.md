@@ -148,8 +148,10 @@ idempotent release. No unsupported container is advertised by this slice.
 The next CP3 analysis slice adds `parso_analysis_measure` for a deterministic portable summary
 (duration, RMS, peak, and energy-envelope BPM/confidence) plus caller-owned `parso_waveform_generate`
 min/max buckets. The C11 consumer, Python binding, and C# consumer exercise the same summary API;
-the native and Python 30-second artifacts include analysis and waveform JSON. Key and structure
-remain separate gates; this summary does not claim full Swift analysis parity.
+the native and Python 30-second artifacts include analysis and waveform JSON. A follow-on
+`parso_key_measure` service now ports the Swift HPCP/Krumhansl-Schmuckler contract with a
+dependency-free radix-2 STFT, and C11/Python/C# consumers cover a rooted A-minor vector. Structure
+remains a separate gate; the portable analysis surface still does not claim full Swift parity.
 
 The CP3 codec sub-phase now vendors Xiph libogg 1.3.5 plus libvorbis 1.3.7 (BSD-style), replacing
 the former stb_vorbis decode-only target. The public byte ABI exposes Ogg Vorbis read/write through

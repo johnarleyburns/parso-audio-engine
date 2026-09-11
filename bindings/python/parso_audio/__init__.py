@@ -170,6 +170,17 @@ class AnalysisResult:
 
 
 @dataclass(frozen=True)
+class KeyResult:
+    """Portable Krumhansl-Schmuckler key estimate."""
+
+    tonic_pitch_class: int
+    is_minor: bool
+    camelot_number: int
+    camelot_letter: str
+    confidence: float
+
+
+@dataclass(frozen=True)
 class EngineStats:
     """Snapshot of native headless render counters."""
 
@@ -294,6 +305,29 @@ class _AnalysisResult(ctypes.Structure):
         ("peak", ctypes.c_double),
         ("bpm", ctypes.c_double),
         ("bpm_confidence", ctypes.c_double),
+    ]
+
+
+class _KeyOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("window_frames", ctypes.c_uint32),
+        ("hop_frames", ctypes.c_uint32),
+        ("min_midi", ctypes.c_uint32),
+        ("max_midi", ctypes.c_uint32),
+    ]
+
+
+class _KeyResult(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("tonic_pitch_class", ctypes.c_uint32),
+        ("is_minor", ctypes.c_uint32),
+        ("camelot_number", ctypes.c_uint32),
+        ("camelot_letter", ctypes.c_uint32),
+        ("confidence", ctypes.c_double),
     ]
 
 
@@ -475,6 +509,14 @@ class CodecServices:
             ctypes.POINTER(_AnalysisResult),
         ]
         library.parso_analysis_measure.restype = ctypes.c_int32
+        library.parso_key_options_init.argtypes = [ctypes.POINTER(_KeyOptions)]
+        library.parso_key_options_init.restype = ctypes.c_int32
+        library.parso_key_result_init.argtypes = [ctypes.POINTER(_KeyResult)]
+        library.parso_key_result_init.restype = ctypes.c_int32
+        library.parso_key_measure.argtypes = [
+            ctypes.POINTER(_PcmBuffer), ctypes.POINTER(_KeyOptions), ctypes.POINTER(_KeyResult),
+        ]
+        library.parso_key_measure.restype = ctypes.c_int32
         library.parso_waveform_generate.argtypes = [
             ctypes.POINTER(_PcmBuffer), ctypes.c_uint32,
             ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
@@ -742,6 +784,55 @@ class CodecServices:
         )
         self._raise_for_status(status, "waveform generation")
         return minimum, maximum
+
+    def estimate_key(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        window_frames: int = 8192,
+        hop_frames: int = 4096,
+        min_midi: int = 36,
+        max_midi: int = 96,
+    ) -> KeyResult:
+        """Estimate tonic/mode with the portable HPCP/Krumhansl service."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        if window_frames <= 0 or hop_frames <= 0 or not 0 <= min_midi <= max_midi <= 127:
+            raise ValueError("key analysis options are invalid")
+        native_input = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer), abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=sample_rate_hz,
+        )
+        options = _KeyOptions(
+            size=ctypes.sizeof(_KeyOptions), abi_version=self._ABI_VERSION,
+            window_frames=window_frames, hop_frames=hop_frames,
+            min_midi=min_midi, max_midi=max_midi,
+        )
+        self._call("key-options initialization", self._library.parso_key_options_init, options)
+        options.window_frames = window_frames
+        options.hop_frames = hop_frames
+        options.min_midi = min_midi
+        options.max_midi = max_midi
+        result = _KeyResult()
+        self._call("key-result initialization", self._library.parso_key_result_init, result)
+        status = self._library.parso_key_measure(
+            ctypes.byref(native_input), ctypes.byref(options), ctypes.byref(result)
+        )
+        self._raise_for_status(status, "key measurement")
+        return KeyResult(
+            int(result.tonic_pitch_class), bool(result.is_minor),
+            int(result.camelot_number), "A" if result.camelot_letter else "B",
+            result.confidence,
+        )
 
     def _native_options(self, options: Optional[CodecOptions]) -> _CodecOptions:
         selected = options or CodecOptions()
@@ -1299,6 +1390,7 @@ __all__ = [
     "EngineEventType",
     "EngineStats",
     "LoudnessResult",
+    "KeyResult",
     "MixRecorder",
     "OfflineService",
     "ParsoError",

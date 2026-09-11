@@ -95,6 +95,11 @@ public:
                    : PARSO_STATUS_INVALID_ARGUMENT;
     }
 
+    parso_status_t estimateKey(const parso_key_options_t &options,
+                               parso_key_result_t *result) const noexcept {
+        return parso_key_measure(&value_, &options, result);
+    }
+
     const float *samples() const noexcept { return value_.samples; }
     uint64_t frames() const noexcept { return value_.frames; }
     uint32_t channels() const noexcept { return value_.channel_count; }

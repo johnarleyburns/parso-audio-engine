@@ -575,6 +575,9 @@ if(PARSO_BUILD_TESTS)
             $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
             $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
         )
+        if(UNIX)
+            target_link_libraries(parso_public_c_services_consumer PRIVATE m)
+        endif()
         target_include_directories(parso_public_c_services_consumer PRIVATE
             Sources/CParsoAPI/include
         )
