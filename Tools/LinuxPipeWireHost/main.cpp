@@ -330,17 +330,20 @@ bool writeRecording(const std::string &path, const std::vector<float> &left,
 
 bool loadInput(const Options &options, std::vector<float> *generated,
                parso_pcm_buffer_t *decoded, parso_pcm_view_t *view,
-               const float *planes[2]) {
+               const float *planes[2], uint64_t targetFrames) {
+    if (targetFrames == 0 || targetFrames > std::numeric_limits<std::size_t>::max()) {
+        return false;
+    }
     if (options.inputPath.empty()) {
-        generated->resize(kSampleRate);
-        for (uint32_t frame = 0; frame < kSampleRate; ++frame) {
+        generated->resize(static_cast<std::size_t>(targetFrames));
+        for (uint64_t frame = 0; frame < targetFrames; ++frame) {
             (*generated)[frame] = 0.15f * std::sin(static_cast<float>(
                 2.0 * 3.141592653589793 * 220.0 * frame / kSampleRate));
         }
         planes[0] = generated->data();
         if (!requireStatus(parso_pcm_view_init(view), "generated view init")) return false;
         view->planes = planes;
-        view->frames = generated->size();
+        view->frames = targetFrames;
         view->channel_count = 1;
         view->sample_rate_hz = kSampleRate;
         return true;
@@ -356,28 +359,31 @@ bool loadInput(const Options &options, std::vector<float> *generated,
     if (decoded->channel_count < 1 || decoded->channel_count > 2 || decoded->frames == 0) {
         return false;
     }
-    // The public WAV reader returns interleaved owned samples. Make a planar
-    // view in the caller-owned vectors so the engine can retain it safely.
-    generated->resize(decoded->frames * decoded->channel_count);
-    std::copy(decoded->samples, decoded->samples + generated->size(), generated->begin());
-    planes[0] = generated->data();
-    planes[1] = decoded->channel_count > 1 ? generated->data() + 1 : generated->data();
-    // A planar copy is required; compact the interleaved source in place into
-    // two planes stored in one vector.
-    const uint64_t frames = decoded->frames;
-    if (decoded->channel_count == 2) {
-        std::vector<float> planar(generated->size());
-        for (uint64_t frame = 0; frame < frames; ++frame) {
-            planar[frame] = (*generated)[frame * 2u];
-            planar[frames + frame] = (*generated)[frame * 2u + 1u];
+    // The public WAV reader returns interleaved owned samples. Repeat the
+    // source into caller-owned planar storage so a short test clip remains a
+    // continuous live deck for the complete requested session.
+    const uint64_t sourceFrames = decoded->frames;
+    const uint64_t channels = decoded->channel_count;
+    if (targetFrames > std::numeric_limits<std::size_t>::max() / channels) return false;
+    generated->resize(static_cast<std::size_t>(targetFrames * channels));
+    if (decoded->channel_count == 1) {
+        for (uint64_t frame = 0; frame < targetFrames; ++frame) {
+            (*generated)[frame] = decoded->samples[frame % sourceFrames];
         }
-        generated->swap(planar);
         planes[0] = generated->data();
-        planes[1] = generated->data() + frames;
+        planes[1] = generated->data();
+    } else {
+        for (uint64_t frame = 0; frame < targetFrames; ++frame) {
+            const uint64_t sourceFrame = frame % sourceFrames;
+            (*generated)[frame] = decoded->samples[sourceFrame * 2u];
+            (*generated)[targetFrames + frame] = decoded->samples[sourceFrame * 2u + 1u];
+        }
+        planes[0] = generated->data();
+        planes[1] = generated->data() + targetFrames;
     }
     if (!requireStatus(parso_pcm_view_init(view), "input view init")) return false;
     view->planes = planes;
-    view->frames = frames;
+    view->frames = targetFrames;
     view->channel_count = decoded->channel_count;
     view->sample_rate_hz = decoded->sample_rate_hz;
     return true;
@@ -395,11 +401,12 @@ int main(int argc, char **argv) {
     if (!parseOptions(argc, argv, &options)) return argc > 1 && std::string(argv[1]) == "--help" ? 0 : 2;
     signal(SIGPIPE, SIG_IGN);
 
+    const uint64_t totalFrames = static_cast<uint64_t>(options.seconds) * kSampleRate;
     std::vector<float> source;
     parso_pcm_buffer_t decoded{};
     parso_pcm_view_t sourceView{};
     const float *sourcePlanes[2] = {nullptr, nullptr};
-    if (!loadInput(options, &source, &decoded, &sourceView, sourcePlanes)) {
+    if (!loadInput(options, &source, &decoded, &sourceView, sourcePlanes, totalFrames)) {
         std::fprintf(stderr, "linux_pipewire_host: failed to load input WAV\n");
         parso_pcm_buffer_release(&decoded);
         return 1;
@@ -478,7 +485,6 @@ int main(int argc, char **argv) {
 
     std::vector<float> recordedLeft;
     std::vector<float> recordedRight;
-    const uint64_t totalFrames = static_cast<uint64_t>(options.seconds) * kSampleRate;
     if (!options.recordPath.empty()) {
         recordedLeft.resize(totalFrames);
         recordedRight.resize(totalFrames);
