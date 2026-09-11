@@ -269,6 +269,15 @@ Without the download, the fixture suites simply skip. To turn a track into a str
 regression test, fill its verified `expected.bpm` / `expected.key` in `Tests/Fixtures/fixtures.json`
 (until then those tests assert **determinism + plausibility**, not exact values).
 
+### Apple CI baseline
+
+The Apple Swift CI gates were verified on arm64 Apple hardware on 2026-09-10 with macOS 26.5.1,
+Xcode 26.6, and Swift 6.3.3: 29/29 fixtures present, `swift build -c release
+-Xswiftc -warnings-as-errors`, and the full `swift test -c release -Xswiftc -warnings-as-errors`
+suite passed (326 tests in 103 suites). The acceptance-tool build and the whole-package watchOS
+and iOS Simulator builds also passed. The Cvorbis target excludes Xiph's standalone analysis
+utilities, which define `main` and are not codec sources.
+
 ## Human-visible acceptance videos
 
 The acceptance tool can produce a WAV plus JSON analysis sidecar, then render a

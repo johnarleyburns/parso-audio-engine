@@ -85,7 +85,15 @@ let package = Package(
             name: "Cvorbis",
             dependencies: ["Cogg"],
             path: "Sources/Cvorbis",
-            exclude: ["xiph/src/psytune.c"],
+            // These are standalone Xiph analysis/test utilities, not codec
+            // sources. They each define `main`, which would collide with the
+            // SwiftPM test runner (and with one another) when the target is
+            // linked as an object library.
+            exclude: [
+                "xiph/src/barkmel.c",
+                "xiph/src/psytune.c",
+                "xiph/src/tone.c"
+            ],
             publicHeadersPath: "xiph/include",
             cSettings: [
                 .headerSearchPath("xiph/src"),
