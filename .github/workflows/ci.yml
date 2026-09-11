@@ -293,6 +293,8 @@ jobs:
               -PparsoNdkVersion=27.2.12479018 \
               -PparsoCmakeVersion=3.22.1 \
               connectedDebugAndroidTest
+            gradle --project-dir Bindings/ParsoAudioAndroidConsumer \
+              connectedDebugAndroidTest
 
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
