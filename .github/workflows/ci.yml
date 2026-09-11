@@ -269,6 +269,19 @@ jobs:
             'lib/x86_64/libparso_android.so'; do
             unzip -l "$apk" | grep -F " $entry"
           done
+      - name: Run Android instrumentation on x86_64 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: Pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          script: |
+            gradle --project-dir Bindings/ParsoAudioAndroid \
+              -PparsoNdkVersion=27.2.12479018 \
+              -PparsoCmakeVersion=3.22.1 \
+              connectedDebugAndroidTest
 
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
