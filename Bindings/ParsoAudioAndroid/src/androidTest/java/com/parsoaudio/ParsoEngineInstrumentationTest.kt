@@ -57,7 +57,9 @@ class ParsoEngineInstrumentationTest {
     @Test
     fun nativeXiphVorbisEncoderReturnsOggBytes() {
         val sampleRate = 48_000
-        val frames = sampleRate / 4
+        // EBU R128 integrated loudness needs at least one gating block. Keep
+        // this runtime vector long enough to exercise a finite measurement.
+        val frames = sampleRate
         val samples = ByteBuffer.allocateDirect(frames * Float.SIZE_BYTES)
             .order(ByteOrder.nativeOrder())
         val floats = samples.asFloatBuffer()

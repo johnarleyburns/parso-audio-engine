@@ -399,6 +399,10 @@ if(PARSO_BUILD_SHARED_API)
 endif()
 
 if(ANDROID AND PARSO_BUILD_SHARED_API)
+    # NDK r27 and earlier default to 4 KiB ELF LOAD alignment. Android devices
+    # with 16 KiB pages require every shipped shared object to opt into the
+    # larger alignment explicitly; keep this on both public Android libraries.
+    target_link_options(ParsoAPI PRIVATE "-Wl,-z,max-page-size=16384")
     find_path(PARSO_ANDROID_JNI_INCLUDE jni.h
         PATHS "${CMAKE_SYSROOT}/usr/include"
               "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
@@ -415,6 +419,7 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
         Sources/CParsoAPI/include
     )
     target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI)
+    target_link_options(ParsoAndroidJNI PRIVATE "-Wl,-z,max-page-size=16384")
     set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
 endif()
 
