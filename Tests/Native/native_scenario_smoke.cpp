@@ -165,12 +165,15 @@ int main() {
     pe_command scratchMove{};
     scratchMove.type = PE_CMD_JOG_MOVE;
     scratchMove.deck = 0;
-    scratchMove.f0 = -18000.0f;
+    scratchMove.f0 = 18000.0f;
     pe_command scratchRelease{};
     scratchRelease.type = PE_CMD_JOG_RELEASE;
     scratchRelease.deck = 0;
     scratchRelease.i0 = 1;
     scratchRelease.i1 = 1;
+
+    const Rendered scratched = render(source, PE_ISOLATOR_PROFILE_GENERIC, flat,
+                                      {scratchTouch, scratchMove});
 
     const Rendered base = render(source, PE_ISOLATOR_PROFILE_GENERIC, flat);
     const bool scenarios =
@@ -183,6 +186,8 @@ int main() {
                 "master reverb control was not rendered") &&
         require(difference(base, render(source, PE_ISOLATOR_PROFILE_GENERIC, transition)) > 1.0e-4f,
                 "automated transition controls were not rendered") &&
+        require(finiteAndAudible(scratched) && difference(base, scratched) > 1.0e-3f,
+                "jog scratch gesture did not render audible motion") &&
         require(finiteAndAudible(render(source, PE_ISOLATOR_PROFILE_GENERIC, flat,
                                         {setCue, loop, scratchTouch, scratchMove, scratchRelease})),
                 "loop/cue/scratch commands did not render a finite audible result");

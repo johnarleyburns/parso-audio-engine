@@ -43,6 +43,8 @@ struct DeckState {
     bool playing = false;
     bool slip = false;
     bool reverse = false;   // CDJ3000 parity C2 — REV / Slip Reverse
+    bool jogTouched = false;
+    double jogVelocity = 0.0;  // source frames per output frame while scratching
     // Vinyl Speed Adjust (CDJ3000 parity C2): motorLevel eases toward motorTarget
     // (0 = stopped, 1 = full speed) at brake / spin-up rates. Zero seconds == the
     // classic instant start/stop.
@@ -566,11 +568,15 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_JOG_TOUCH:
             // i0 is vinyl mode. A vinyl touch pauses transport while preserving
             // the pre-touch play state in i1 for the matching release command.
-            if (command.i0 != 0 && deck.playing) {
-                deck.playing = false;
-                deck.motorTarget = 0.0f;   // brake to a stop (Vinyl Speed Adjust)
-                if (deck.brakeSeconds <= 0.0001f) deck.motorLevel = 0.0f;
-                pushStateEvent(engine, command.deck);
+            if (command.i0 != 0) {
+                deck.jogTouched = true;
+                deck.jogVelocity = 0.0;
+                if (deck.playing) {
+                    deck.playing = false;
+                    deck.motorTarget = 0.0f;   // brake to a stop (Vinyl Speed Adjust)
+                    if (deck.brakeSeconds <= 0.0001f) deck.motorLevel = 0.0f;
+                    pushStateEvent(engine, command.deck);
+                }
             }
             break;
         case PE_CMD_JOG_MOVE:
@@ -581,10 +587,19 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                     deck.position = static_cast<double>(deck.frames);
                 }
                 deck.shadowPosition = deck.position;
+                if (deck.jogTouched) {
+                    // A jog delta is an instantaneous platter movement. Spread it
+                    // over a short physical gesture so the render path produces
+                    // audible scratch motion instead of a seek followed by silence.
+                    deck.jogVelocity = static_cast<double>(command.f0) /
+                        std::max(1.0, deck.sampleRate * 0.060);
+                }
                 pushPlayheadEvent(engine, command.deck);
             }
             break;
         case PE_CMD_JOG_RELEASE:
+            deck.jogTouched = false;
+            deck.jogVelocity = 0.0;
             if (command.i0 != 0 && command.i1 != 0 && deck.position < static_cast<double>(deck.frames)) {
                 deck.playing = true;
                 deck.motorTarget = 1.0f;   // spin back up (Vinyl Speed Adjust)
@@ -1171,7 +1186,12 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 deck.motorLevel = std::max(deck.motorTarget, deck.motorLevel - brakeRate);
             }
             const bool coasting = !deck.playing && deck.motorLevel > 0.0001f;
-            if ((!deck.playing && !coasting) || deck.frames <= 0 || deck.sampleRate <= 0.0) {
+            const bool scratching = deck.jogTouched;
+            if ((!deck.playing && !coasting && !scratching) || deck.frames <= 0 || deck.sampleRate <= 0.0) {
+                dry[deckIndex][frame] = 0.0f;
+                continue;
+            }
+            if (scratching && std::fabs(deck.jogVelocity) < 0.0001) {
                 dry[deckIndex][frame] = 0.0f;
                 continue;
             }
@@ -1212,8 +1232,22 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             // "where you would be if you hadn't scratched / reversed / braked" playhead.
             if (deck.slip) deck.shadowPosition += forwardIncrement;
             const double motor = static_cast<double>(deck.motorLevel);
-            const double positionIncrement = (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
+            const double positionIncrement = scratching
+                ? deck.jogVelocity
+                : (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
             deck.position += positionIncrement;
+            if (scratching) {
+                // Keep the platter moving for the duration of a gesture. A
+                // per-sample 0.96 decay collapses a jog into a click and is
+                // perceptually unlike a hand moving a record.
+                deck.jogVelocity *= 0.9997;
+                if (std::fabs(deck.jogVelocity) < 0.0001) deck.jogVelocity = 0.0;
+                if (deck.position < 0.0) deck.position = 0.0;
+                if (deck.position > static_cast<double>(deck.frames - 1)) {
+                    deck.position = static_cast<double>(deck.frames - 1);
+                }
+                continue;
+            }
             const double loopLength = deck.loopEnd - deck.loopStart;
             if (deck.loopActive && loopLength > 0.0 && deck.position >= deck.loopEnd) {
                 while (deck.position >= deck.loopEnd) deck.position -= loopLength;
@@ -1926,6 +1960,8 @@ void pe_deck_set_buffer(
     state.playing = false;
     state.slip = false;
     state.reverse = false;
+    state.jogTouched = false;
+    state.jogVelocity = 0.0;
     state.motorLevel = 0.0f;   // a paused platter is stopped; PLAY spins it up
     state.motorTarget = 0.0f;
     state.cueFadeGain = 1.0f;
