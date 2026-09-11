@@ -37,6 +37,7 @@ object ConsumerScenario {
         var rendered = 0
         var recorded = 0
         var dropped = 0L
+        var events = 0
         ParsoEngine(maxFrames = RENDER_FRAMES).use { engine ->
             engine.setDeckBuffer(0, monoPlane(ANALYSIS_FRAMES), monoPlane(ANALYSIS_FRAMES), ANALYSIS_FRAMES)
             engine.setMix(-1.0f, 0.9f)
@@ -49,11 +50,12 @@ object ConsumerScenario {
             recorded = engine.drainRecord(recordLeft, recordRight, RENDER_FRAMES)
             dropped = engine.recordDroppedFrames()
             check(engine.stats().deckCount == 2)
+            events = engine.pollEvents().size
         }
 
         check(rendered == RENDER_FRAMES)
         check(decoded.frames > 0 && resampled.frames > 0)
-        return "frames=$rendered recorded=$recorded dropped=$dropped " +
+        return "frames=$rendered recorded=$recorded events=$events dropped=$dropped " +
             "bpm=${summary.bpm} key=${key.camelotLetter}${key.camelotNumber} " +
             "sections=${structure.size} lufs=${loudness.integratedLufs} " +
             "encoded=${encoded.size} decoded=${decoded.frames}"

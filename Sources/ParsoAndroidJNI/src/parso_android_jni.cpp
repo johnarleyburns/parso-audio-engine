@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -15,6 +16,12 @@ parso_engine_t *fromHandle(jlong handle) noexcept {
 
 jlong toHandle(parso_engine_t *engine) noexcept {
     return static_cast<jlong>(reinterpret_cast<uintptr_t>(engine));
+}
+
+int32_t floatBits(float value) noexcept {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return static_cast<int32_t>(bits);
 }
 
 bool makePCMInput(JNIEnv *env, jobject buffer, jint frames, jint sampleRateHz,
@@ -169,6 +176,33 @@ JNIEXPORT jlongArray JNICALL Java_com_parsoaudio_ParsoNative_nativeGetStats(
     };
     jlongArray output = env->NewLongArray(3);
     if (output) env->SetLongArrayRegion(output, 0, 3, values);
+    return output;
+}
+
+JNIEXPORT jlongArray JNICALL Java_com_parsoaudio_ParsoNative_nativePollEvents(
+    JNIEnv *env, jclass, jlong handle, jint maxEvents
+) {
+    if (!env || !fromHandle(handle) || maxEvents <= 0 || maxEvents > 64) return nullptr;
+    parso_event_t events[64]{};
+    for (jint index = 0; index < maxEvents; ++index) {
+        if (parso_event_init(&events[index]) != PARSO_STATUS_OK) return nullptr;
+    }
+    uint32_t count = 0;
+    if (parso_engine_poll_events(fromHandle(handle), events, static_cast<uint32_t>(maxEvents), &count) !=
+            PARSO_STATUS_OK) return nullptr;
+    const jsize valueCount = static_cast<jsize>(count * 5u);
+    jlongArray output = env->NewLongArray(valueCount);
+    if (!output) return nullptr;
+    std::vector<jlong> values(static_cast<size_t>(valueCount));
+    for (uint32_t index = 0; index < count; ++index) {
+        const size_t offset = static_cast<size_t>(index) * 5u;
+        values[offset] = static_cast<jlong>(events[index].type);
+        values[offset + 1u] = static_cast<jlong>(events[index].deck);
+        values[offset + 2u] = static_cast<jlong>(events[index].frame);
+        values[offset + 3u] = static_cast<jlong>(floatBits(events[index].f0));
+        values[offset + 4u] = static_cast<jlong>(floatBits(events[index].f1));
+    }
+    env->SetLongArrayRegion(output, 0, valueCount, values.data());
     return output;
 }
 

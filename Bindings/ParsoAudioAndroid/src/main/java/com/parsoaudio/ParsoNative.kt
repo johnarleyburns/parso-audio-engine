@@ -25,6 +25,7 @@ object ParsoNative {
         i0: Int, i1: Int, i2: Int, f0: Float, f1: Float
     ): Boolean
     @JvmStatic external fun nativeGetStats(handle: Long): LongArray?
+    @JvmStatic external fun nativePollEvents(handle: Long, maxEvents: Int): LongArray?
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int
     ): Int

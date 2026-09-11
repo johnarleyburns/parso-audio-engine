@@ -24,6 +24,7 @@ class ParsoEngineInstrumentationTest {
             engine.setRecordActive(true)
             assertEquals(frames, engine.render(left, right, frames))
             assertEquals(frames.toLong(), engine.stats().masterFrame)
+            assertTrue(engine.pollEvents().size <= 64)
             assertEquals(frames, engine.drainRecord(left, right, frames))
             assertEquals(0L, engine.recordDroppedFrames())
             engine.resetRecord()

@@ -44,6 +44,7 @@ class ParsoEngineTest {
         engine.setMix(-1.0f, 0.75f)
         engine.postCommand(EngineCommand.LOOP_IN, f0 = 1.0f)
         assertEquals(2, engine.stats().deckCount)
+        assertTrue(engine.pollEvents().isEmpty())
         engine.close()
         engine.close()
 
@@ -141,6 +142,8 @@ class ParsoEngineTest {
         }
 
         override fun getStats(handle: Long): LongArray = longArrayOf(64L, 0L, 2L)
+
+        override fun pollEvents(handle: Long, maxEvents: Int): LongArray = LongArray(0)
 
         override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int = frames
 

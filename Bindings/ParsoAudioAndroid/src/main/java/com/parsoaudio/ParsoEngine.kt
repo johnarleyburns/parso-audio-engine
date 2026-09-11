@@ -23,6 +23,7 @@ internal interface NativeEngineBridge {
         i0: Int, i1: Int, i2: Int, f0: Float, f1: Float,
     ): Boolean
     fun getStats(handle: Long): LongArray?
+    fun pollEvents(handle: Long, maxEvents: Int): LongArray?
     fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int
     fun setRecordActive(handle: Long, active: Boolean): Boolean
     fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int
@@ -62,6 +63,9 @@ private object JniEngineBridge : NativeEngineBridge {
 
     override fun getStats(handle: Long): LongArray? = ParsoNative.nativeGetStats(handle)
 
+    override fun pollEvents(handle: Long, maxEvents: Int): LongArray? =
+        ParsoNative.nativePollEvents(handle, maxEvents)
+
     override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int =
         ParsoNative.nativeRender(handle, left, right, frames)
 
@@ -81,6 +85,14 @@ data class EngineStats(
     val masterFrame: Long,
     val starvedFrames: Long,
     val deckCount: Int,
+)
+
+data class EngineEvent(
+    val type: Int,
+    val deck: Int,
+    val frame: Long,
+    val firstValue: Float,
+    val secondValue: Float,
 )
 
 /**
@@ -192,6 +204,20 @@ class ParsoEngine private constructor(
             "native engine stats has invalid values"
         }
         return EngineStats(values[0], values[1], values[2].toInt())
+    }
+
+    /** Drain copied render-to-control events without invoking JVM code on render. */
+    fun pollEvents(maxEvents: Int = 64): List<EngineEvent> {
+        require(maxEvents in 1..64) { "maxEvents must be between 1 and 64" }
+        val values = native.pollEvents(requireOpen(), maxEvents)
+            ?: error("native engine event polling failed")
+        require(values.size % 5 == 0) { "native engine events have invalid shape" }
+        return values.asList().chunked(5).map { event ->
+            EngineEvent(
+                event[0].toInt(), event[1].toInt(), event[2],
+                Float.fromBits(event[3].toInt()), Float.fromBits(event[4].toInt()),
+            )
+        }
     }
 
     /** Fill caller-owned stereo direct buffers and return the rendered frame count. */
