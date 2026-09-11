@@ -131,10 +131,10 @@ double sanitizedDB(float db) {
                      std::fmin(kMaximumGainDB, static_cast<double>(db)));
 }
 
-double sanitizedWarm2DB(float db) {
+double sanitizedWarm2DB(float db, double minimumDB) {
     if (std::isnan(db)) return 0.0;
     if (std::isinf(db) && db < 0.0f) return kMinimumGainDB;
-    return std::fmax(kMinimumGainDB,
+    return std::fmax(minimumDB,
                      std::fmin(12.0, static_cast<double>(db)));
 }
 
@@ -423,11 +423,15 @@ void pd_eq3_set_profile(pd_eq3* eq, pd_eq3_profile profile) {
 
 void pd_eq3_set(pd_eq3* eq, float low_db, float mid_db, float high_db) {
     if (eq == nullptr) return;
-    const auto sanitize = eq->profile == PD_EQ3_PROFILE_WARM2
-        ? sanitizedWarm2DB : sanitizedDB;
-    eq->targetLowDB = sanitize(low_db);
-    eq->targetMidDB = sanitize(mid_db);
-    eq->targetHighDB = sanitize(high_db);
+    if (eq->profile == PD_EQ3_PROFILE_WARM2) {
+        eq->targetLowDB = sanitizedWarm2DB(low_db, -70.0);
+        eq->targetMidDB = sanitizedWarm2DB(mid_db, -40.0);
+        eq->targetHighDB = sanitizedWarm2DB(high_db, -70.0);
+    } else {
+        eq->targetLowDB = sanitizedDB(low_db);
+        eq->targetMidDB = sanitizedDB(mid_db);
+        eq->targetHighDB = sanitizedDB(high_db);
+    }
     // The first control message establishes the initial state before audio is
     // running. Later messages are smoothed in the render loop.
     if (!eq->hasProcessed) {
