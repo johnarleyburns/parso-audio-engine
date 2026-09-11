@@ -20,4 +20,14 @@ object ParsoNative {
     @JvmStatic external fun nativeRender(
         handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int
     ): Int
+    @JvmStatic external fun nativeAnalysisSummary(
+        samples: ByteBuffer, frames: Int, sampleRateHz: Int, channelCount: Int
+    ): DoubleArray?
+    @JvmStatic external fun nativeKey(
+        samples: ByteBuffer, frames: Int, sampleRateHz: Int, channelCount: Int
+    ): DoubleArray?
+    @JvmStatic external fun nativeStructure(
+        samples: ByteBuffer, frames: Int, sampleRateHz: Int, channelCount: Int,
+        bpm: Double, maxSections: Int
+    ): DoubleArray?
 }

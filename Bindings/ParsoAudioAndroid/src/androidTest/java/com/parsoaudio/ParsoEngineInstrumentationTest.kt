@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -22,5 +23,26 @@ class ParsoEngineInstrumentationTest {
         } finally {
             engine.close()
         }
+    }
+
+    @Test
+    fun nativeOfflineAnalysisUsesSharedServices() {
+        val sampleRate = 48_000
+        val frames = sampleRate * 8
+        val samples = ByteBuffer.allocateDirect(frames * Float.SIZE_BYTES)
+            .order(ByteOrder.nativeOrder())
+        val floats = samples.asFloatBuffer()
+        for (index in 0 until frames) {
+            floats.put(index, if (index in sampleRate * 2 until sampleRate * 4) 0.25f else 0.0f)
+        }
+        val summary = ParsoAnalysis.summary(samples, frames, sampleRate)
+        assertEquals(8.0, summary.durationSeconds, 1.0e-6)
+        assertTrue(summary.peak > 0.2)
+        val key = ParsoAnalysis.key(samples, frames, sampleRate)
+        assertTrue(key.tonicPitchClass in 0..11)
+        assertTrue(key.camelotLetter == 'A' || key.camelotLetter == 'B')
+        val sections = ParsoAnalysis.structure(samples, frames, sampleRate)
+        assertTrue(sections.isNotEmpty())
+        assertEquals(0, sections.first().kind)
     }
 }
