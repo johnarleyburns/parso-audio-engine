@@ -141,7 +141,7 @@ the completed fixture-analysis/DJ scenario matrix.
 2. Publish per-platform decode/encode/container capabilities. Android AAC can use a platform codec adapter after validation; Linux AAC/ALAC/AIFF/CAF require separately validated implementations or providers. Return explicit unsupported-format errors until implemented. Container support is a separate gate from codec support.
 3. Extract DJ control in small slices: transport/cue/jog; loop/hot-cue/quantize/sync/slip; pads/sampler; mixer/monitoring/mic; Smart Fader/CFX. Keep all language wrappers on this shared behavior.
 4. Port analysis in order: FFT/STFT, onsets, tempo/beatgrid, key, structure, waveform, full analysis. Preserve SPEC algorithms, normalization, frame conventions, and deterministic behavior. Evaluate the existing portable FFT facilities before adding a dependency.
-5. Move recording orchestration into an off-thread native service consuming the existing record ring. Start with WAV/FLAC, expose dropped-frame accounting, then add supported platform codecs. No MP3 mix recording.
+5. Move recording orchestration into an off-thread native service consuming the existing record ring. Start with WAV/FLAC, expose dropped-frame accounting, then add supported platform codecs. The C++17, C#, Python, and Android control-side `MixRecorder` wrappers now cover WAV/FLAC/AAC. No MP3 mix recording.
 
 The first CP3 native slice is now the versioned C ABI's offline PCM/SRC/loudness contract:
 `parso_capabilities_get` reports WAV and raw little-endian integer PCM support plus the validated SRC

@@ -7,6 +7,9 @@
 
 #include "parso.h"
 
+#include <limits>
+#include <vector>
+
 namespace parso {
 
 class Bytes final {
@@ -194,6 +197,96 @@ public:
 
 private:
     parso_engine_t *handle_ = nullptr;
+};
+
+/* Control-side recorder for stereo blocks drained from Engine. Encoding is
+ * synchronous and must remain off the render thread. */
+class MixRecorder final {
+public:
+    explicit MixRecorder(uint32_t sampleRateHz, uint32_t codec = PARSO_CODEC_WAV,
+                         uint32_t bitrateKbps = 192, uint32_t quality = 0) noexcept
+        : sampleRateHz_(sampleRateHz), codec_(codec), bitrateKbps_(bitrateKbps),
+          quality_(quality) {}
+
+    MixRecorder(const MixRecorder &) = delete;
+    MixRecorder &operator=(const MixRecorder &) = delete;
+    MixRecorder(MixRecorder &&) noexcept = default;
+    MixRecorder &operator=(MixRecorder &&) noexcept = default;
+
+    uint64_t frames() const noexcept {
+        return static_cast<uint64_t>(samples_.size() / 2u);
+    }
+
+    parso_status_t append(const float *left, const float *right,
+                          uint32_t frames) noexcept {
+        if (!left || !right || frames == 0 || sampleRateHz_ == 0) {
+            return PARSO_STATUS_INVALID_ARGUMENT;
+        }
+        const size_t frameCount = static_cast<size_t>(frames);
+        if (frameCount > (std::numeric_limits<size_t>::max() - samples_.size()) / 2u) {
+            return PARSO_STATUS_INVALID_SIZE;
+        }
+        const size_t oldSize = samples_.size();
+        try {
+            samples_.resize(oldSize + frameCount * 2u);
+        } catch (...) {
+            return PARSO_STATUS_OUT_OF_MEMORY;
+        }
+        for (size_t index = 0; index < frameCount; ++index) {
+            samples_[oldSize + index * 2u] = left[index];
+            samples_[oldSize + index * 2u + 1u] = right[index];
+        }
+        return PARSO_STATUS_OK;
+    }
+
+    parso_status_t appendEngine(Engine &engine, uint32_t maxFrames,
+                                uint32_t *outFrames) noexcept {
+        if (!outFrames || maxFrames == 0) return PARSO_STATUS_INVALID_ARGUMENT;
+        *outFrames = 0;
+        try {
+            std::vector<float> left(maxFrames);
+            std::vector<float> right(maxFrames);
+            parso_status_t status = engine.drainRecord(left.data(), right.data(),
+                                                        maxFrames, outFrames);
+            if (status != PARSO_STATUS_OK) return status;
+            if (*outFrames == 0) return PARSO_STATUS_OK;
+            return append(left.data(), right.data(), *outFrames);
+        } catch (...) {
+            return PARSO_STATUS_OUT_OF_MEMORY;
+        }
+    }
+
+    parso_status_t encode(Bytes *out) const noexcept {
+        if (!out || samples_.empty() || sampleRateHz_ == 0 || codec_ == 0) {
+            return PARSO_STATUS_INVALID_ARGUMENT;
+        }
+        parso_codec_options_t options{};
+        parso_pcm_buffer_t input{};
+        if (parso_codec_options_init(&options) != PARSO_STATUS_OK ||
+            parso_pcm_buffer_init(&input) != PARSO_STATUS_OK) {
+            return PARSO_STATUS_INTERNAL;
+        }
+        options.bitrate_kbps = bitrateKbps_;
+        options.quality = quality_;
+        input.samples = const_cast<float *>(samples_.data());
+        input.frames = static_cast<uint64_t>(samples_.size() / 2u);
+        input.channel_count = 2;
+        input.sample_rate_hz = sampleRateHz_;
+        const parso_status_t status = parso_codec_write(
+            &input, codec_, &options, out->cHandle());
+        input.samples = nullptr;
+        parso_pcm_buffer_release(&input);
+        return status;
+    }
+
+    void reset() noexcept { samples_.clear(); }
+
+private:
+    uint32_t sampleRateHz_ = 0;
+    uint32_t codec_ = PARSO_CODEC_WAV;
+    uint32_t bitrateKbps_ = 192;
+    uint32_t quality_ = 0;
+    std::vector<float> samples_;
 };
 
 } // namespace parso

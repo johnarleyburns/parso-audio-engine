@@ -76,6 +76,20 @@ int main() {
         return 1;
     }
 
+    parso::MixRecorder recorder(48000, PARSO_CODEC_WAV);
+    parso::Bytes recording;
+    if (recorder.append(outputLeft, outputRight, recordedFrames) != PARSO_STATUS_OK ||
+        recorder.frames() != recordedFrames ||
+        recorder.encode(&recording) != PARSO_STATUS_OK || recording.size() <= 44 ||
+        recording.data()[0] != 'R' || recording.data()[1] != 'I' ||
+        recording.data()[2] != 'F' || recording.data()[3] != 'F') {
+        std::fprintf(stderr, "public_cpp_consumer: mix recorder failed: %s\n",
+                     parso_last_error());
+        return 1;
+    }
+    recorder.reset();
+    if (recorder.frames() != 0) return 1;
+
     bool signal = false;
     for (uint32_t index = 0; index < frames; ++index) {
         if (std::fabs(outputLeft[index]) > 1.0e-5f || std::fabs(outputRight[index]) > 1.0e-5f) {
