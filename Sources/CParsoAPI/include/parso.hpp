@@ -173,6 +173,14 @@ public:
         return parso_engine_render(handle_, &output);
     }
 
+    parso_status_t renderMonitor(const parso_output_view_t &output) noexcept {
+        return parso_engine_render_monitor(handle_, &output);
+    }
+
+    parso_status_t renderBooth(const parso_output_view_t &output) noexcept {
+        return parso_engine_render_booth(handle_, &output);
+    }
+
     parso_status_t getStats(parso_stats_t *stats) const noexcept {
         return parso_engine_get_stats(handle_, stats);
     }

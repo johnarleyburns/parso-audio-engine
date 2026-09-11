@@ -9,6 +9,10 @@ int main() {
     float right[frames] = {};
     float outputLeft[frames] = {};
     float outputRight[frames] = {};
+    float monitorLeft[frames] = {};
+    float monitorRight[frames] = {};
+    float boothLeft[frames] = {};
+    float boothRight[frames] = {};
     for (uint32_t index = 0; index < frames; ++index) {
         left[index] = 0.15f;
         right[index] = 0.15f;
@@ -19,6 +23,8 @@ int main() {
     parso_control_t control{};
     parso_pcm_view_t view{};
     parso_output_view_t output{};
+    parso_output_view_t monitorOutput{};
+    parso_output_view_t boothOutput{};
     parso_command_t command{};
     parso_stats_t stats{};
     parso_event_t events[4]{};
@@ -27,6 +33,8 @@ int main() {
         parso_control_init(&control) != PARSO_STATUS_OK ||
         parso_pcm_view_init(&view) != PARSO_STATUS_OK ||
         parso_output_view_init(&output) != PARSO_STATUS_OK ||
+        parso_output_view_init(&monitorOutput) != PARSO_STATUS_OK ||
+        parso_output_view_init(&boothOutput) != PARSO_STATUS_OK ||
         parso_command_init(&command) != PARSO_STATUS_OK ||
         parso_stats_init(&stats) != PARSO_STATUS_OK ||
         parso_event_init(&events[0]) != PARSO_STATUS_OK ||
@@ -42,6 +50,12 @@ int main() {
     output.left = outputLeft;
     output.right = outputRight;
     output.frames = frames;
+    monitorOutput.left = monitorLeft;
+    monitorOutput.right = monitorRight;
+    monitorOutput.frames = frames;
+    boothOutput.left = boothLeft;
+    boothOutput.right = boothRight;
+    boothOutput.frames = frames;
     command.type = PARSO_COMMAND_PLAY;
     command.deck = 0;
 
@@ -51,6 +65,8 @@ int main() {
         engine.setDeckBuffer(0, view) != PARSO_STATUS_OK ||
         engine.postCommand(command) != PARSO_STATUS_OK ||
         engine.render(output) != PARSO_STATUS_OK ||
+        engine.renderMonitor(monitorOutput) != PARSO_STATUS_OK ||
+        engine.renderBooth(boothOutput) != PARSO_STATUS_OK ||
         engine.pollEvents(events, 4, &eventCount) != PARSO_STATUS_OK ||
         engine.getStats(&stats) != PARSO_STATUS_OK) {
         std::fprintf(stderr, "public_cpp_consumer: %s\n", parso_last_error());
