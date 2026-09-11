@@ -18,6 +18,10 @@ internal interface NativeEngineBridge {
     fun play(handle: Long, deck: Int): Boolean
     fun pause(handle: Long, deck: Int): Boolean
     fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int
+    fun setRecordActive(handle: Long, active: Boolean): Boolean
+    fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int
+    fun recordDroppedFrames(handle: Long): Long
+    fun resetRecord(handle: Long): Boolean
 }
 
 private object JniEngineBridge : NativeEngineBridge {
@@ -44,6 +48,17 @@ private object JniEngineBridge : NativeEngineBridge {
 
     override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int =
         ParsoNative.nativeRender(handle, left, right, frames)
+
+    override fun setRecordActive(handle: Long, active: Boolean): Boolean =
+        ParsoNative.nativeRecordSetActive(handle, active)
+
+    override fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int =
+        ParsoNative.nativeRecordDrain(handle, left, right, maxFrames)
+
+    override fun recordDroppedFrames(handle: Long): Long =
+        ParsoNative.nativeRecordDroppedFrames(handle)
+
+    override fun resetRecord(handle: Long): Boolean = ParsoNative.nativeRecordReset(handle)
 }
 
 /**
@@ -125,6 +140,32 @@ class ParsoEngine private constructor(
         val rendered = native.render(handle, left, right, frames)
         check(rendered == frames) { "native render failed: $rendered" }
         return rendered
+    }
+
+    /** Activate or deactivate the bounded off-thread master record tap. */
+    fun setRecordActive(active: Boolean) {
+        check(native.setRecordActive(requireOpen(), active)) { "native record activation was rejected" }
+    }
+
+    /** Drain copied planar master frames into caller-owned direct buffers. */
+    fun drainRecord(left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int {
+        val handle = requireOpen()
+        require(maxFrames > 0 && maxFrames <= this.maxFrames) {
+            "maxFrames must be between 1 and the engine maximum"
+        }
+        validateBuffer(left, maxFrames, "left")
+        validateBuffer(right, maxFrames, "right")
+        val drained = native.drainRecord(handle, left, right, maxFrames)
+        check(drained in 0..maxFrames) { "native record drain failed: $drained" }
+        return drained
+    }
+
+    fun recordDroppedFrames(): Long = native.recordDroppedFrames(requireOpen()).also {
+        check(it >= 0) { "native record drop query failed" }
+    }
+
+    fun resetRecord() {
+        check(native.resetRecord(requireOpen())) { "native record reset was rejected" }
     }
 
     /** Idempotently destroy the native engine after its callback has stopped. */

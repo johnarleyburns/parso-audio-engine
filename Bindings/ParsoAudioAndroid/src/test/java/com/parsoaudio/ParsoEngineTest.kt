@@ -58,6 +58,10 @@ class ParsoEngineTest {
         engine.setDeckBuffer(0, left, right, frames = 8)
         assertEquals(1, bridge.deckBufferCalls)
         assertTrue(engine.render(left, right, 8) == 8)
+        engine.setRecordActive(true)
+        assertEquals(8, engine.drainRecord(left, right, 8))
+        assertEquals(0L, engine.recordDroppedFrames())
+        engine.resetRecord()
 
         assertThrows<IllegalArgumentException> {
             engine.setDeckBuffer(0, ByteBuffer.allocate(32), frames = 8)
@@ -116,5 +120,14 @@ class ParsoEngineTest {
         }
 
         override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int = frames
+
+        override fun setRecordActive(handle: Long, active: Boolean): Boolean = true
+
+        override fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int =
+            maxFrames
+
+        override fun recordDroppedFrames(handle: Long): Long = 0L
+
+        override fun resetRecord(handle: Long): Boolean = true
     }
 }

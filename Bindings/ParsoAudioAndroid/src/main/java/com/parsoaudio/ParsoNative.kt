@@ -43,4 +43,10 @@ object ParsoNative {
         samples: ByteBuffer, frames: Int, sampleRateHz: Int,
         channelCount: Int, targetLufs: Double
     ): DoubleArray?
+    @JvmStatic external fun nativeRecordSetActive(handle: Long, active: Boolean): Boolean
+    @JvmStatic external fun nativeRecordDrain(
+        handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int
+    ): Int
+    @JvmStatic external fun nativeRecordDroppedFrames(handle: Long): Long
+    @JvmStatic external fun nativeRecordReset(handle: Long): Boolean
 }

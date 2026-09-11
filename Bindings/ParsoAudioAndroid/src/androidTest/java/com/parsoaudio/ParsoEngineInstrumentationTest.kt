@@ -19,7 +19,11 @@ class ParsoEngineInstrumentationTest {
         try {
             engine.play(0)
             engine.pause(0)
+            engine.setRecordActive(true)
             assertEquals(frames, engine.render(left, right, frames))
+            assertEquals(frames, engine.drainRecord(left, right, frames))
+            assertEquals(0L, engine.recordDroppedFrames())
+            engine.resetRecord()
         } finally {
             engine.close()
         }
