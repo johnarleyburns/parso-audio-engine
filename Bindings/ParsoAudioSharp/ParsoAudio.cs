@@ -225,6 +225,14 @@ public readonly record struct KeyResult(
 public readonly record struct StructureSection(
     double StartSeconds, uint Kind, uint Bar, double Energy, double Confidence);
 
+/// <summary>Owned interleaved float32 PCM returned by native sample-rate conversion.</summary>
+public readonly record struct ResampledPcm(
+    float[] Samples, ulong Frames, uint ChannelCount, uint SampleRateHz);
+
+/// <summary>EBU R128 loudness values measured by the native offline service.</summary>
+public readonly record struct LoudnessResult(
+    double IntegratedLufs, double TruePeakDbtp, double GainToTargetDb, double LoudnessRangeLu);
+
 /// <summary>Provides ownership-safe managed access to native offline codec services.</summary>
 public static unsafe class CodecServices
 {
@@ -497,6 +505,103 @@ public static unsafe class CodecServices
             ThrowIfFailed(status, "waveform generation");
         }
         return (minimum, maximum);
+    }
+
+    /// <summary>Converts borrowed interleaved float32 PCM to a new sample rate.</summary>
+    public static unsafe ResampledPcm ConvertSampleRate(
+        ReadOnlySpan<float> samples, uint sourceSampleRateHz, uint destinationSampleRateHz,
+        uint channelCount, uint quality = 0)
+    {
+        ValidatePcm(samples, sourceSampleRateHz, channelCount);
+        if (destinationSampleRateHz == 0 || quality > 2)
+            throw new ArgumentOutOfRangeException(nameof(destinationSampleRateHz));
+        var options = new NativeMethods.SrcOptions
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.SrcOptions>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        var status = NativeMethods.SrcOptionsInit(ref options);
+        ThrowIfFailed(status, "SRC-options initialization");
+        options.SourceSampleRateHz = sourceSampleRateHz;
+        options.DestinationSampleRateHz = destinationSampleRateHz;
+        options.ChannelCount = channelCount;
+        options.Quality = quality;
+        var input = CreateInput(samples, sourceSampleRateHz, channelCount);
+        var output = new NativeMethods.PcmBuffer();
+        status = NativeMethods.PcmBufferInit(ref output);
+        ThrowIfFailed(status, "SRC output initialization");
+        try
+        {
+            fixed (float* samplePointer = samples)
+            {
+                input.Samples = (nint)samplePointer;
+                status = NativeMethods.SrcConvert(ref input, ref options, ref output);
+            }
+            ThrowIfFailed(status, "sample-rate conversion");
+            return CopyPcm(output);
+        }
+        finally
+        {
+            NativeMethods.PcmBufferRelease(ref output);
+        }
+    }
+
+    /// <summary>Measures EBU R128 loudness on borrowed interleaved float32 PCM.</summary>
+    public static unsafe LoudnessResult MeasureLoudness(
+        ReadOnlySpan<float> samples, uint sampleRateHz, uint channelCount,
+        double targetLufs = -14.0)
+    {
+        ValidatePcm(samples, sampleRateHz, channelCount);
+        if (!double.IsFinite(targetLufs)) throw new ArgumentOutOfRangeException(nameof(targetLufs));
+        var options = new NativeMethods.LoudnessOptions
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.LoudnessOptions>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        var status = NativeMethods.LoudnessOptionsInit(ref options);
+        ThrowIfFailed(status, "loudness-options initialization");
+        options.TargetLufs = targetLufs;
+        var result = new NativeMethods.LoudnessResult
+        {
+            Size = (uint)Marshal.SizeOf<NativeMethods.LoudnessResult>(),
+            AbiVersion = NativeMethods.AbiVersion
+        };
+        status = NativeMethods.LoudnessResultInit(ref result);
+        ThrowIfFailed(status, "loudness-result initialization");
+        var input = CreateInput(samples, sampleRateHz, channelCount);
+        fixed (float* samplePointer = samples)
+        {
+            input.Samples = (nint)samplePointer;
+            status = NativeMethods.LoudnessMeasure(ref input, ref options, ref result);
+        }
+        ThrowIfFailed(status, "loudness measurement");
+        return new LoudnessResult(result.IntegratedLufs, result.TruePeakDbtp,
+            result.GainToTargetDb, result.LoudnessRangeLu);
+    }
+
+    private static void ValidatePcm(ReadOnlySpan<float> samples, uint sampleRateHz, uint channelCount)
+    {
+        if (samples.IsEmpty) throw new ArgumentException("Samples cannot be empty.", nameof(samples));
+        if (channelCount is < 1 or > 2 || sampleRateHz == 0 || samples.Length % channelCount != 0)
+            throw new ArgumentException("PCM format must have one or two channels and a valid sample rate.");
+    }
+
+    private static NativeMethods.PcmBuffer CreateInput(
+        ReadOnlySpan<float> samples, uint sampleRateHz, uint channelCount) => new()
+    {
+        Size = (uint)Marshal.SizeOf<NativeMethods.PcmBuffer>(),
+        AbiVersion = NativeMethods.AbiVersion,
+        Frames = checked((ulong)(samples.Length / (int)channelCount)),
+        ChannelCount = channelCount,
+        SampleRateHz = sampleRateHz
+    };
+
+    private static ResampledPcm CopyPcm(NativeMethods.PcmBuffer output)
+    {
+        var sampleCount = checked((int)(output.Frames * output.ChannelCount));
+        var samples = new float[sampleCount];
+        if (sampleCount != 0) Marshal.Copy(output.Samples, samples, 0, sampleCount);
+        return new ResampledPcm(samples, output.Frames, output.ChannelCount, output.SampleRateHz);
     }
 
     private static NativeMethods.CodecOptions ToNativeOptions(CodecOptions options)
@@ -969,6 +1074,40 @@ internal static unsafe partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct SrcOptions
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal uint SourceSampleRateHz;
+        internal uint DestinationSampleRateHz;
+        internal uint ChannelCount;
+        internal uint Quality;
+        internal uint Reserved0;
+        internal uint Reserved1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct LoudnessOptions
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal double TargetLufs;
+        internal uint Reserved0;
+        internal uint Reserved1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct LoudnessResult
+    {
+        internal uint Size;
+        internal uint AbiVersion;
+        internal double IntegratedLufs;
+        internal double TruePeakDbtp;
+        internal double GainToTargetDb;
+        internal double LoudnessRangeLu;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct AnalysisOptions
     {
         internal uint Size;
@@ -1173,6 +1312,23 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("parso", EntryPoint = "parso_codec_write")]
     internal static partial int CodecWrite(
         ref PcmBuffer input, uint codec, ref CodecOptions options, ref Bytes output);
+
+    [LibraryImport("parso", EntryPoint = "parso_src_options_init")]
+    internal static partial int SrcOptionsInit(ref SrcOptions options);
+
+    [LibraryImport("parso", EntryPoint = "parso_src_convert")]
+    internal static partial int SrcConvert(ref PcmBuffer input, ref SrcOptions options,
+        ref PcmBuffer output);
+
+    [LibraryImport("parso", EntryPoint = "parso_loudness_options_init")]
+    internal static partial int LoudnessOptionsInit(ref LoudnessOptions options);
+
+    [LibraryImport("parso", EntryPoint = "parso_loudness_result_init")]
+    internal static partial int LoudnessResultInit(ref LoudnessResult result);
+
+    [LibraryImport("parso", EntryPoint = "parso_loudness_measure")]
+    internal static partial int LoudnessMeasure(ref PcmBuffer input,
+        ref LoudnessOptions options, ref LoudnessResult result);
 
     [LibraryImport("parso", EntryPoint = "parso_analysis_options_init")]
     internal static partial int AnalysisOptionsInit(ref AnalysisOptions options);

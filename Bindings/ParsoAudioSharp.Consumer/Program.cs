@@ -28,6 +28,13 @@ var waveform = CodecServices.Waveform(tone, 48_000, 1, 8);
 if (waveform.Min.Length != 8 || waveform.Max.Length != 8 ||
     waveform.Min.Zip(waveform.Max).Any(pair => pair.First > pair.Second))
     throw new InvalidOperationException("C# native consumer received invalid waveform summary.");
+var resampled = CodecServices.ConvertSampleRate(tone, 48_000, 24_000, 1);
+if (resampled.SampleRateHz != 24_000 || resampled.ChannelCount != 1 ||
+    resampled.Frames is < 2_300 or > 2_500)
+    throw new InvalidOperationException("C# native consumer received invalid SRC output.");
+var loudness = CodecServices.MeasureLoudness(tone, 48_000, 1);
+if (!double.IsFinite(loudness.TruePeakDbtp))
+    throw new InvalidOperationException("C# native consumer received invalid loudness output.");
 
 using var engine = Engine.Create(maxFrames: 256);
 var left = new float[256];
