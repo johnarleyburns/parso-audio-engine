@@ -22,6 +22,7 @@ internal interface NativeEngineBridge {
         handle: Long, type: Int, deck: Int,
         i0: Int, i1: Int, i2: Int, f0: Float, f1: Float,
     ): Boolean
+    fun getStats(handle: Long): LongArray?
     fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int
     fun setRecordActive(handle: Long, active: Boolean): Boolean
     fun drainRecord(handle: Long, left: ByteBuffer, right: ByteBuffer, maxFrames: Int): Int
@@ -59,6 +60,8 @@ private object JniEngineBridge : NativeEngineBridge {
         i0: Int, i1: Int, i2: Int, f0: Float, f1: Float,
     ): Boolean = ParsoNative.nativePostCommand(handle, type, deck, i0, i1, i2, f0, f1)
 
+    override fun getStats(handle: Long): LongArray? = ParsoNative.nativeGetStats(handle)
+
     override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int =
         ParsoNative.nativeRender(handle, left, right, frames)
 
@@ -73,6 +76,12 @@ private object JniEngineBridge : NativeEngineBridge {
 
     override fun resetRecord(handle: Long): Boolean = ParsoNative.nativeRecordReset(handle)
 }
+
+data class EngineStats(
+    val masterFrame: Long,
+    val starvedFrames: Long,
+    val deckCount: Int,
+)
 
 /**
  * Closeable Kotlin facade for the direct-buffer JNI render seam.
@@ -172,6 +181,17 @@ class ParsoEngine private constructor(
         check(native.postCommand(requireOpen(), command.value, deck, i0, i1, i2, f0, f1)) {
             "native command was rejected"
         }
+    }
+
+    /** Return a copied control-side snapshot of render progress and starvation. */
+    fun stats(): EngineStats {
+        val values = native.getStats(requireOpen())
+            ?: error("native engine stats failed")
+        require(values.size == 3) { "native engine stats has invalid shape" }
+        require(values[0] >= 0L && values[1] >= 0L && values[2] > 0L) {
+            "native engine stats has invalid values"
+        }
+        return EngineStats(values[0], values[1], values[2].toInt())
     }
 
     /** Fill caller-owned stereo direct buffers and return the rendered frame count. */

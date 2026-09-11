@@ -48,6 +48,7 @@ object ConsumerScenario {
             val recordRight = directFloats(RENDER_FRAMES)
             recorded = engine.drainRecord(recordLeft, recordRight, RENDER_FRAMES)
             dropped = engine.recordDroppedFrames()
+            check(engine.stats().deckCount == 2)
         }
 
         check(rendered == RENDER_FRAMES)

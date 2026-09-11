@@ -43,6 +43,7 @@ class ParsoEngineTest {
         engine.pause(0)
         engine.setMix(-1.0f, 0.75f)
         engine.postCommand(EngineCommand.LOOP_IN, f0 = 1.0f)
+        assertEquals(2, engine.stats().deckCount)
         engine.close()
         engine.close()
 
@@ -138,6 +139,8 @@ class ParsoEngineTest {
             operations += "command:$type:$deck:$f0:$f1"
             return true
         }
+
+        override fun getStats(handle: Long): LongArray = longArrayOf(64L, 0L, 2L)
 
         override fun render(handle: Long, left: ByteBuffer, right: ByteBuffer, frames: Int): Int = frames
 

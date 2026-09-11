@@ -23,6 +23,7 @@ class ParsoEngineInstrumentationTest {
             engine.postCommand(EngineCommand.SET_KEYLOCK, f0 = 1.0f)
             engine.setRecordActive(true)
             assertEquals(frames, engine.render(left, right, frames))
+            assertEquals(frames.toLong(), engine.stats().masterFrame)
             assertEquals(frames, engine.drainRecord(left, right, frames))
             assertEquals(0L, engine.recordDroppedFrames())
             engine.resetRecord()

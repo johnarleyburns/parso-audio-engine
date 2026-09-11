@@ -155,6 +155,23 @@ JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativePostCommand(
         ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jlongArray JNICALL Java_com_parsoaudio_ParsoNative_nativeGetStats(
+    JNIEnv *env, jclass, jlong handle
+) {
+    if (!env || !fromHandle(handle)) return nullptr;
+    parso_stats_t stats{};
+    if (parso_stats_init(&stats) != PARSO_STATUS_OK ||
+        parso_engine_get_stats(fromHandle(handle), &stats) != PARSO_STATUS_OK) return nullptr;
+    const jlong values[] = {
+        static_cast<jlong>(stats.master_frame),
+        static_cast<jlong>(stats.starved_frames),
+        static_cast<jlong>(stats.deck_count),
+    };
+    jlongArray output = env->NewLongArray(3);
+    if (output) env->SetLongArrayRegion(output, 0, 3, values);
+    return output;
+}
+
 JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRender(
     JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint frames
 ) {
