@@ -54,9 +54,18 @@ public enum RemoteAudioURL {
     }
 
     /// Reverses `cacheURL(for:scheme:)`: restores an `http`/`https` scheme.
+    ///
+    /// For a URL that is *already* `http`/`https` this returns the input
+    /// **unchanged** — no `URLComponents` round-trip. That round-trip
+    /// re-serializes (re-normalizes percent-encoding of) paths that callers left
+    /// loosely encoded — e.g. Internet Archive `/download/<id>/<file>` names with
+    /// spaces, `()`, `'`, `&`, `!` — which would make this loader's `cacheKey`
+    /// diverge from the key an external caller computes from the same raw URL.
     public static func networkURL(for cacheURL: URL, customScheme: String) -> URL {
+        let scheme = cacheURL.scheme?.lowercased()
+        if scheme == "http" || scheme == "https" { return cacheURL }
         guard var comps = URLComponents(url: cacheURL, resolvingAgainstBaseURL: false) else { return cacheURL }
-        if comps.scheme?.lowercased() == customScheme.lowercased() { comps.scheme = "https" }
+        if scheme == customScheme.lowercased() { comps.scheme = "https" }
         return comps.url ?? cacheURL
     }
 

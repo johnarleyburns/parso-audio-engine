@@ -221,7 +221,17 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
             statusCode: http.statusCode,
             contentRange: http.value(forHTTPHeaderField: "Content-Range"),
             expectedContentLength: http.expectedContentLength
-        ) else { throw URLError(.badServerResponse) }
+        ) else {
+            // HTTP 200 with no usable length: archive.org's on-the-fly
+            // derivative files (and some CDN edges that ignore a `0-0` range)
+            // answer chunked / `Content-Length`-less. Treat the resource as a
+            // non-seekable full-body stream instead of failing playback.
+            if http.statusCode == 200 {
+                withLock { resolvedSupportsByteRanges = false }
+                return 0
+            }
+            throw URLError(.badServerResponse)
+        }
         withLock { resolvedSupportsByteRanges = probe.supportsByteRanges }
         if probe.totalBytes > 0 { await store.setContentLength(probe.totalBytes, for: cacheKey) }
         return probe.totalBytes
@@ -240,11 +250,11 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
 
     // MARK: - Progressive serve
 
-    private func serve(_ dr: AVAssetResourceLoadingDataRequest, total: Int64) async throws {
-        let start = dr.currentOffset
-        var endRequested: Int64 = dr.requestsAllDataToEndOfResource
+    func serve(_ dr: ResourceServeSink, total: Int64) async throws {
+        let start = dr.serveCurrentOffset
+        var endRequested: Int64 = dr.serveRequestsAllDataToEnd
             ? (total > 0 ? total : Int64.max)
-            : start + Int64(dr.requestedLength)
+            : start + Int64(dr.serveRequestedLength)
         if total > 0 { endRequested = min(endRequested, total) }
         guard endRequested > start else { return }
 
@@ -261,7 +271,7 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
             if cachedContiguous > 0 {
                 let chunkEnd = min(cursor + cachedContiguous, endRequested)
                 if let data = readFile(fileURL, offset: cursor, length: chunkEnd - cursor), !data.isEmpty {
-                    dr.respond(with: data)
+                    dr.serveRespond(with: data)
                     cursor += Int64(data.count)
                     continue
                 }
@@ -283,16 +293,29 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
             let (bytes, response) = try await session.bytes(for: req)
             guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             let knownTotal = await store.totalBytes(for: cacheKey) ?? total
-            guard let decision = RemoteStreamingResponsePolicy.dataResponse(
+            let decision = RemoteStreamingResponsePolicy.dataResponse(
                 statusCode: http.statusCode,
                 contentRange: http.value(forHTTPHeaderField: "Content-Range"),
                 expectedContentLength: http.expectedContentLength,
                 cursor: cursor,
                 knownTotalBytes: knownTotal
-            ) else { throw URLError(.badServerResponse) }
-            if case .fullBody(let fullTotal) = decision {
+            )
+            var chunkedFullStream = false
+            switch decision {
+            case .ranged:
+                break
+            case .fullBody(let fullTotal):
                 withLock { resolvedSupportsByteRanges = false }
                 await store.setContentLength(fullTotal, for: cacheKey)
+            case .none:
+                // Chunked / no-Content-Length 200: the origin gave us neither a
+                // `Content-Range` nor a usable length. Stream the whole body to
+                // EOF and satisfy the request from the buffer instead of
+                // throwing `.badServerResponse` (silent playback death).
+                guard http.statusCode == 200, cursor == 0 else { throw URLError(.badServerResponse) }
+                withLock { resolvedSupportsByteRanges = false }
+                chunkedFullStream = true
+                endRequested = Int64.max
             }
 
             var buf: [UInt8] = []
@@ -306,7 +329,7 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
                 written.append(cursor..<(cursor + Int64(chunk.count)))
                 if cursor < endRequested {
                     let usable = min(Int64(chunk.count), endRequested - cursor)
-                    if usable > 0 { dr.respond(with: chunk.prefix(Int(usable))) }
+                    if usable > 0 { dr.serveRespond(with: chunk.prefix(Int(usable))) }
                 }
                 cursor += Int64(chunk.count)
                 buf.removeAll(keepingCapacity: true)
@@ -323,6 +346,15 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
 
             for range in written.reversed() {
                 await store.recordWrite(range: range, for: cacheKey)
+            }
+            if chunkedFullStream {
+                // The body is now fully buffered on disk; pin the real length so
+                // the entry reads back as complete for offline replay.
+                if cursor > 0 {
+                    await store.setContentLength(cursor, for: cacheKey)
+                    await store.recordWrite(range: 0..<cursor, for: cacheKey)
+                }
+                break
             }
             if cursor >= endRequested { break }
         }
@@ -349,5 +381,31 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
 private final class LoadingRequestBox: @unchecked Sendable {
     let value: AVAssetResourceLoadingRequest
     init(_ value: AVAssetResourceLoadingRequest) { self.value = value }
+}
+
+/// The subset of `AVAssetResourceLoadingDataRequest` the progressive serve loop
+/// needs. Abstracted so the loop is drivable from tests without fabricating an
+/// `AVAssetResourceLoadingRequest` (which has no public initializer).
+protocol ResourceServeSink: AnyObject {
+    var serveCurrentOffset: Int64 { get }
+    var serveRequestedLength: Int { get }
+    var serveRequestsAllDataToEnd: Bool { get }
+    func serveRespond(with data: Data)
+}
+
+extension AVAssetResourceLoadingDataRequest: ResourceServeSink {
+    var serveCurrentOffset: Int64 { currentOffset }
+    var serveRequestedLength: Int { requestedLength }
+    var serveRequestsAllDataToEnd: Bool { requestsAllDataToEndOfResource }
+    func serveRespond(with data: Data) { respond(with: data) }
+}
+
+extension CachingResourceLoader {
+    /// Test seam: the post-redirect URL the loader resolved on the first response.
+    var resolvedNetworkURL: URL? { withLock { resolvedURL } }
+    /// Test seam: whether the loader currently believes the origin honors ranges.
+    var believesByteRangesSupported: Bool { supportsByteRanges }
+    /// Test seam: run the content-length probe.
+    func resolveLength() async throws -> Int64 { try await ensureResolvedLength() }
 }
 #endif
