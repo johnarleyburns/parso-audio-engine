@@ -517,6 +517,18 @@ if(PARSO_BUILD_TESTS)
             LABELS "native;headless;integration"
         )
 
+        add_executable(parso_native_scenario_smoke
+            Tests/Native/native_scenario_smoke.cpp
+        )
+        target_link_libraries(parso_native_scenario_smoke PRIVATE CParsoEngine)
+        target_include_directories(parso_native_scenario_smoke PRIVATE
+            Sources/CParsoEngine/include
+        )
+        add_test(NAME native_scenario_smoke COMMAND parso_native_scenario_smoke)
+        set_tests_properties(native_scenario_smoke PROPERTIES
+            LABELS "native;engine;effects;isolator;transport;integration"
+        )
+
         add_executable(parso_rt_allocation_consumer
             Tests/Native/rt_allocation_consumer.cpp
         )

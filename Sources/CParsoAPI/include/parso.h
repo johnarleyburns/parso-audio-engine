@@ -137,8 +137,13 @@ typedef struct {
     uint32_t max_frames;
     uint32_t deck_count;
     uint32_t reserved;
-    uint32_t isolator_profile; /* 0 generic, 1 WARM2 (300 Hz / 4 kHz, 4th order) */
+    uint32_t isolator_profile; /* one of parso_isolator_profile */
 } parso_engine_options_t;
+
+typedef enum {
+    PARSO_ISOLATOR_PROFILE_GENERIC = 0,
+    PARSO_ISOLATOR_PROFILE_WARM2 = 1
+} parso_isolator_profile;
 
 enum {
     PARSO_SRC_QUALITY_BEST = 0u,
@@ -262,9 +267,9 @@ typedef struct {
     float master_reverb_decay;
     float master_reverb_damp;
     float master_reverb_mode;
-    /* Global three-band isolator, dB. The portable core currently uses
-     * 200 Hz / 2 kHz crossovers; an API-level Warm2 profile can be added
-     * without changing this control shape. */
+    /* Global three-band isolator, dB. The engine profile selects the crossover
+     * topology; PARSO_ISOLATOR_PROFILE_WARM2 uses 300 Hz / 4 kHz fourth-order
+     * splits without changing this control shape. */
     float master_eq_low;
     float master_eq_mid;
     float master_eq_high;

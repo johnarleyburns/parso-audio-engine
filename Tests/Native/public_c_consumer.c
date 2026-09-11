@@ -45,6 +45,7 @@ int main(void) {
         !require_status(parso_event_init(&events[3]), "event init")) return 1;
 
     options.max_frames = frames;
+    options.isolator_profile = PARSO_ISOLATOR_PROFILE_WARM2;
     view.planes = planes;
     view.frames = frames;
     view.channel_count = 2;

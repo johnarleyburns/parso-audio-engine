@@ -145,7 +145,11 @@ The native acceptance target `parso_native_acceptance_artifacts` renders a 30-se
 artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. The Linux
 human-listening runner uses three downloaded MP3 fixtures (house, electronic, and classical),
 compares native and Python renders of the crossfader timeline, and renders each named engine
-listening scenario as its own WAV/JSON pair. The generated-tone target remains a
+listening scenario as its own WAV/JSON pair. Python is only the scenario orchestration layer:
+those renders still execute the native C ABI and shared C++ DSP. The native CTest
+`native_scenario_smoke` independently exercises the non-crossfader control/command paths,
+including Color FX, Beat FX, reverb, time/pitch, loop/scratch transport, automated transition,
+and WARM2 band isolation. The generated-tone target remains a
 deterministic CTest smoke path; see [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md)
 for the music gate.
 
@@ -500,6 +504,66 @@ ch.eqLow = -.infinity   // kill the bass
 ch.eqMid = 0
 ch.eqHigh = 2           // +2 dB
 ```
+
+### Ecler WARM2-style three-knob master isolator
+
+Parso Audio Engine includes an independent digital profile for an Ecler WARM2-style
+master isolator. It uses separate BASS, MID, and TREBLE controls with 300 Hz and
+4 kHz crossover points and fourth-order (24 dB/octave) band splits. The supported
+control ranges are BASS `-70...+12 dB`, MID `-40...+12 dB`, and TREBLE `-70...+12 dB`.
+The isolator is a master control and is separate from each channel's three-band EQ.
+See [`docs/ecler-warm2-parity.md`](docs/ecler-warm2-parity.md) for the implementation
+notes and source references.
+
+This is an independent, compatibility-oriented implementation. It is not made,
+sponsored, endorsed, certified, or authorized by Ecler or NEEC Audio Barcelona, and
+it is not an official Ecler implementation. “Ecler” and “WARM2” are used only to
+describe the reference control behavior.
+
+In portable DJ software, select the profile when creating the engine, then drive the
+three master fields from the application's three large isolator knobs:
+
+```python
+from parso_audio import Engine, IsolatorProfile
+
+with Engine(
+    sample_rate_hz=48_000,
+    max_frames=512,
+    isolator_profile=IsolatorProfile.WARM2,
+    library_path="/absolute/path/to/libparso.so",
+) as engine:
+    def set_isolator_knobs(bass_db: float, mid_db: float, treble_db: float) -> None:
+        engine.set_mixer_controls(
+            master_eq_low=bass_db,
+            master_eq_mid=mid_db,
+            master_eq_high=treble_db,
+        )
+
+    set_isolator_knobs(-70.0, 0.0, 0.0)   # BASS kill
+    set_isolator_knobs(0.0, -40.0, 0.0)   # MID kill
+    set_isolator_knobs(0.0, 0.0, -70.0)   # TREBLE kill
+    set_isolator_knobs(0.0, 0.0, 0.0)     # centre / flat
+```
+
+The same mapping is available through the C ABI for a native DJ application:
+
+```c
+parso_engine_options_t options;
+parso_engine_options_init(&options);
+options.isolator_profile = PARSO_ISOLATOR_PROFILE_WARM2;
+
+parso_control_t control;
+parso_control_init(&control);
+control.master_eq_low = bass_knob_db;
+control.master_eq_mid = mid_knob_db;
+control.master_eq_high = treble_knob_db;
+parso_engine_set_control(engine, &control);
+```
+
+For a real-time UI, call the setter from each knob's value callback and keep the
+audio callback limited to rendering. The engine smooths the three targets on the
+audio thread; the UI should pass dB values in the ranges above and use `0 dB` as
+the centre position.
 
 ### Color FX (default Filter, plus assignable variants)
 
