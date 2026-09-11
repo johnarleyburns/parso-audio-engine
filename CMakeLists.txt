@@ -143,6 +143,11 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cogg/include>
         $<INSTALL_INTERFACE:include>
     )
+    if(PARSO_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        # libogg's signed bit-packing shifts are upstream implementation
+        # details; keep the sanitizer boundary narrow and source-unmodified.
+        target_compile_options(Cogg PRIVATE -fno-sanitize=undefined)
+    endif()
     set_target_properties(Cogg PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     file(GLOB_RECURSE Cflac_sources CONFIGURE_DEPENDS
@@ -220,6 +225,13 @@ if(PARSO_BUILD_CODEC_BRIDGES)
             -Wno-unused-but-set-variable
             -Wno-unused-variable
         )
+    endif()
+    if(PARSO_ENABLE_SANITIZERS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        # libvorbis contains intentional signed bit-packing operations that
+        # UBSan reports in unchanged upstream code. Keep ASan and all
+        # first-party/bridge instrumentation enabled; exclude only this vendor
+        # target at the compiler boundary.
+        target_compile_options(Cvorbis PRIVATE -fno-sanitize=undefined)
     endif()
     target_link_libraries(Cvorbis PUBLIC Cogg)
     if(UNIX)
@@ -516,6 +528,14 @@ if(PARSO_BUILD_TESTS)
         set_tests_properties(rt_allocation_consumer PROPERTIES
             LABELS "native;engine;stress;rt"
         )
+        if(PARSO_ENABLE_SANITIZERS)
+            # This consumer deliberately replaces global new/delete with a
+            # malloc/free counting pair. ASan otherwise flags that test
+            # harness pairing as an allocator mismatch before engine teardown.
+            set_tests_properties(rt_allocation_consumer PROPERTIES
+                ENVIRONMENT "ASAN_OPTIONS=alloc_dealloc_mismatch=0"
+            )
+        endif()
 
         add_executable(parso_long_session_consumer
             Tests/Native/long_session_consumer.cpp
