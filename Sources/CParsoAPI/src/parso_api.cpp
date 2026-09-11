@@ -1668,6 +1668,7 @@ PARSO_API parso_status_t parso_engine_set_control(
         nativeControl.master_level = control->master_level;
         nativeControl.limiter_ceiling_db = control->limiter_ceiling_db;
         nativeControl.limiter_enabled = control->limiter_enabled;
+        nativeControl.mic_level = control->mic_level;
         for (uint32_t index = 0; index < PARSO_MAX_DECKS; ++index) {
             nativeControl.xfade_assign[index] = control->xfade_assign[index];
             nativeControl.fader[index] = control->fader[index];
@@ -1706,6 +1707,31 @@ PARSO_API parso_status_t parso_engine_set_deck_buffer(
         return PARSO_STATUS_OK;
     } catch (...) {
         return fail(PARSO_STATUS_INTERNAL, "exception caught while setting deck buffer");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_set_mic_buffer(
+    parso_engine_t *engine,
+    const parso_pcm_view_t *view
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK) return PARSO_STATUS_CLOSED;
+        const parso_status_t viewStatus = validateView(view);
+        if (viewStatus != PARSO_STATUS_OK) return viewStatus;
+        if (view->frames > static_cast<uint64_t>(INT64_MAX)) {
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "PCM frame count exceeds signed 64-bit range");
+        }
+        pe_mic_set_buffer(
+            engine->handle.engine,
+            view->planes,
+            static_cast<int>(view->channel_count),
+            static_cast<int64_t>(view->frames),
+            static_cast<double>(view->sample_rate_hz)
+        );
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while setting mic buffer");
     }
 }
 

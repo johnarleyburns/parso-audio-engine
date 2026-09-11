@@ -161,6 +161,10 @@ public:
         return parso_engine_set_deck_buffer(handle_, deck, &view);
     }
 
+    parso_status_t setMicBuffer(const parso_pcm_view_t &view) noexcept {
+        return parso_engine_set_mic_buffer(handle_, &view);
+    }
+
     parso_status_t postCommand(const parso_command_t &command) noexcept {
         return parso_engine_post_command(handle_, &command);
     }

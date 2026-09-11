@@ -239,6 +239,8 @@ typedef struct {
     float xfade_assign[PARSO_MAX_DECKS];
     float fader[PARSO_MAX_DECKS];
     float trim[PARSO_MAX_DECKS];
+    /* Mic capture gain, 0...1. Appended to preserve the existing field order. */
+    float mic_level;
 } parso_control_t;
 
 /* Planar, non-interleaved, borrowed 32-bit float PCM. */
@@ -454,6 +456,13 @@ PARSO_API parso_status_t parso_engine_set_control(
 PARSO_API parso_status_t parso_engine_set_deck_buffer(
     parso_engine_t *engine,
     uint32_t deck,
+    const parso_pcm_view_t *view
+);
+/* Provide a borrowed planar capture block for the mic strip. The host owns
+ * the planes and must keep them alive until the next mic-buffer replacement
+ * or engine destruction. The block is consumed from the start on render. */
+PARSO_API parso_status_t parso_engine_set_mic_buffer(
+    parso_engine_t *engine,
     const parso_pcm_view_t *view
 );
 PARSO_API parso_status_t parso_engine_post_command(
