@@ -11,6 +11,7 @@ from parso_audio import (
     Engine,
     EngineCommand,
     EngineEventType,
+    IsolatorProfile,
     MixRecorder,
     ParsoError,
 )
@@ -286,6 +287,32 @@ class CodecServicesTests(unittest.TestCase):
             left, right = engine.render(256)
             self.assertEqual(len(left), len(right))
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
+
+    def test_warm2_profile_isolates_low_mid_and_high_bands(self) -> None:
+        def render_rms(frequency: float, band: str | None) -> float:
+            samples = [0.2 * math.sin(2.0 * math.pi * frequency * index / 48_000.0)
+                       for index in range(48_000)]
+            kwargs = {
+                "master_eq_low": -70.0 if band == "low" else 0.0,
+                "master_eq_mid": -40.0 if band == "mid" else 0.0,
+                "master_eq_high": -70.0 if band == "high" else 0.0,
+            }
+            with Engine(max_frames=512, isolator_profile=IsolatorProfile.WARM2,
+                        library_path=self.library) as engine:
+                engine.set_deck_buffer(0, samples, 48_000, 1)
+                engine.set_mixer_controls(xfade_assign=(2.0, 2.0, 2.0, 2.0), **kwargs)
+                engine.play(0)
+                output = []
+                for _ in range(94):
+                    output.extend(engine.render(512)[0])
+            steady = output[4096:]
+            return math.sqrt(sum(sample * sample for sample in steady) / len(steady))
+
+        for frequency, band in ((100.0, "low"), (1_000.0, "mid"), (8_000.0, "high")):
+            flat = render_rms(frequency, None)
+            cut = render_rms(frequency, band)
+            self.assertGreater(flat, 0.05)
+            self.assertLess(cut, flat * 0.2, (frequency, band, flat, cut))
 
     def test_headless_engine_rejects_invalid_command_deck(self) -> None:
         with Engine(max_frames=64, library_path=self.library) as engine:

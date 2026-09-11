@@ -131,6 +131,13 @@ double sanitizedDB(float db) {
                      std::fmin(kMaximumGainDB, static_cast<double>(db)));
 }
 
+double sanitizedWarm2DB(float db) {
+    if (std::isnan(db)) return 0.0;
+    if (std::isinf(db) && db < 0.0f) return kMinimumGainDB;
+    return std::fmax(kMinimumGainDB,
+                     std::fmin(12.0, static_cast<double>(db)));
+}
+
 } // namespace
 
 struct pd_eq3 {
@@ -142,6 +149,15 @@ struct pd_eq3 {
     Biquad lowShelf;
     Biquad midPeak;
     Biquad highShelf;
+
+    // WARM2 uses a fourth-order 3-way split: two cascaded biquads per
+    // crossover branch. The low-pass/high-pass split is duplicated so the
+    // three band outputs sum to unity when all gains are flat.
+    pd_eq3_profile profile = PD_EQ3_PROFILE_GENERIC;
+    std::array<Biquad, 2> warmLowPass;
+    std::array<Biquad, 2> warmLowHighPass;
+    std::array<Biquad, 2> warmMidLowPass;
+    std::array<Biquad, 2> warmMidHighPass;
 
     double lowDB = 0.0;
     double midDB = 0.0;
@@ -395,11 +411,23 @@ pd_eq3* pd_eq3_create(double sample_rate, double xover_lo_hz, double xover_hi_hz
     return eq;
 }
 
+void pd_eq3_set_profile(pd_eq3* eq, pd_eq3_profile profile) {
+    if (eq == nullptr) return;
+    eq->profile = profile == PD_EQ3_PROFILE_WARM2
+        ? PD_EQ3_PROFILE_WARM2 : PD_EQ3_PROFILE_GENERIC;
+    if (eq->profile == PD_EQ3_PROFILE_WARM2) {
+        eq->crossoverLow = 300.0;
+        eq->crossoverHigh = 4000.0;
+    }
+}
+
 void pd_eq3_set(pd_eq3* eq, float low_db, float mid_db, float high_db) {
     if (eq == nullptr) return;
-    eq->targetLowDB = sanitizedDB(low_db);
-    eq->targetMidDB = sanitizedDB(mid_db);
-    eq->targetHighDB = sanitizedDB(high_db);
+    const auto sanitize = eq->profile == PD_EQ3_PROFILE_WARM2
+        ? sanitizedWarm2DB : sanitizedDB;
+    eq->targetLowDB = sanitize(low_db);
+    eq->targetMidDB = sanitize(mid_db);
+    eq->targetHighDB = sanitize(high_db);
     // The first control message establishes the initial state before audio is
     // running. Later messages are smoothed in the render loop.
     if (!eq->hasProcessed) {
@@ -421,6 +449,32 @@ void pd_eq3_process(pd_eq3* eq, const float* in, float* out, int frames) {
         eq->lowDB += (eq->targetLowDB - eq->lowDB) * eq->smoothing;
         eq->midDB += (eq->targetMidDB - eq->midDB) * eq->smoothing;
         eq->highDB += (eq->targetHighDB - eq->highDB) * eq->smoothing;
+        if (eq->profile == PD_EQ3_PROFILE_WARM2) {
+            const double q = 1.0 / std::sqrt(2.0);
+            for (int stage = 0; stage < 2; ++stage) {
+                eq->warmLowPass[stage].setLowPass(eq->sampleRate, eq->crossoverLow, q);
+                eq->warmLowHighPass[stage].setHighPass(eq->sampleRate, eq->crossoverLow, q);
+                eq->warmMidLowPass[stage].setLowPass(eq->sampleRate, eq->crossoverHigh, q);
+                eq->warmMidHighPass[stage].setHighPass(eq->sampleRate, eq->crossoverHigh, q);
+            }
+            float low = in[frame];
+            float residual = in[frame];
+            for (int stage = 0; stage < 2; ++stage) {
+                low = eq->warmLowPass[stage].process(low);
+                residual = eq->warmLowHighPass[stage].process(residual);
+            }
+            float mid = residual;
+            float high = residual;
+            for (int stage = 0; stage < 2; ++stage) {
+                mid = eq->warmMidLowPass[stage].process(mid);
+                high = eq->warmMidHighPass[stage].process(high);
+            }
+            const float lowGain = static_cast<float>(std::pow(10.0, eq->lowDB / 20.0));
+            const float midGain = static_cast<float>(std::pow(10.0, eq->midDB / 20.0));
+            const float highGain = static_cast<float>(std::pow(10.0, eq->highDB / 20.0));
+            out[frame] = low * lowGain + mid * midGain + high * highGain;
+            continue;
+        }
         const double midFrequency = std::sqrt(eq->crossoverLow * eq->crossoverHigh);
         const double midQ = midFrequency / (eq->crossoverHigh - eq->crossoverLow);
         eq->lowShelf.setLowShelf(eq->sampleRate, eq->crossoverLow, eq->lowDB);

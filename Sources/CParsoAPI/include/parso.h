@@ -137,6 +137,7 @@ typedef struct {
     uint32_t max_frames;
     uint32_t deck_count;
     uint32_t reserved;
+    uint32_t isolator_profile; /* 0 generic, 1 WARM2 (300 Hz / 4 kHz, 4th order) */
 } parso_engine_options_t;
 
 enum {

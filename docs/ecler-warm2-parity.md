@@ -17,25 +17,21 @@ The engine supports the control concept and the important interaction model:
   isolator (`master_eq_low`, `master_eq_mid`, `master_eq_high`).
 - `CParsoDSP` smooths each band over 10 ms and accepts full cuts plus boost.
 - Swift `MasterOut` already publishes these controls.
-- The public C ABI and Python facade now expose the same master isolator fields,
+- The public C ABI and Python facade expose the same master isolator fields,
   together with channel EQ, Beat FX, reverb, and deck tempo/key-lock controls.
+- `PE_ISOLATOR_PROFILE_WARM2` / `IsolatorProfile.WARM2` now selects 300 Hz and
+  4 kHz fourth-order band splits for the master isolator.
 
-This is functional isolator support, but not yet a circuit-level WARM2 match.
-The portable kernel currently instantiates its RBJ three-band network at 200 Hz
-and 2 kHz, and its current low/high sections are single biquads rather than an
-explicit 4th-order 24 dB/oct WARM2 crossover implementation. The existing API
-also does not yet expose the isolator crossover profile as an engine option.
+The generic profile remains the existing 200 Hz/2 kHz RBJ three-band network.
+The WARM2 profile uses cascaded second-order Butterworth sections for explicit
+fourth-order (24 dB/octave) low/mid/high band splits and the WARM2 gain ranges.
+It is a digital behavioral match, not a component-level analogue circuit model.
 
-## Recommended next slice
+## Future refinement
 
-Add an `isolator_profile`/crossover configuration to engine creation, with a
-`generic` default preserving the current 200 Hz/2 kHz behavior and a `warm2`
-profile selecting 300 Hz/4 kHz. Implement the WARM2 profile as fixed, resident
-fourth-order crossover sections (or cascaded biquads) with the same 5–20 ms
-parameter smoothing and RT-safe state. Keep the three-band dB controls in the
-existing control snapshot, and add a focused frequency-response/gain-sweep test
-plus a real-MP3 human artifact that turns each large knob through cut, centre,
-and boost.
+The remaining refinement is hardware calibration: compare frequency-response
+measurements from a physical WARM2 and tune the digital section Q, summing, and
+headroom if the goal is waveform-level rather than control-level equivalence.
 
 That shape is more natural than making callers reconstruct filter coefficients:
 the application selects a mixer profile at engine creation, while the audio

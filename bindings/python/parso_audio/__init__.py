@@ -83,6 +83,13 @@ class EngineCommand(IntEnum):
     LOAD = 39
 
 
+class IsolatorProfile(IntEnum):
+    """Engine-created isolator topology profiles."""
+
+    GENERIC = 0
+    WARM2 = 1
+
+
 class EngineEventType(IntEnum):
     """Stable render-to-control event selectors from ``parso.h``."""
 
@@ -372,6 +379,7 @@ class _EngineOptions(ctypes.Structure):
         ("max_frames", ctypes.c_uint32),
         ("deck_count", ctypes.c_uint32),
         ("reserved", ctypes.c_uint32),
+        ("isolator_profile", ctypes.c_uint32),
     ]
 
 
@@ -1007,6 +1015,7 @@ class Engine:
         sample_rate_hz: int = 48_000,
         max_frames: int = 512,
         deck_count: int = 2,
+        isolator_profile: Union[IsolatorProfile, int] = IsolatorProfile.GENERIC,
         library_path: Optional[Union[str, os.PathLike[str]]] = None,
     ) -> None:
         if sample_rate_hz <= 0 or max_frames <= 0 or not 2 <= deck_count <= 4:
@@ -1017,11 +1026,13 @@ class Engine:
         options = _EngineOptions(
             size=ctypes.sizeof(_EngineOptions), abi_version=self._ABI_VERSION,
             sample_rate_hz=sample_rate_hz, max_frames=max_frames, deck_count=deck_count,
+            isolator_profile=int(isolator_profile),
         )
         self._call("engine-options initialization", self._library.parso_engine_options_init, options)
         options.sample_rate_hz = sample_rate_hz
         options.max_frames = max_frames
         options.deck_count = deck_count
+        options.isolator_profile = int(isolator_profile)
         handle = ctypes.c_void_p()
         status = self._library.parso_engine_create(ctypes.byref(options), ctypes.byref(handle))
         self._raise_for_status(status, "engine creation")

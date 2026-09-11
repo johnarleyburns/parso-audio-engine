@@ -10,14 +10,13 @@ import math
 from pathlib import Path
 from typing import Callable
 
-from parso_audio import AudioCodec, CodecOptions, CodecServices, Engine, EngineCommand
+from parso_audio import AudioCodec, CodecOptions, CodecServices, Engine, EngineCommand, IsolatorProfile
 from parso_audio.acceptance import mp3_prefix
 
 
 SAMPLE_RATE = 48_000
 BLOCK_SIZE = 512
 SCENARIO_SECONDS = 30.0
-SILENCE_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -45,6 +44,7 @@ SCENARIOS = (
     Scenario("beatfx-echo-out", "beat-synced echo-out release and tail", "house", "classical"),
     Scenario("scratch", "vinyl touch, baby scratch, backspin, transformer, release", "classical", "electronic"),
     Scenario("loop-and-cue", "cue, hot-cue jump, quantized loop, and exit", "electronic", "house"),
+    Scenario("warm2-isolator", "300 Hz/4 kHz fourth-order three-band master isolator", "house", "electronic"),
 )
 
 
@@ -96,11 +96,14 @@ def render_scenario(
         add(10.0, "quantized-four-beat-loop", lambda engine: engine.beat_loop(0, 4.0))
         add(18.0, "jump-hotcue-1", lambda engine: engine.jump_hotcue(0, 0))
         add(24.0, "loop-exit", lambda engine: engine.post_command(EngineCommand.RELOOP_EXIT, 0))
+    elif scenario.name == "warm2-isolator":
+        events.extend((event(5.0, "warm2-bass-cut"), event(10.0, "warm2-mid-cut"), event(15.0, "warm2-treble-cut"), event(20.0, "warm2-all-band-boost"), event(25.0, "warm2-flat-restore")))
 
     pending.sort(key=lambda item: item[0])
     left = array("f")
     right = array("f")
-    with Engine(max_frames=BLOCK_SIZE, library_path=library_path) as engine:
+    profile = IsolatorProfile.WARM2 if scenario.name == "warm2-isolator" else IsolatorProfile.GENERIC
+    with Engine(max_frames=BLOCK_SIZE, isolator_profile=profile, library_path=library_path) as engine:
         engine.set_deck_buffer(0, track_a.samples, track_a.sample_rate_hz, track_a.channel_count)
         engine.set_deck_buffer(1, track_b.samples, track_b.sample_rate_hz, track_b.channel_count)
         engine.play(0)
@@ -126,6 +129,7 @@ def render_scenario(
             beatfx_on = False
             reverb_send = 0.0
             time_ratio = [1.0, 1.0, 1.0, 1.0]
+            master_eq = [0.0, 0.0, 0.0]
 
             if scenario.name == "crossfader-sweep":
                 crossfader = -1.0 + 2.0 * rendered / max(1, total_frames - 1)
@@ -160,6 +164,16 @@ def render_scenario(
                     faders[0] = 0.0 if int((time - 18.0) * 8.0) % 2 else 1.0
             elif scenario.name == "loop-and-cue":
                 crossfader = -0.85 if time < 16.0 else 0.35
+            elif scenario.name == "warm2-isolator":
+                crossfader = -0.15 + 0.3 * clamp((time - 2.0) / 26.0, 0.0, 1.0)
+                if 5.0 <= time < 10.0:
+                    master_eq[0] = -70.0
+                elif 10.0 <= time < 15.0:
+                    master_eq[1] = -40.0
+                elif 15.0 <= time < 20.0:
+                    master_eq[2] = -70.0
+                elif 20.0 <= time < 25.0:
+                    master_eq = [12.0, 12.0, 12.0]
 
             engine.set_mixer_controls(
                 crossfader=crossfader,
@@ -178,6 +192,9 @@ def render_scenario(
                 beatfx_assign=beatfx_assign,
                 beatfx_on=beatfx_on,
                 master_reverb_send=reverb_send,
+                master_eq_low=master_eq[0],
+                master_eq_mid=master_eq[1],
+                master_eq_high=master_eq[2],
             )
             block = min(BLOCK_SIZE, total_frames - rendered)
             block_left, block_right = engine.render(block)
@@ -242,30 +259,11 @@ def render_all(
     library_path: str | None,
     seconds: float,
 ) -> None:
-    scenario_outputs: list[tuple[Scenario, array, array, list[dict[str, float | str]]]] = []
     with CodecServices(library_path) as audio:
         for scenario in SCENARIOS:
             left, right, events = render_scenario(scenario, tracks, seconds, library_path)
             sources = [tracks[scenario.deck_a], tracks[scenario.deck_b]]
             write_pair(output_dir, f"python-{scenario.name}", scenario.name, scenario.description, left, right, events, sources, audio)
-            scenario_outputs.append((scenario, left, right, events))
-
-        combined_left = array("f")
-        combined_right = array("f")
-        combined_events: list[dict[str, float | str]] = []
-        cursor = 0.0
-        silence_frames = int(SILENCE_SECONDS * SAMPLE_RATE)
-        for index, (scenario, left, right, events) in enumerate(scenario_outputs):
-            if index:
-                combined_left.extend([0.0] * silence_frames)
-                combined_right.extend([0.0] * silence_frames)
-                cursor += SILENCE_SECONDS
-            combined_events.append(event(cursor, f"scenario-start-{scenario.name}"))
-            combined_left.extend(left)
-            combined_right.extend(right)
-            combined_events.extend({**item, "time": round(float(item["time"]) + cursor, 3)} for item in events)
-            cursor += seconds
-        write_pair(output_dir, "python-all-listening-scenarios", "all-listening-scenarios", "all six real-MP3 engine scenarios in one file", combined_left, combined_right, combined_events, list(tracks.values()), audio)
 
 
 def load_track(path: Path, fixture_id: str, seconds: float, library_path: str | None) -> Track:
@@ -296,8 +294,7 @@ def main() -> None:
     }
     tracks = {name: load_track(path, fixture_id, args.seconds, args.library) for name, (path, fixture_id) in paths.items()}
     render_all(args.output_dir, tracks, args.library, args.seconds)
-    print(args.output_dir / "python-all-listening-scenarios.wav")
-    print(args.output_dir / "python-all-listening-scenarios.json")
+    print(args.output_dir)
 
 
 if __name__ == "__main__":

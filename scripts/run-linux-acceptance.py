@@ -89,8 +89,8 @@ def main() -> int:
     python_path = str(repo_root / "bindings/python")
     environment["PYTHONPATH"] = python_path + os.pathsep + environment.get("PYTHONPATH", "")
     environment["PARSO_AUDIO_LIBRARY"] = str(library)
-    # Render every named scenario and one concatenated listen-all file through
-    # the same native engine exposed by the Python facade.
+    # Render every named scenario through the same native engine exposed by
+    # the Python facade; each scenario gets its own reviewable WAV/JSON pair.
     run(
          [sys.executable, str(repo_root / "bindings/python/examples/render_music_scenarios.py"),
          "--library", str(library), "--output-dir", str(python_dir),
@@ -114,12 +114,11 @@ def main() -> int:
     summary = {
         "schemaVersion": 1,
         "scenario": "all-listening-scenarios",
-        "scenarios": ["crossfader-sweep", "smart-fader", "smart-cfx", "beatfx-echo-out", "scratch", "loop-and-cue"],
+        "scenarios": ["crossfader-sweep", "smart-fader", "smart-cfx", "beatfx-echo-out", "scratch", "loop-and-cue", "warm2-isolator"],
         "fixtures": [args.fixture_a, args.fixture_b, args.fixture_c],
         "seconds": args.seconds,
         "manifest": str(manifest),
         "comparison": str(comparison),
-        "listenAll": str(python_dir / "python-all-listening-scenarios.wav"),
         "passed": bool(report.get("passed")),
     }
     summary_path = output_dir / "summary.json"

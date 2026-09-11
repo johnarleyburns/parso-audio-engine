@@ -144,8 +144,8 @@ exercise the PCM, SRC, and loudness contracts through `ctest`.
 The native acceptance target `parso_native_acceptance_artifacts` renders a 30-second headless
 artifact through the public ABI and writes a WAV plus JSON duration/event sidecar. The Linux
 human-listening runner uses three downloaded MP3 fixtures (house, electronic, and classical),
-compares native and Python renders of the crossfader timeline, and renders all six named engine
-listening scenarios plus one concatenated listen-all WAV. The generated-tone target remains a
+compares native and Python renders of the crossfader timeline, and renders each named engine
+listening scenario as its own WAV/JSON pair. The generated-tone target remains a
 deterministic CTest smoke path; see [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md)
 for the music gate.
 

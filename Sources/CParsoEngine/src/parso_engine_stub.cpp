@@ -1693,7 +1693,8 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
 
 extern "C" {
 
-pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
+pe_engine* pe_create_with_isolator_profile(double sample_rate, int max_frames, int deck_count,
+                                           pe_isolator_profile profile) {
     if (!(sample_rate > 0.0) || max_frames <= 0) return nullptr;
     pe_engine* engine = new (std::nothrow) pe_engine{};
     if (!engine) return nullptr;
@@ -1727,7 +1728,15 @@ pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
         pe_destroy(engine);
         return nullptr;
     }
+    pd_eq3_set_profile(engine->masterEq,
+                       profile == PE_ISOLATOR_PROFILE_WARM2
+                           ? PD_EQ3_PROFILE_WARM2 : PD_EQ3_PROFILE_GENERIC);
     return engine;
+}
+
+pe_engine* pe_create(double sample_rate, int max_frames, int deck_count) {
+    return pe_create_with_isolator_profile(sample_rate, max_frames, deck_count,
+                                            PE_ISOLATOR_PROFILE_GENERIC);
 }
 
 void pe_destroy(pe_engine* engine) {

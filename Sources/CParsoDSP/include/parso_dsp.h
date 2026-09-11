@@ -18,7 +18,12 @@ typedef int pd_status;            /* 0 == PD_OK, negative == error */
 
 /* ---- 3-band full-kill isolator EQ ---- */
 typedef struct pd_eq3 pd_eq3;
+typedef enum {
+    PD_EQ3_PROFILE_GENERIC = 0,
+    PD_EQ3_PROFILE_WARM2 = 1
+} pd_eq3_profile;
 pd_eq3*   pd_eq3_create(double sample_rate, double xover_lo_hz, double xover_hi_hz);
+void      pd_eq3_set_profile(pd_eq3*, pd_eq3_profile profile);
 void      pd_eq3_set(pd_eq3*, float low_db, float mid_db, float high_db); /* -INFINITY == kill */
 void      pd_eq3_process(pd_eq3*, const float* in, float* out, int frames);
 void      pd_eq3_destroy(pd_eq3*);

@@ -1535,6 +1535,7 @@ PARSO_API parso_status_t parso_engine_options_init(parso_engine_options_t *optio
     options->sample_rate_hz = 48000;
     options->max_frames = 512;
     options->deck_count = 2;
+    options->isolator_profile = PE_ISOLATOR_PROFILE_GENERIC;
     return PARSO_STATUS_OK;
 }
 
@@ -1621,13 +1622,16 @@ PARSO_API parso_status_t parso_engine_create(
         );
         if (headerStatus != PARSO_STATUS_OK) return headerStatus;
         if (!finitePositive(options->sample_rate_hz) || options->max_frames == 0 ||
-            options->deck_count < 2 || options->deck_count > PARSO_MAX_DECKS) {
+            options->deck_count < 2 || options->deck_count > PARSO_MAX_DECKS ||
+            options->isolator_profile > PE_ISOLATOR_PROFILE_WARM2) {
             return fail(PARSO_STATUS_INVALID_ARGUMENT, "invalid engine options");
         }
-        pe_engine *internal = pe_create(
+        pe_engine *internal = pe_create_with_isolator_profile(
             static_cast<double>(options->sample_rate_hz),
             static_cast<int>(options->max_frames),
-            static_cast<int>(options->deck_count)
+            static_cast<int>(options->deck_count),
+            options->isolator_profile == PE_ISOLATOR_PROFILE_WARM2
+                ? PE_ISOLATOR_PROFILE_WARM2 : PE_ISOLATOR_PROFILE_GENERIC
         );
         if (!internal) return fail(PARSO_STATUS_OUT_OF_MEMORY, "native engine creation failed");
         parso_engine_t *publicHandle = new (std::nothrow) parso_engine_t;

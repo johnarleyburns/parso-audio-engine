@@ -17,7 +17,7 @@ This initial package covers synchronous offline codec, sample-rate conversion,
 loudness, and bounded headless rendering services. `Engine.set_crossfader(position)`
 publishes an A/B mixer snapshot with a bounded position in `[-1, 1]`; the extended
 `Engine.set_mixer_controls(...)` surface publishes channel EQ, color FX, Beat FX,
-master reverb, and deck mix controls for deterministic listening scenarios. The Linux
+master reverb, deck mix controls, and `IsolatorProfile.WARM2` engine topology for deterministic listening scenarios. The Linux
 acceptance renderer can load real MP3 fixtures into both decks:
 
 ```bash

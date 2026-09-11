@@ -19,6 +19,11 @@ extern "C" {
 
 typedef struct pe_engine pe_engine;
 
+typedef enum {
+    PE_ISOLATOR_PROFILE_GENERIC = 0,
+    PE_ISOLATOR_PROFILE_WARM2 = 1
+} pe_isolator_profile;
+
 /* Continuous, latest-wins parameters (atomics inside). Swift writes; RT reads+smooths. */
 typedef struct {
     float crossfader;        /* -1..+1 */
@@ -135,6 +140,8 @@ void pe_set_deck_sync(pe_engine*, int deck, int synced, double effective_bpm, do
 
 /* deck_count is clamped to 2..PE_MAX_DECKS. */
 pe_engine* pe_create(double sample_rate, int max_frames, int deck_count);
+pe_engine* pe_create_with_isolator_profile(double sample_rate, int max_frames,
+                                            int deck_count, pe_isolator_profile profile);
 void       pe_destroy(pe_engine*);
 
 /* Atomically publish the latest control snapshot. */

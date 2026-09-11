@@ -77,24 +77,29 @@ The runner decodes the first 32 seconds of each real MP3 through the portable
 codec path. It keeps the native/Python crossfader render as a parity anchor, then
 renders every engine listening scenario through the native engine behind the Python
 facade: crossfader sweep, Smart Fader, Smart CFX presets, Beat FX echo-out, scratch,
-and loop/cue. It writes one WAV/JSON pair per scenario plus a concatenated
-`python-all-listening-scenarios.wav` containing every scenario in order.
+and loop/cue, plus the WARM2 isolator profile. It writes one separate WAV/JSON pair per scenario,
+so each effect group can be launched and reviewed independently.
 
 The generated review WAVs can be played directly through PipeWire:
 
 ```bash
 pw-play --volume 0.5 \
-  /tmp/parso-linux-music-review/python/python-all-listening-scenarios.wav
+  /tmp/parso-linux-music-review/python/python-crossfader-sweep.wav
 ```
 
-To listen to an individual scenario:
+To listen to the separate scenario files:
 
 ```bash
-pw-play --volume 0.5 \
-  /tmp/parso-linux-music-review/python/python-smart-fader.wav
-pw-play --volume 0.5 \
-  /tmp/parso-linux-music-review/python/python-smart-cfx.wav
+for scenario in \
+  crossfader-sweep smart-fader smart-cfx beatfx-echo-out \
+  scratch loop-and-cue warm2-isolator; do
+  pw-play --volume 0.5 \
+    "/tmp/parso-linux-music-review/python/python-${scenario}.wav"
+done
 ```
+
+The individual files are the authoritative listening artifacts; the loop is
+intentionally sequential but each scenario can also be launched on its own.
 
 Index generated Linux artifacts before review so the files, native commit, format, duration, and
 human status are recorded together:
@@ -242,6 +247,7 @@ seeing the exact crossfader, EQ, FX, loop, or scratch timeline. Planned scenario
 | `beatfx-echo-out` | tail release and drop timing | rendered through Beat FX release command |
 | `scratch` | vinyl, backspin, baby, transformer, and release behavior | rendered through jog/reverse/fader controls |
 | `loop-and-cue` | quantized loop edges, roll, cue and hot-cue jumps | rendered through transport commands |
+| `warm2-isolator` | 300 Hz/4 kHz fourth-order low/mid/high master isolation | rendered with the WARM2 engine profile |
 
 “Auto fade”, “long cut”, “bass fade cut”, “drop cut”, and “snap back” should be represented as
 named event timelines once their engine automation is implemented. The harness must not synthesize
