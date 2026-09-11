@@ -156,7 +156,7 @@ the bounded block. Device adapters remain outside the engine, so ALSA, PipeWire,
 host application's callback can be added without changing the render ABI. Installed C11 and C++17
 package consumers check this engine path alongside the Xiph Ogg Vorbis encode/decode service.
 
-This currently exercises the shared C++ headless render core and fixture-gated native codec bridges. CI builds and tests these native CMake
+This currently exercises the shared C++ headless render core, including an allocator-instrumented variable-block RT smoke test, and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also
 builds the JNI shared library for `arm64-v8a` and `x86_64` and checks its exported symbols; Android Gradle/AAR, emulator, and device gates
 remain separate.

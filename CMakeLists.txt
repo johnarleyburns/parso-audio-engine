@@ -486,6 +486,18 @@ if(PARSO_BUILD_TESTS)
             LABELS "native;headless;integration"
         )
 
+        add_executable(parso_rt_allocation_consumer
+            Tests/Native/rt_allocation_consumer.cpp
+        )
+        target_link_libraries(parso_rt_allocation_consumer PRIVATE CParsoEngine)
+        target_include_directories(parso_rt_allocation_consumer PRIVATE
+            Sources/CParsoEngine/include
+        )
+        add_test(NAME rt_allocation_consumer COMMAND parso_rt_allocation_consumer)
+        set_tests_properties(rt_allocation_consumer PROPERTIES
+            LABELS "native;engine;stress;rt"
+        )
+
         add_executable(parso_long_session_consumer
             Tests/Native/long_session_consumer.cpp
         )
