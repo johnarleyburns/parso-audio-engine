@@ -162,7 +162,18 @@ let package = Package(
         ),
         .target(
             name: "CvorbisBridge",
-            dependencies: ["Cvorbis"],
+            // `Cvorbis` itself resolves "ogg/ogg.h" only via a private
+            // headerSearchPath into `Cogg/include`, which SwiftPM does not
+            // propagate to dependents — so `parso_vorbis.c`'s "ogg/ogg.h"
+            // include only resolves by accident of Xcode's automatic header
+            // maps. A plain `swift build`/`swift test` of this target (in
+            // this package, or from a sibling package depending on this one
+            // via a local path, e.g. Voxglass) fails with "file not found".
+            // Depending on `Cogg` directly makes SwiftPM add its public
+            // `include` (which vendors `ogg/ogg.h`) to this target's search
+            // path, matching how `CopusBridge`'s sibling `Copus` vendors its
+            // own copy instead of relying on Cvorbis's private path.
+            dependencies: ["Cvorbis", "Cogg"],
             path: "Sources/CvorbisBridge",
             publicHeadersPath: "include"
         ),
