@@ -11,6 +11,7 @@ option(PARSO_BUILD_SHARED_API "Build the shared parso C ABI library" ON)
 option(PARSO_BUILD_CODEC_BRIDGES "Build the vendored FLAC/Vorbis/Opus bridge targets" ON)
 option(PARSO_BUILD_CODEC_FIXTURE_TESTS "Build native codec fixture smoke tests" ON)
 option(PARSO_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(PARSO_BUILD_LINUX_PIPEWIRE_HOST "Build the Linux PipeWire host adapter" ON)
 
 set(PARSO_NATIVE_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/Tests/Fixtures/audio" CACHE PATH
     "Directory containing downloaded native codec fixtures")
@@ -417,6 +418,21 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
     set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PARSO_BUILD_LINUX_PIPEWIRE_HOST)
+    find_package(Threads REQUIRED)
+    add_executable(parso_linux_pipewire_host
+        Tools/LinuxPipeWireHost/main.cpp
+    )
+    target_link_libraries(parso_linux_pipewire_host PRIVATE
+        $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+        $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        Threads::Threads
+    )
+    target_include_directories(parso_linux_pipewire_host PRIVATE
+        Sources/CParsoAPI/include
+    )
+endif()
+
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -430,6 +446,9 @@ if(PARSO_BUILD_CODEC_BRIDGES)
 endif()
 if(PARSO_BUILD_SHARED_API)
     list(APPEND PARSO_INSTALL_TARGETS ParsoAPI)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PARSO_BUILD_LINUX_PIPEWIRE_HOST)
+    list(APPEND PARSO_INSTALL_TARGETS parso_linux_pipewire_host)
 endif()
 
 install(TARGETS ${PARSO_INSTALL_TARGETS}
@@ -792,26 +811,16 @@ if(PARSO_BUILD_TESTS)
                 LABELS "native;linux;host-callback;consumer;cxx17"
             )
 
-            find_package(Threads REQUIRED)
-            add_executable(parso_linux_pipewire_host
-                Tools/LinuxPipeWireHost/main.cpp
-            )
-            target_link_libraries(parso_linux_pipewire_host PRIVATE
-                $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
-                $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
-                Threads::Threads
-            )
-            target_include_directories(parso_linux_pipewire_host PRIVATE
-                Sources/CParsoAPI/include
-            )
-            add_test(NAME linux_pipewire_host
-                COMMAND parso_linux_pipewire_host
-                    --no-device --seconds 1
-                    --record "${CMAKE_CURRENT_BINARY_DIR}/linux-pipewire-smoke.wav"
-            )
-            set_tests_properties(linux_pipewire_host PROPERTIES
-                LABELS "native;linux;pipewire;host;capture;recording;consumer;cxx17"
-            )
+            if(PARSO_BUILD_LINUX_PIPEWIRE_HOST)
+                add_test(NAME linux_pipewire_host
+                    COMMAND parso_linux_pipewire_host
+                        --no-device --seconds 1
+                        --record "${CMAKE_CURRENT_BINARY_DIR}/linux-pipewire-smoke.wav"
+                )
+                set_tests_properties(linux_pipewire_host PROPERTIES
+                    LABELS "native;linux;pipewire;host;capture;recording;consumer;cxx17"
+                )
+            endif()
         endif()
     endif()
 endif()
