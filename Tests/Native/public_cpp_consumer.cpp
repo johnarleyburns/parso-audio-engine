@@ -90,6 +90,14 @@ int main() {
     recorder.reset();
     if (recorder.frames() != 0) return 1;
 
+    parso::MixRecorder unsupportedRecorder(48000, PARSO_CODEC_OGG_VORBIS);
+    parso::Bytes unsupportedBytes;
+    if (unsupportedRecorder.append(outputLeft, outputRight, recordedFrames) != PARSO_STATUS_OK ||
+        unsupportedRecorder.encode(&unsupportedBytes) != PARSO_STATUS_UNSUPPORTED) {
+        std::fprintf(stderr, "public_cpp_consumer: unsupported recorder codec accepted\n");
+        return 1;
+    }
+
     if (engine.setRecordActive(true) != PARSO_STATUS_OK ||
         engine.render(output) != PARSO_STATUS_OK) {
         std::fprintf(stderr, "public_cpp_consumer: second record render failed: %s\n",

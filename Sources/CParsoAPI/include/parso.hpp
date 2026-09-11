@@ -260,6 +260,10 @@ public:
         if (!out || samples_.empty() || sampleRateHz_ == 0 || codec_ == 0) {
             return PARSO_STATUS_INVALID_ARGUMENT;
         }
+        if (codec_ != PARSO_CODEC_WAV && codec_ != PARSO_CODEC_FLAC &&
+            codec_ != PARSO_CODEC_AAC) {
+            return PARSO_STATUS_UNSUPPORTED;
+        }
         parso_codec_options_t options{};
         parso_pcm_buffer_t input{};
         if (parso_codec_options_init(&options) != PARSO_STATUS_OK ||
