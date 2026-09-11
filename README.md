@@ -77,8 +77,8 @@ targets: [
 
 The cross-platform work starts with the existing C/C++ real-time targets and a versioned, C-clean
 facade. Linux provides a C11/C++17 SDK built with CMake, a host-callback render example, and an
-optional PipeWire device adapter. Android will package the same native library in an AAR with a small JNI
-bridge and Oboe device adapter. Control and offline work move into shared native services gradually;
+optional PipeWire device adapter. Android packages the same native library in an AAR with a small JNI
+bridge; the Oboe device adapter remains a separate device-completion slice. Control and offline work move into shared native services gradually;
 Swift remains a compatibility API during that migration. No Swift runtime or Apple framework will be
 required by the native artifacts.
 
@@ -91,7 +91,8 @@ integration tests, installed-package consumer builds, and Linux human-listening 
 The Android source seam includes a closeable `ParsoEngine` wrapper around direct native-order
 `ByteBuffer` planes and is packaged by `Bindings/ParsoAudioAndroid` into a release AAR for
 arm64-v8a and x86_64. It requires serialized ownership and callback shutdown before `close`;
-device output, capture, and route handling remain separate acceptance gates.
+the AAR, external consumer, and emulator runtime gates pass locally; physical device output,
+capture, and route handling remain separate acceptance gates.
 
 The native CP1 smoke build is available through CMake:
 
@@ -176,8 +177,8 @@ while physical hot-unplug/latency and human listening still require named Linux 
 
 This currently exercises the shared C++ headless render core, including an allocator-instrumented variable-block RT smoke test, and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also
-builds the JNI shared library for `arm64-v8a` and `x86_64` and checks its exported symbols; Android Gradle/AAR, emulator, and device gates
-remain separate.
+builds the JNI shared library for `arm64-v8a` and `x86_64` and checks its exported symbols; Android
+Gradle/AAR and emulator gates are also covered locally, while the physical device gate remains separate.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated
 C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows-targeted assembly, while
 the native Windows job builds and runs the C# consumer against the MSVC-built DLL. This does not claim
