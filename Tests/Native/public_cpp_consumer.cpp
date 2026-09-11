@@ -90,6 +90,21 @@ int main() {
     recorder.reset();
     if (recorder.frames() != 0) return 1;
 
+    if (engine.setRecordActive(true) != PARSO_STATUS_OK ||
+        engine.render(output) != PARSO_STATUS_OK) {
+        std::fprintf(stderr, "public_cpp_consumer: second record render failed: %s\n",
+                     parso_last_error());
+        return 1;
+    }
+    parso::MixRecorder drainedRecorder(48000, PARSO_CODEC_WAV);
+    uint32_t appendedFrames = 0;
+    if (drainedRecorder.appendEngine(engine, frames, &appendedFrames) != PARSO_STATUS_OK ||
+        appendedFrames != frames || drainedRecorder.frames() != frames) {
+        std::fprintf(stderr, "public_cpp_consumer: appendEngine failed: %s\n",
+                     parso_last_error());
+        return 1;
+    }
+
     bool signal = false;
     for (uint32_t index = 0; index < frames; ++index) {
         if (std::fabs(outputLeft[index]) > 1.0e-5f || std::fabs(outputRight[index]) > 1.0e-5f) {
