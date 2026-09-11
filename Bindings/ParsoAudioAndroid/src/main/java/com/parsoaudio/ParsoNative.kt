@@ -34,4 +34,5 @@ object ParsoNative {
         samples: ByteBuffer, frames: Int, sampleRateHz: Int,
         channelCount: Int, bitrateKbps: Int
     ): ByteArray?
+    @JvmStatic external fun nativeDecodeOggVorbis(encoded: ByteArray): DecodedVorbis?
 }

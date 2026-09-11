@@ -3,6 +3,13 @@ package com.parsoaudio
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+data class DecodedVorbis(
+    val samples: FloatArray,
+    val frames: Int,
+    val sampleRateHz: Int,
+    val channelCount: Int,
+)
+
 /** Xiph Ogg Vorbis encoder backed by the shared permissive native bridge. */
 object ParsoVorbis {
     fun encode(
@@ -24,5 +31,11 @@ object ParsoVorbis {
         return ParsoNative.nativeEncodeOggVorbis(
             samples, frames, sampleRateHz, channelCount, bitrateKbps,
         ) ?: error("native Ogg Vorbis encoding failed")
+    }
+
+    fun decode(encoded: ByteArray): DecodedVorbis {
+        require(encoded.isNotEmpty()) { "encoded data must not be empty" }
+        return ParsoNative.nativeDecodeOggVorbis(encoded)
+            ?: error("native Ogg Vorbis decoding failed")
     }
 }

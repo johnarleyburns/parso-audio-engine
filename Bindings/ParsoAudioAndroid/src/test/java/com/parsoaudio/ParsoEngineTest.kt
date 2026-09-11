@@ -23,6 +23,11 @@ class ParsoEngineTest {
     }
 
     @Test
+    fun vorbisDecodeRejectsEmptyBytesBeforeLoadingNativeRuntime() {
+        assertThrows<IllegalArgumentException> { ParsoVorbis.decode(ByteArray(0)) }
+    }
+
+    @Test
     fun lifecycleAndTransportAreSerializedThroughTheBridge() {
         val bridge = FakeBridge()
         val engine = ParsoEngine.forTesting(native = bridge)

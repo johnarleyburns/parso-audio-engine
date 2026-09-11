@@ -64,5 +64,10 @@ class ParsoEngineInstrumentationTest {
         assertEquals('g'.code.toByte(), encoded[1])
         assertEquals('g'.code.toByte(), encoded[2])
         assertEquals('S'.code.toByte(), encoded[3])
+        val decoded = ParsoVorbis.decode(encoded)
+        assertEquals(sampleRate, decoded.sampleRateHz)
+        assertEquals(1, decoded.channelCount)
+        assertTrue(decoded.frames > 0)
+        assertEquals(decoded.frames, decoded.samples.size)
     }
 }

@@ -232,4 +232,58 @@ JNIEXPORT jbyteArray JNICALL Java_com_parsoaudio_ParsoNative_nativeEncodeOggVorb
     return encoded;
 }
 
+JNIEXPORT jobject JNICALL Java_com_parsoaudio_ParsoNative_nativeDecodeOggVorbis(
+    JNIEnv *env, jclass, jbyteArray encoded
+) {
+    if (!env || !encoded) return nullptr;
+    const jsize encodedSize = env->GetArrayLength(encoded);
+    if (encodedSize <= 0) return nullptr;
+    jboolean isCopy = JNI_FALSE;
+    jbyte *encodedData = env->GetByteArrayElements(encoded, &isCopy);
+    if (!encodedData) return nullptr;
+    parso_codec_options_t options{};
+    parso_pcm_buffer_t output{};
+    const bool initialized = parso_codec_options_init(&options) == PARSO_STATUS_OK &&
+        parso_pcm_buffer_init(&output) == PARSO_STATUS_OK;
+    const parso_status_t status = initialized
+        ? parso_codec_read(reinterpret_cast<const uint8_t *>(encodedData),
+                           static_cast<uint64_t>(encodedSize), PARSO_CODEC_OGG_VORBIS,
+                           &options, &output)
+        : PARSO_STATUS_INTERNAL;
+    env->ReleaseByteArrayElements(encoded, encodedData, JNI_ABORT);
+    if (status != PARSO_STATUS_OK || output.frames == 0 || output.channel_count < 1 ||
+        output.channel_count > 2 || output.frames >
+            static_cast<uint64_t>(std::numeric_limits<jsize>::max()) / output.channel_count) {
+        parso_pcm_buffer_release(&output);
+        return nullptr;
+    }
+    const uint64_t sampleCount = output.frames * output.channel_count;
+    if (sampleCount > static_cast<uint64_t>(std::numeric_limits<jsize>::max())) {
+        parso_pcm_buffer_release(&output);
+        return nullptr;
+    }
+    jfloatArray samples = env->NewFloatArray(static_cast<jsize>(sampleCount));
+    if (!samples) {
+        parso_pcm_buffer_release(&output);
+        return nullptr;
+    }
+    env->SetFloatArrayRegion(samples, 0, static_cast<jsize>(sampleCount), output.samples);
+    jclass decodedClass = env->FindClass("com/parsoaudio/DecodedVorbis");
+    if (!decodedClass) {
+        parso_pcm_buffer_release(&output);
+        return nullptr;
+    }
+    jmethodID constructor = env->GetMethodID(decodedClass, "<init>", "([FIII)V");
+    if (!constructor) {
+        parso_pcm_buffer_release(&output);
+        return nullptr;
+    }
+    jobject decoded = env->NewObject(decodedClass, constructor, samples,
+                                     static_cast<jint>(output.frames),
+                                     static_cast<jint>(output.sample_rate_hz),
+                                     static_cast<jint>(output.channel_count));
+    parso_pcm_buffer_release(&output);
+    return decoded;
+}
+
 } // extern "C"
