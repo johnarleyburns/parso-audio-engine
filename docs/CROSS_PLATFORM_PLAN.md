@@ -176,8 +176,8 @@ Gate: shared scenario vectors and real fixtures pass through native and Swift AP
 
 The first Android bridge slice now builds `libparso_android.so` for arm64-v8a and x86_64. Its
 Kotlin-facing `ParsoNative` declaration uses direct `ByteBuffer` planes for bounded render calls
-and exposes create/destroy/play/pause, mixer control, and typed transport/loop commands over the
-public C ABI. `ParsoEngine` adds the source-level
+and exposes create/destroy/play/pause, mixer control, typed transport/loop commands, and copied
+engine stats over the public C ABI. `ParsoEngine` adds the source-level
 closeable wrapper: it validates direct native-order buffers and max-frame bounds, serializes
 ownership by contract, retains direct deck PCM buffers until replacement/close, and makes close
 idempotent. `Bindings/ParsoAudioAndroid` now builds a release AAR containing the Kotlin classes,
