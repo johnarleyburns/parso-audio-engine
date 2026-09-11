@@ -115,6 +115,10 @@ It now also copies and pins deck PCM planes, retains the pointer table until rep
 and queues the portable play/pause commands. Linux verifies the managed assembly; signal and DLL
 lifetime execution remains a native-Windows gate.
 
+The C# `Engine` now serializes render, control, event, record, and disposal entry points per
+instance. The managed consumer exercises a render/Dispose race; native Windows execution remains
+the release authority.
+
 The CP-PY offline spike now provides `bindings/python`, a dependency-free `ctypes` package with
 capability discovery, the same six native byte-codec selectors, native SRC/loudness wrappers, and
 bounded headless rendering with retained deck-buffer ownership and shared command payloads. Its

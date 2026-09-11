@@ -169,7 +169,8 @@ in the plan.
 The Windows-targeted C# binding exposes the same capability and byte-codec contract through
 `CodecServices`. It copies native-owned decode results into managed arrays and releases native
 buffers deterministically, and also exposes SRC, EBU R128 loudness, and the control-side
-`MixRecorder` for WAV/FLAC/AAC recording. For example:
+`MixRecorder` for WAV/FLAC/AAC recording. Engine render, control, event, record, and disposal
+entry points are serialized per instance for managed lifetime safety. For example:
 
 ```csharp
 var caps = CodecServices.GetCapabilities();

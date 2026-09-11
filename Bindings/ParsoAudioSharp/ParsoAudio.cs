@@ -656,6 +656,7 @@ public sealed class Engine : IDisposable
     private readonly NativeEngineHandle handle;
     private readonly uint maxFrames;
     private readonly uint deckCount;
+    private readonly object synchronization = new();
     private readonly Dictionary<uint, PinnedDeckBuffer> deckBuffers = new();
 
     private Engine(NativeEngineHandle handle, uint maxFrames, uint deckCount)
@@ -682,29 +683,35 @@ public sealed class Engine : IDisposable
     /// <param name="level">The linear master gain.</param>
     public void SetMasterLevel(float level)
     {
-        var control = NativeMethods.DefaultControl();
-        control.MasterLevel = level;
-        var status = NativeMethods.SetControl(handle, ref control);
-        ThrowIfFailed(status, "setting control");
+        lock (synchronization)
+        {
+            var control = NativeMethods.DefaultControl();
+            control.MasterLevel = level;
+            var status = NativeMethods.SetControl(handle, ref control);
+            ThrowIfFailed(status, "setting control");
+        }
     }
 
     /// <summary>Sets the A/B crossfader position for subsequent renders.</summary>
     /// <param name="position">A bounded position from -1 (A) to +1 (B).</param>
     public unsafe void SetCrossfader(float position)
     {
-        if (!float.IsFinite(position) || position < -1.0f || position > 1.0f)
-            throw new ArgumentOutOfRangeException(nameof(position));
-        if (deckCount < 2) throw new InvalidOperationException("crossfader requires two decks");
-        var control = NativeMethods.DefaultControl();
-        control.Crossfader = position;
-        control.XfadeAssign[0] = 0.0f;
-        control.XfadeAssign[1] = 1.0f;
-        control.Fader[0] = 1.0f;
-        control.Fader[1] = 1.0f;
-        control.Trim[0] = 1.0f;
-        control.Trim[1] = 1.0f;
-        var status = NativeMethods.SetControl(handle, ref control);
-        ThrowIfFailed(status, "setting crossfader");
+        lock (synchronization)
+        {
+            if (!float.IsFinite(position) || position < -1.0f || position > 1.0f)
+                throw new ArgumentOutOfRangeException(nameof(position));
+            if (deckCount < 2) throw new InvalidOperationException("crossfader requires two decks");
+            var control = NativeMethods.DefaultControl();
+            control.Crossfader = position;
+            control.XfadeAssign[0] = 0.0f;
+            control.XfadeAssign[1] = 1.0f;
+            control.Fader[0] = 1.0f;
+            control.Fader[1] = 1.0f;
+            control.Trim[0] = 1.0f;
+            control.Trim[1] = 1.0f;
+            var status = NativeMethods.SetControl(handle, ref control);
+            ThrowIfFailed(status, "setting crossfader");
+        }
     }
 
     /// <summary>Copies interleaved PCM into pinned planar storage retained by the engine.</summary>
@@ -715,28 +722,31 @@ public sealed class Engine : IDisposable
     public void SetDeckBuffer(ReadOnlySpan<float> samples, uint sampleRateHz,
                               uint channelCount, uint deck)
     {
-        if (deck >= deckCount || samples.Length == 0 || channelCount is < 1 or > 2 ||
-            sampleRateHz == 0 || samples.Length % channelCount != 0)
-            throw new ArgumentException("invalid deck PCM format");
+        lock (synchronization)
+        {
+            if (deck >= deckCount || samples.Length == 0 || channelCount is < 1 or > 2 ||
+                sampleRateHz == 0 || samples.Length % channelCount != 0)
+                throw new ArgumentException("invalid deck PCM format");
 
-        var replacement = new PinnedDeckBuffer(samples, channelCount);
-        var view = new NativeMethods.PcmView
-        {
-            Size = (uint)Marshal.SizeOf<NativeMethods.PcmView>(),
-            AbiVersion = NativeMethods.AbiVersion,
-            Planes = replacement.PlanesPointer,
-            Frames = checked((ulong)(samples.Length / (int)channelCount)),
-            ChannelCount = channelCount,
-            SampleRateHz = sampleRateHz
-        };
-        var status = NativeMethods.SetDeckBuffer(handle, deck, ref view);
-        if (status != NativeMethods.Ok)
-        {
-            replacement.Dispose();
-            ThrowIfFailed(status, "setting deck buffer");
+            var replacement = new PinnedDeckBuffer(samples, channelCount);
+            var view = new NativeMethods.PcmView
+            {
+                Size = (uint)Marshal.SizeOf<NativeMethods.PcmView>(),
+                AbiVersion = NativeMethods.AbiVersion,
+                Planes = replacement.PlanesPointer,
+                Frames = checked((ulong)(samples.Length / (int)channelCount)),
+                ChannelCount = channelCount,
+                SampleRateHz = sampleRateHz
+            };
+            var status = NativeMethods.SetDeckBuffer(handle, deck, ref view);
+            if (status != NativeMethods.Ok)
+            {
+                replacement.Dispose();
+                ThrowIfFailed(status, "setting deck buffer");
+            }
+            if (deckBuffers.Remove(deck, out var previous)) previous.Dispose();
+            deckBuffers.Add(deck, replacement);
         }
-        if (deckBuffers.Remove(deck, out var previous)) previous.Dispose();
-        deckBuffers.Add(deck, replacement);
     }
 
     /// <summary>Queues a public ABI command with its fixed-width payload fields.</summary>
@@ -751,21 +761,24 @@ public sealed class Engine : IDisposable
                             int i0 = 0, int i1 = 0, int i2 = 0,
                             float f0 = 0.0f, float f1 = 0.0f)
     {
-        if (deck < -1 || deck >= deckCount) throw new ArgumentOutOfRangeException(nameof(deck));
-        var command = new NativeMethods.Command
+        lock (synchronization)
         {
-            Size = (uint)Marshal.SizeOf<NativeMethods.Command>(),
-            AbiVersion = NativeMethods.AbiVersion,
-            Type = (uint)commandType,
-            Deck = deck,
-            I0 = i0,
-            I1 = i1,
-            I2 = i2,
-            F0 = f0,
-            F1 = f1
-        };
-        var status = NativeMethods.PostCommand(handle, ref command);
-        ThrowIfFailed(status, "posting engine command");
+            if (deck < -1 || deck >= deckCount) throw new ArgumentOutOfRangeException(nameof(deck));
+            var command = new NativeMethods.Command
+            {
+                Size = (uint)Marshal.SizeOf<NativeMethods.Command>(),
+                AbiVersion = NativeMethods.AbiVersion,
+                Type = (uint)commandType,
+                Deck = deck,
+                I0 = i0,
+                I1 = i1,
+                I2 = i2,
+                F0 = f0,
+                F1 = f1
+            };
+            var status = NativeMethods.PostCommand(handle, ref command);
+            ThrowIfFailed(status, "posting engine command");
+        }
     }
 
     /// <summary>Queues the portable play command for a deck.</summary>
@@ -835,73 +848,85 @@ public sealed class Engine : IDisposable
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the spans differ in length, are empty, or exceed the configured block size.</exception>
     public unsafe void Render(Span<float> left, Span<float> right)
     {
-        if (left.Length != right.Length || left.Length == 0 || left.Length > maxFrames)
-            throw new ArgumentOutOfRangeException(nameof(left));
-
-        fixed (float* leftPointer = left)
-        fixed (float* rightPointer = right)
+        lock (synchronization)
         {
-            var output = new NativeMethods.OutputView
+            if (left.Length != right.Length || left.Length == 0 || left.Length > maxFrames)
+                throw new ArgumentOutOfRangeException(nameof(left));
+
+            fixed (float* leftPointer = left)
+            fixed (float* rightPointer = right)
             {
-                Size = (uint)Marshal.SizeOf<NativeMethods.OutputView>(),
-                AbiVersion = NativeMethods.AbiVersion,
-                Left = (nint)leftPointer,
-                Right = (nint)rightPointer,
-                Frames = (uint)left.Length
-            };
-            var status = NativeMethods.Render(handle, ref output);
-            ThrowIfFailed(status, "rendering");
+                var output = new NativeMethods.OutputView
+                {
+                    Size = (uint)Marshal.SizeOf<NativeMethods.OutputView>(),
+                    AbiVersion = NativeMethods.AbiVersion,
+                    Left = (nint)leftPointer,
+                    Right = (nint)rightPointer,
+                    Frames = (uint)left.Length
+                };
+                var status = NativeMethods.Render(handle, ref output);
+                ThrowIfFailed(status, "rendering");
+            }
         }
     }
 
     /// <summary>Gets a snapshot of native render counters and engine topology.</summary>
     public EngineStats GetStats()
     {
-        var stats = new NativeMethods.Stats
+        lock (synchronization)
         {
-            Size = (uint)Marshal.SizeOf<NativeMethods.Stats>(),
-            AbiVersion = NativeMethods.AbiVersion
-        };
-        var status = NativeMethods.GetStats(handle, ref stats);
-        ThrowIfFailed(status, "reading stats");
-        return new EngineStats(stats.MasterFrame, stats.StarvedFrames, stats.DeckCount);
+            var stats = new NativeMethods.Stats
+            {
+                Size = (uint)Marshal.SizeOf<NativeMethods.Stats>(),
+                AbiVersion = NativeMethods.AbiVersion
+            };
+            var status = NativeMethods.GetStats(handle, ref stats);
+            ThrowIfFailed(status, "reading stats");
+            return new EngineStats(stats.MasterFrame, stats.StarvedFrames, stats.DeckCount);
+        }
     }
 
     /// <summary>Drains up to the requested number of notifications from the native event ring.</summary>
     public unsafe EngineEvent[] PollEvents(uint maxEvents = 64)
     {
-        if (maxEvents == 0 || maxEvents > 1024)
-            throw new ArgumentOutOfRangeException(nameof(maxEvents));
-        var nativeEvents = new NativeMethods.Event[(int)maxEvents];
-        for (var index = 0; index < nativeEvents.Length; index++)
+        lock (synchronization)
         {
-            nativeEvents[index].Size = (uint)Marshal.SizeOf<NativeMethods.Event>();
-            nativeEvents[index].AbiVersion = NativeMethods.AbiVersion;
+            if (maxEvents == 0 || maxEvents > 1024)
+                throw new ArgumentOutOfRangeException(nameof(maxEvents));
+            var nativeEvents = new NativeMethods.Event[(int)maxEvents];
+            for (var index = 0; index < nativeEvents.Length; index++)
+            {
+                nativeEvents[index].Size = (uint)Marshal.SizeOf<NativeMethods.Event>();
+                nativeEvents[index].AbiVersion = NativeMethods.AbiVersion;
+            }
+            uint outputEvents = 0;
+            fixed (NativeMethods.Event* eventPointer = nativeEvents)
+            {
+                var status = NativeMethods.PollEvents(handle, eventPointer, maxEvents, ref outputEvents);
+                ThrowIfFailed(status, "polling engine events");
+            }
+            if (outputEvents > maxEvents)
+                throw new ParsoException(NativeMethods.InvalidArgument, "polling engine events");
+            var managedEvents = new EngineEvent[(int)outputEvents];
+            for (var index = 0; index < managedEvents.Length; index++)
+            {
+                var native = nativeEvents[index];
+                managedEvents[index] = new EngineEvent(
+                    (EngineEventType)native.Type, native.Deck, native.Frame, native.F0, native.F1);
+            }
+            return managedEvents;
         }
-        uint outputEvents = 0;
-        fixed (NativeMethods.Event* eventPointer = nativeEvents)
-        {
-            var status = NativeMethods.PollEvents(handle, eventPointer, maxEvents, ref outputEvents);
-            ThrowIfFailed(status, "polling engine events");
-        }
-        if (outputEvents > maxEvents)
-            throw new ParsoException(NativeMethods.InvalidArgument, "polling engine events");
-        var managedEvents = new EngineEvent[(int)outputEvents];
-        for (var index = 0; index < managedEvents.Length; index++)
-        {
-            var native = nativeEvents[index];
-            managedEvents[index] = new EngineEvent(
-                (EngineEventType)native.Type, native.Deck, native.Frame, native.F0, native.F1);
-        }
-        return managedEvents;
     }
 
     /// <summary>Enables or disables the bounded native master record ring.</summary>
     /// <param name="active">Whether subsequent renders should be copied into the ring.</param>
     public void SetRecordActive(bool active)
     {
-        var status = NativeMethods.RecordSetActive(handle, active ? 1u : 0u);
-        ThrowIfFailed(status, "setting record state");
+        lock (synchronization)
+        {
+            var status = NativeMethods.RecordSetActive(handle, active ? 1u : 0u);
+            ThrowIfFailed(status, "setting record state");
+        }
     }
 
     /// <summary>Drains recorded master frames into new managed arrays.</summary>
@@ -909,51 +934,63 @@ public sealed class Engine : IDisposable
     /// <returns>Separate left and right managed channel arrays.</returns>
     public unsafe (float[] Left, float[] Right) DrainRecord(uint maxFrames)
     {
-        if (maxFrames == 0 || maxFrames > int.MaxValue)
-            throw new ArgumentOutOfRangeException(nameof(maxFrames));
-        var left = new float[(int)maxFrames];
-        var right = new float[(int)maxFrames];
-        uint outputFrames = 0;
-        fixed (float* leftPointer = left)
-        fixed (float* rightPointer = right)
+        lock (synchronization)
         {
-            var status = NativeMethods.RecordDrain(handle, leftPointer, rightPointer,
-                maxFrames, ref outputFrames);
-            ThrowIfFailed(status, "draining record ring");
+            if (maxFrames == 0 || maxFrames > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(maxFrames));
+            var left = new float[(int)maxFrames];
+            var right = new float[(int)maxFrames];
+            uint outputFrames = 0;
+            fixed (float* leftPointer = left)
+            fixed (float* rightPointer = right)
+            {
+                var status = NativeMethods.RecordDrain(handle, leftPointer, rightPointer,
+                    maxFrames, ref outputFrames);
+                ThrowIfFailed(status, "draining record ring");
+            }
+            if (outputFrames > maxFrames)
+                throw new ParsoException(NativeMethods.InvalidArgument, "draining record ring");
+            if (outputFrames != maxFrames)
+            {
+                Array.Resize(ref left, (int)outputFrames);
+                Array.Resize(ref right, (int)outputFrames);
+            }
+            return (left, right);
         }
-        if (outputFrames > maxFrames)
-            throw new ParsoException(NativeMethods.InvalidArgument, "draining record ring");
-        if (outputFrames != maxFrames)
-        {
-            Array.Resize(ref left, (int)outputFrames);
-            Array.Resize(ref right, (int)outputFrames);
-        }
-        return (left, right);
     }
 
     /// <summary>Gets the number of frames dropped by the bounded record ring.</summary>
     public ulong RecordDroppedFrames()
     {
-        ulong outputFrames = 0;
-        var status = NativeMethods.RecordDroppedFrames(handle, ref outputFrames);
-        ThrowIfFailed(status, "reading record counter");
-        return outputFrames;
+        lock (synchronization)
+        {
+            ulong outputFrames = 0;
+            var status = NativeMethods.RecordDroppedFrames(handle, ref outputFrames);
+            ThrowIfFailed(status, "reading record counter");
+            return outputFrames;
+        }
     }
 
     /// <summary>Discards pending recorded frames and resets the drop counter.</summary>
     public void ResetRecord()
     {
-        var status = NativeMethods.RecordReset(handle);
-        ThrowIfFailed(status, "resetting record ring");
+        lock (synchronization)
+        {
+            var status = NativeMethods.RecordReset(handle);
+            ThrowIfFailed(status, "resetting record ring");
+        }
     }
 
     /// <summary>Releases the native engine handle.</summary>
     public void Dispose()
     {
-        handle.Dispose();
-        foreach (var buffer in deckBuffers.Values) buffer.Dispose();
-        deckBuffers.Clear();
-        GC.SuppressFinalize(this);
+        lock (synchronization)
+        {
+            handle.Dispose();
+            foreach (var buffer in deckBuffers.Values) buffer.Dispose();
+            deckBuffers.Clear();
+            GC.SuppressFinalize(this);
+        }
     }
 
     private static void ThrowIfFailed(int status, string operation)

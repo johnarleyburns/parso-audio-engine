@@ -73,4 +73,45 @@ var stats = engine.GetStats();
 if (stats.MasterFrame != 256 || stats.DeckCount != 2)
     throw new InvalidOperationException("C# native consumer received invalid engine statistics.");
 
+using (var lifetimeEngine = Engine.Create(maxFrames: 32))
+{
+    using var started = new ManualResetEventSlim();
+    var failures = new List<Exception>();
+    var worker = new Thread(() =>
+    {
+        started.Set();
+        try
+        {
+            for (var index = 0; index < 256; index++)
+            {
+                var renderLeft = new float[16];
+                var renderRight = new float[16];
+                lifetimeEngine.Render(renderLeft, renderRight);
+            }
+        }
+        catch (ParsoException error) when (error.Status == -6)
+        {
+            // Dispose won the race after the synchronized render boundary.
+        }
+        catch (ObjectDisposedException)
+        {
+            // SafeHandle rejected a call that entered after the synchronized close.
+        }
+        catch (Exception error)
+        {
+            lock (failures) failures.Add(error);
+        }
+    });
+    worker.Start();
+    if (!started.Wait(TimeSpan.FromSeconds(1)))
+        throw new InvalidOperationException("C# consumer render worker did not start.");
+    lifetimeEngine.Dispose();
+    if (!worker.Join(TimeSpan.FromSeconds(2)))
+        throw new InvalidOperationException("C# consumer render worker did not stop.");
+    lock (failures)
+    {
+        if (failures.Count != 0) throw new AggregateException(failures);
+    }
+}
+
 Console.WriteLine($"C# native consumer passed at frame {stats.MasterFrame}.");
