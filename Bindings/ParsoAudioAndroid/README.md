@@ -14,7 +14,8 @@ gradle --project-dir Bindings/ParsoAudioAndroid assembleRelease
 The generated AAR is under
 `Bindings/ParsoAudioAndroid/build/outputs/aar/`. The Kotlin facade requires API
 26 or newer and retains direct PCM buffers until replacement or `close()`. `ParsoEngine` also exposes
-mixer control, typed transport/loop commands, and copied frame/starvation stats. `ParsoAnalysis`
+mixer control, typed transport/loop commands, copied frame/starvation stats, and bounded event
+polling. `ParsoAnalysis`
 provides synchronous off-audio-thread summary, key, and structure calls over borrowed
 direct native-order float buffers. The module is a packaging seam: device playback,
 capture, route changes, Vorbis runtime fixture parity, emulator execution, and JVM lifetime instrumentation remain separate acceptance gates.
