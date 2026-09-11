@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
 # setup-linux.sh — install and configure the Linux, Windows cross-build, and
-# Android NDK toolchains used by parso-audio-engine.
+# Android and Kotlin toolchains used by parso-audio-engine.
 #
 # Supported host: Debian/Ubuntu x86_64 Linux.
 # Installs native C/C++ tools, .NET 8, the MinGW-w64 x86_64 GNU toolchain, and
-# Google's official Android CLI plus SDK/NDK/CMake packages.
+# Google's official Android CLI plus SDK/NDK/CMake packages and Gradle.
 # The MinGW artifact is portability evidence; native Windows/MSVC CI remains
 # the release authority for the Windows ABI and runtime.
 #
@@ -25,9 +25,11 @@
 #   PARSO_WINDOWS_BUILD_DIR   cross build directory (default: build-windows-cross)
 #   PARSO_ANDROID_SDK_ROOT    Android SDK location (default: ~/Android/Sdk)
 #   PARSO_ANDROID_API_LEVEL   Android NDK minimum platform (default: 26)
-#   PARSO_ANDROID_COMPILE_SDK SDK platform to install (default: 36)
-#   PARSO_ANDROID_NDK_PACKAGE exact package, e.g. ndk/30.0.16248370
-#   PARSO_ANDROID_CMAKE_PACKAGE exact package, e.g. cmake/4.1.2
+#   PARSO_ANDROID_COMPILE_SDK SDK platform to install (default: 35)
+#   PARSO_ANDROID_NDK_PACKAGE exact package (default: ndk/27.2.12479018)
+#   PARSO_ANDROID_CMAKE_PACKAGE exact package (default: cmake/3.22.1)
+#   PARSO_GRADLE_VERSION Gradle distribution to install (default: 8.9)
+#   PARSO_GRADLE_HOME Gradle installation directory (default: ~/.local/opt/gradle-<version>)
 #
 set -euo pipefail
 
@@ -39,14 +41,18 @@ NATIVE_BUILD_DIR="${PARSO_LINUX_BUILD_DIR:-$REPO_ROOT/build-linux}"
 WINDOWS_BUILD_DIR="${PARSO_WINDOWS_BUILD_DIR:-$REPO_ROOT/build-windows-cross}"
 ANDROID_SDK_ROOT="${PARSO_ANDROID_SDK_ROOT:-${ANDROID_HOME:-$USER_HOME/Android/Sdk}}"
 ANDROID_API_LEVEL="${PARSO_ANDROID_API_LEVEL:-26}"
-ANDROID_COMPILE_SDK="${PARSO_ANDROID_COMPILE_SDK:-36}"
-ANDROID_NDK_PACKAGE="${PARSO_ANDROID_NDK_PACKAGE:-}"
-ANDROID_CMAKE_PACKAGE="${PARSO_ANDROID_CMAKE_PACKAGE:-}"
+ANDROID_COMPILE_SDK="${PARSO_ANDROID_COMPILE_SDK:-35}"
+ANDROID_NDK_PACKAGE="${PARSO_ANDROID_NDK_PACKAGE:-ndk/27.2.12479018}"
+ANDROID_CMAKE_PACKAGE="${PARSO_ANDROID_CMAKE_PACKAGE:-cmake/3.22.1}"
 ANDROID_BIN_DIR="$USER_HOME/.local/bin"
 ANDROID_CLI="$ANDROID_BIN_DIR/android"
 ANDROID_NDK_ROOT=""
 ANDROID_CMAKE_ROOT=""
 ANDROID_CMAKE_BIN=""
+GRADLE_VERSION="${PARSO_GRADLE_VERSION:-8.9}"
+GRADLE_ROOT="${PARSO_GRADLE_HOME:-$USER_HOME/.local/opt/gradle-$GRADLE_VERSION}"
+GRADLE_BIN="$GRADLE_ROOT/bin/gradle"
+JAVA_HOME=""
 VERIFY_BUILD=1
 VERIFY_WINDOWS_CROSS_BUILD=1
 VERIFY_ANDROID_BUILD=1
@@ -155,6 +161,8 @@ install_dependencies() {
         zip \
         ca-certificates \
         file \
+        openjdk-17-jdk \
+        python3 \
         mingw-w64 \
         gcc-mingw-w64-x86-64 \
         g++-mingw-w64-x86-64 \
@@ -179,6 +187,36 @@ install_dependencies() {
             "${dotnet_package} is unavailable from the configured Debian/Ubuntu feeds; set PARSO_DOTNET_CHANNEL to an available SDK or install .NET manually"
         apt_install "$dotnet_package"
     fi
+}
+
+install_gradle() {
+    mkdir -p "$(dirname "$GRADLE_ROOT")"
+    if [ ! -x "$GRADLE_BIN" ]; then
+        [ ! -e "$GRADLE_ROOT" ] || die "Gradle installation path exists but is incomplete: $GRADLE_ROOT"
+        local temporary_dir
+        local archive="gradle-$GRADLE_VERSION-bin.zip"
+        local expected_checksum
+        local actual_checksum
+        temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/parso-gradle.XXXXXX")"
+        trap 'rm -rf "$temporary_dir"' RETURN
+        log "Installing Gradle $GRADLE_VERSION"
+        curl -fL --retry 3 --retry-delay 2 \
+            -o "$temporary_dir/$archive" \
+            "https://services.gradle.org/distributions/$archive"
+        curl -fL --retry 3 --retry-delay 2 \
+            -o "$temporary_dir/$archive.sha256" \
+            "https://services.gradle.org/distributions/$archive.sha256"
+        expected_checksum="$(awk '{print $1}' "$temporary_dir/$archive.sha256")"
+        actual_checksum="$(sha256sum "$temporary_dir/$archive" | awk '{print $1}')"
+        [[ "$expected_checksum" =~ ^[[:xdigit:]]{64}$ ]] || die "invalid Gradle checksum response"
+        [ "$expected_checksum" = "$actual_checksum" ] || die "Gradle $GRADLE_VERSION checksum verification failed"
+        unzip -q "$temporary_dir/$archive" -d "$temporary_dir"
+        mv "$temporary_dir/gradle-$GRADLE_VERSION" "$GRADLE_ROOT"
+        trap - RETURN
+        rm -rf "$temporary_dir"
+    fi
+    [ -x "$GRADLE_BIN" ] || die "Gradle was not installed at $GRADLE_BIN"
+    "$GRADLE_BIN" --version | sed -n '1,5p'
 }
 
 install_android_cli() {
@@ -225,16 +263,8 @@ configure_android() {
     log "Initializing Android SDK at $ANDROID_SDK_ROOT"
     "$ANDROID_CLI" --sdk "$ANDROID_SDK_ROOT" init
 
-    if [ -z "$ANDROID_NDK_PACKAGE" ]; then
-        ANDROID_NDK_PACKAGE="$(android_latest_stable_package ndk)"
-    fi
-    if [ -z "$ANDROID_CMAKE_PACKAGE" ]; then
-        ANDROID_CMAKE_PACKAGE="$(android_latest_stable_package cmake)"
-    fi
     local build_tools_package
     build_tools_package="$(android_latest_stable_package build-tools)"
-    [ -n "$ANDROID_NDK_PACKAGE" ] || die "no stable Android NDK package was found"
-    [ -n "$ANDROID_CMAKE_PACKAGE" ] || die "no stable Android CMake package was found"
     [ -n "$build_tools_package" ] || die "no stable Android build-tools package was found"
 
     local platform_package="platforms/android-$ANDROID_COMPILE_SDK"
@@ -273,6 +303,16 @@ verify_tools() {
     ninja --version
     x86_64-w64-mingw32-g++ --version | head -n 1
     dotnet --version
+    if [ "$INSTALL_ANDROID" -eq 1 ]; then
+        command -v java >/dev/null 2>&1 || die "JDK 17 is not available"
+        command -v sha256sum >/dev/null 2>&1 || die "sha256sum is not available"
+        local java_major
+        java_major="$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\)\..*/\1/p' | head -n 1)"
+        [ -n "$java_major" ] && [ "$java_major" -ge 17 ] || die "JDK 17 or newer is required for the Android Gradle build"
+        JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+        export JAVA_HOME
+        echo "JAVA_HOME=$JAVA_HOME"
+    fi
 }
 
 write_environment() {
@@ -287,6 +327,10 @@ EOF
         printf 'export PARSO_LINUX_BUILD_DIR=%q\n' "$NATIVE_BUILD_DIR"
         printf 'export PARSO_WINDOWS_BUILD_DIR=%q\n' "$WINDOWS_BUILD_DIR"
         if [ "$INSTALL_ANDROID" -eq 1 ]; then
+            printf 'export PARSO_GRADLE_VERSION=%q\n' "$GRADLE_VERSION"
+            printf 'export PARSO_GRADLE_HOME=%q\n' "$GRADLE_ROOT"
+            printf 'export JAVA_HOME=%q\n' "$JAVA_HOME"
+            printf 'export PATH=%q:$PATH\n' "$GRADLE_ROOT/bin"
             printf 'export ANDROID_HOME=%q\n' "$ANDROID_SDK_ROOT"
             printf 'export ANDROID_SDK_ROOT=%q\n' "$ANDROID_SDK_ROOT"
             printf 'export ANDROID_NDK_HOME=%q\n' "$ANDROID_NDK_ROOT"
@@ -373,12 +417,69 @@ build_android() {
             -DANDROID_PLATFORM="android-$ANDROID_API_LEVEL" \
             -DANDROID_NDK="$ANDROID_NDK_ROOT" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DPARSO_BUILD_TESTS=OFF
+            -DPARSO_BUILD_TESTS=OFF \
+            -DPARSO_BUILD_SHARED_API=ON \
+            -DPARSO_BUILD_CODEC_BRIDGES=ON
         "$ANDROID_CMAKE_BIN" --build "$build_dir" --parallel
+        [ -f "$build_dir/libparso.so" ] || die "Android native build did not produce libparso.so for $abi"
+        [ -f "$build_dir/libparso_android.so" ] || die "Android native build did not produce libparso_android.so for $abi"
+    done
+}
+
+build_android_gradle() {
+    local producer_project="$REPO_ROOT/Bindings/ParsoAudioAndroid"
+    local consumer_project="$REPO_ROOT/Bindings/ParsoAudioAndroidConsumer"
+    local ndk_version="${ANDROID_NDK_PACKAGE#ndk/}"
+    local cmake_version="${ANDROID_CMAKE_PACKAGE#cmake/}"
+    local aar="$producer_project/build/outputs/aar/parso-audio-android-release.aar"
+    local apk="$consumer_project/build/outputs/apk/debug/parso-audio-android-consumer-debug.apk"
+    local abi library
+    local page_dir
+    [ -f "$producer_project/build.gradle.kts" ] || die "Android Kotlin library project is missing"
+    [ -f "$consumer_project/build.gradle.kts" ] || die "Android consumer project is missing"
+
+    log "Building Android Kotlin library, AAR, tests, and local Maven publication"
+    "$GRADLE_BIN" --project-dir "$producer_project" \
+        -PparsoNdkVersion="$ndk_version" \
+        -PparsoCmakeVersion="$cmake_version" \
+        testReleaseUnitTest assembleRelease assembleDebugAndroidTest \
+        publishReleasePublicationToLocalStagingRepository
+    [ -f "$aar" ] || die "Android release AAR was not produced"
+    [ -f "$producer_project/build/maven-repository/com/parsoaudio/parso-audio-android/0.1.0/parso-audio-android-0.1.0.pom" ] || \
+        die "Android local Maven publication did not produce its POM"
+    [ -f "$producer_project/build/maven-repository/com/parsoaudio/parso-audio-android/0.1.0/parso-audio-android-0.1.0.aar" ] || \
+        die "Android local Maven publication did not produce its AAR"
+
+    page_dir="$(mktemp -d "${TMPDIR:-/tmp}/parso-android-aar.XXXXXX")"
+    trap 'rm -rf "$page_dir"' RETURN
+    for abi in arm64-v8a x86_64; do
+        for library in libparso.so libparso_android.so; do
+            unzip -l "$aar" | grep -F "jni/$abi/$library" >/dev/null || die "AAR is missing jni/$abi/$library"
+            unzip -p "$aar" "jni/$abi/$library" > "$page_dir/${abi}-${library}"
+        done
+    done
+    python3 "$REPO_ROOT/scripts/check-elf-page-size.py" \
+        --library "$page_dir/arm64-v8a-libparso.so" \
+        --library "$page_dir/arm64-v8a-libparso_android.so" \
+        --library "$page_dir/x86_64-libparso.so" \
+        --library "$page_dir/x86_64-libparso_android.so"
+    trap - RETURN
+    rm -rf "$page_dir"
+
+    log "Building external Android Kotlin consumer APK"
+    "$GRADLE_BIN" --project-dir "$consumer_project" assembleDebug
+    [ -f "$apk" ] || die "Android consumer APK was not produced"
+    for abi in arm64-v8a x86_64; do
+        for library in libparso.so libparso_android.so; do
+            unzip -l "$apk" | grep -F "lib/$abi/$library" >/dev/null || die "consumer APK is missing lib/$abi/$library"
+        done
     done
 }
 
 install_dependencies
+if [ "$INSTALL_ANDROID" -eq 1 ]; then
+    install_gradle
+fi
 verify_tools
 if [ "$INSTALL_ANDROID" -eq 1 ]; then
     configure_android
@@ -393,17 +494,19 @@ if [ "$VERIFY_BUILD" -eq 1 ]; then
     fi
     if [ "$INSTALL_ANDROID" -eq 1 ] && [ "$VERIFY_ANDROID_BUILD" -eq 1 ]; then
         build_android
+        build_android_gradle
     fi
 else
     log "Skipping build verification (--no-build)"
 fi
 
 echo
-echo "Linux, Windows cross-build, and Android setup complete."
+echo "Linux, Windows cross-build, Android native, and Android/Kotlin setup complete."
 echo "  source \"$ENV_FILE\""
 echo "  native build:  $NATIVE_BUILD_DIR"
 echo "  Windows build: $WINDOWS_BUILD_DIR"
 if [ "$INSTALL_ANDROID" -eq 1 ]; then
     echo "  Android SDK:   $ANDROID_SDK_ROOT"
     echo "  Android NDK:   $ANDROID_NDK_ROOT"
+    echo "  Gradle:        $GRADLE_BIN"
 fi

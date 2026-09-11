@@ -191,12 +191,13 @@ For the Linux native, Windows cross-build, and Android native toolchains on Debi
 ./scripts/setup-linux.sh
 ```
 
-The script installs the official Android CLI, SDK platform-tools, a stable NDK and CMake, configures
-`ANDROID_HOME`/`ANDROID_NDK_HOME` alongside the Linux/.NET/Windows cross-build environment, and
-cross-builds `arm64-v8a` and `x86_64` by default. Use `--no-build` to install without compiling,
-`--no-windows-cross-build` or `--no-android-build` to skip one verification target, `--no-android` to
-skip Android installation, or pin versions with `PARSO_ANDROID_NDK_PACKAGE` and
-`PARSO_ANDROID_CMAKE_PACKAGE`.
+The script installs the official Android CLI, SDK platform-tools/build-tools, a pinned NDK/CMake pair,
+JDK 17, and Gradle 8.9; configures `ANDROID_HOME`/`ANDROID_NDK_HOME` alongside the Linux/.NET/Windows
+cross-build environment; cross-builds `arm64-v8a` and `x86_64`; then runs the Kotlin unit tests, release
+AAR/publication checks, and external consumer APK build. It does not require an emulator or device.
+Use `--no-build` to install without compiling, `--no-windows-cross-build` or `--no-android-build` to
+skip one verification target, `--no-android` to skip Android installation, or pin versions with
+`PARSO_ANDROID_NDK_PACKAGE`, `PARSO_ANDROID_CMAKE_PACKAGE`, and `PARSO_GRADLE_VERSION`.
 
 The Linux setup also installs CMake/Ninja, the MinGW-w64 x86_64 toolchain, and the .NET 8 SDK, then
 verifies the Linux CTest targets, Windows-targeted C# project, and Windows GNU shared-library build.
