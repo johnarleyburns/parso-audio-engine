@@ -76,7 +76,11 @@ int main(void)
     parso_key_options_t key_options;
     parso_key_result_t key;
     parso_structure_options_t structure_options;
+    parso_analysis_options_t analysis_options;
+    parso_analysis_result_t analysis;
     parso_structure_section_t sections[8];
+    float waveform_min[8];
+    float waveform_max[8];
     uint32_t section_count = 0;
     uint32_t index;
 
@@ -91,7 +95,9 @@ int main(void)
         parso_bytes_init(&encoded) != PARSO_STATUS_OK ||
         parso_key_options_init(&key_options) != PARSO_STATUS_OK ||
         parso_key_result_init(&key) != PARSO_STATUS_OK ||
-        parso_structure_options_init(&structure_options) != PARSO_STATUS_OK) {
+        parso_structure_options_init(&structure_options) != PARSO_STATUS_OK ||
+        parso_analysis_options_init(&analysis_options) != PARSO_STATUS_OK ||
+        parso_analysis_result_init(&analysis) != PARSO_STATUS_OK) {
         fprintf(stderr, "installed consumer: initialization failed: %s\n", parso_last_error());
         return 1;
     }
@@ -102,7 +108,12 @@ int main(void)
     if (parso_key_measure(&input, &key_options, &key) != PARSO_STATUS_OK ||
         key.tonic_pitch_class >= 12 ||
         parso_structure_measure(&input, &structure_options, sections, 8, &section_count) !=
-            PARSO_STATUS_OK || section_count == 0 || sections[0].kind > 7) {
+            PARSO_STATUS_OK || section_count == 0 || sections[0].kind > 7 ||
+        parso_analysis_measure(&input, &analysis_options, &analysis) != PARSO_STATUS_OK ||
+            analysis.duration_seconds <= 0.0 || !isfinite(analysis.rms) ||
+            !isfinite(analysis.peak) ||
+        parso_waveform_generate(&input, 8, waveform_min, waveform_max) != PARSO_STATUS_OK ||
+            waveform_min[0] > waveform_max[0] || !isfinite(waveform_max[0])) {
         fprintf(stderr, "installed consumer: analysis ABI failed: %s\n", parso_last_error());
         parso_bytes_release(&encoded);
         input.samples = NULL;
