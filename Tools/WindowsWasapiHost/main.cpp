@@ -1,4 +1,7 @@
 #define INITGUID
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 
 #include "parso.h"
 

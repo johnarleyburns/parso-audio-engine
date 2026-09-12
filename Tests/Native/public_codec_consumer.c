@@ -113,7 +113,7 @@ int main(int argc, char **argv)
 {
     enum { frames = 2048, channels = 2 };
     float samples[frames * channels];
-    parso_capabilities_t capabilities;
+    parso_capabilities_t capabilities = {0};
     parso_codec_options_t options;
     parso_pcm_buffer_t input;
     parso_bytes_t unsupported;
