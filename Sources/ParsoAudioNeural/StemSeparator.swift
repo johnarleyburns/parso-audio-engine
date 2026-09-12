@@ -137,5 +137,3 @@ public struct StemSeparator: Sendable {
     }
 }
 #endif
-
-#endif

@@ -381,3 +381,4 @@ enum StemResampler {
 /// 2¹⁷-frame default) runs at the separator's own geometry. Voices are
 /// resampled back to the working rate once, so a downstream cache/reader
 /// stays untouched regardless of which backend is active.
+#endif

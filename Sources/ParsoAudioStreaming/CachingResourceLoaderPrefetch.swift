@@ -30,7 +30,7 @@ extension CachingResourceLoader {
                     contentRange: http.value(forHTTPHeaderField: "Content-Range"),
                     expectedContentLength: http.expectedContentLength,
                     cursor: already,
-                    knownTotalBytes: await store.totalBytes(for: key) ?? 0
+                    knownTotalBytes: await cacheStore.totalBytes(for: key) ?? 0
                 ) else { return }
                 let writeOffset: Int64
                 switch decision {

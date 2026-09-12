@@ -52,7 +52,7 @@ let package = Package(
                 .define("HAVE_LROUND"),
                 .define("HAVE_FSEEKO"),
                 .define("HAVE_INTTYPES_H"),
-                .define("HAVE_SYS_PARAM_H"),
+                .define("HAVE_SYS_PARAM_H", .when(platforms: [.linux, .macOS, .iOS, .watchOS, .tvOS])),
                 .define("PACKAGE_VERSION", to: "\"1.4.3\"")
             ]
         ),
@@ -60,7 +60,9 @@ let package = Package(
             name: "Cebur128",
             path: "Sources/Cebur128",
             publicHeadersPath: "include",
-            cSettings: [.define("M_PI", to: "3.14159265358979323846")]
+            cSettings: [
+                .define("M_PI", to: "3.14159265358979323846", .when(platforms: [.windows]))
+            ]
         ),
         .target(
             name: "Csrc",

@@ -131,6 +131,10 @@ if(NOT MSVC)
     endif()
 endif()
 if(WIN32)
+    target_compile_definitions(Cebur128 PRIVATE
+        _USE_MATH_DEFINES
+        M_PI=3.14159265358979323846
+    )
     # Windows toolchains do not ship the BSD <sys/queue.h> header used by
     # libebur128. Keep the compatibility header first-party and outside the
     # vendored tree.
