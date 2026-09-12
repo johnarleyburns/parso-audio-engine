@@ -314,11 +314,25 @@ jobs:
           cmake -S . -B build-native `
             -G "Visual Studio 17 2022" `
             -A x64 `
-            -DPARSO_BUILD_TESTS=ON
+            -DPARSO_BUILD_TESTS=ON `
+            -DPARSO_BUILD_SHARED_API=ON
       - name: Build native CMake targets
         run: cmake --build build-native --config Release --parallel
       - name: Test native CMake targets
         run: ctest --test-dir build-native -C Release --output-on-failure
+      - name: Probe Windows WASAPI render and capture seams
+        shell: pwsh
+        run: |
+          $wasapiHost = Join-Path $pwd 'build-native\Release\parso_windows_wasapi_host.exe'
+          if (-not (Test-Path $wasapiHost)) { throw "WASAPI host was not built: $wasapiHost" }
+          foreach ($arguments in @(@('1', '--allow-unavailable'), @('1', '--capture', '--allow-unavailable'))) {
+            & $wasapiHost @arguments
+            $code = $LASTEXITCODE
+            if ($code -ne 0 -and $code -ne 77) {
+              throw "WASAPI probe failed with exit code ${code}: $($arguments -join ' ')"
+            }
+            Write-Host "WASAPI probe exit code ${code}: $($arguments -join ' ')"
+          }
       - name: Set up .NET for native C# consumer
         uses: actions/setup-dotnet@v4
         with:

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -100,24 +101,95 @@ bool renderAvailable(parso_engine_t *engine, IAudioRenderClient *renderClient,
     return true;
 }
 
+float decodeCaptureSample(const BYTE *slot, const WAVEFORMATEX *format) {
+    if (isFloatFormat(format) && format->wBitsPerSample == 32) {
+        return *reinterpret_cast<const float *>(slot);
+    }
+    if (!isFloatFormat(format) && format->wBitsPerSample == 16) {
+        return static_cast<float>(*reinterpret_cast<const int16_t *>(slot)) / 32768.0f;
+    }
+    return 0.0f;
+}
+
+bool captureAvailable(parso_engine_t *engine, IAudioCaptureClient *captureClient,
+                      const WAVEFORMATEX *format, uint32_t maxFrames,
+                      std::vector<float> &left, std::vector<float> &right,
+                      const float *const *planes) {
+    while (true) {
+        BYTE *buffer = nullptr;
+        UINT32 frames = 0;
+        DWORD flags = 0;
+        if (!ok(captureClient->GetBuffer(&buffer, &frames, &flags, nullptr, nullptr),
+                "IAudioCaptureClient::GetBuffer")) {
+            return false;
+        }
+        if (frames == 0) {
+            captureClient->ReleaseBuffer(0);
+            return true;
+        }
+        if (frames > maxFrames) {
+            std::fprintf(stderr, "windows_wasapi_host: capture block exceeds configured capacity\n");
+            captureClient->ReleaseBuffer(frames);
+            return false;
+        }
+        const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+        const uint16_t channels = format->nChannels;
+        const uint16_t bytesPerSample = format->wBitsPerSample / 8;
+        for (UINT32 frame = 0; frame < frames; ++frame) {
+            const BYTE *source = buffer + frame * format->nBlockAlign;
+            left[frame] = silent ? 0.0f : decodeCaptureSample(source, format);
+            right[frame] = channels == 1 ? left[frame]
+                : silent ? 0.0f : decodeCaptureSample(source + bytesPerSample, format);
+        }
+        parso_pcm_view_t input{};
+        if (!okParso(parso_pcm_view_init(&input), "capture view initialization")) {
+            captureClient->ReleaseBuffer(frames);
+            return false;
+        }
+        input.planes = planes;
+        input.frames = frames;
+        input.channel_count = channels == 1 ? 1u : 2u;
+        input.sample_rate_hz = format->nSamplesPerSec;
+        const bool published = okParso(
+            parso_engine_set_mic_buffer(engine, &input), "mic capture publish");
+        const HRESULT release = captureClient->ReleaseBuffer(frames);
+        if (!ok(release, "IAudioCaptureClient::ReleaseBuffer") || !published) return false;
+        return true;
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
     const uint32_t seconds = argc > 1 ? static_cast<uint32_t>(std::strtoul(argv[1], nullptr, 10)) : 5u;
+    bool captureRequested = false;
+    bool allowUnavailable = false;
+    for (int index = 2; index < argc; ++index) {
+        captureRequested = captureRequested || std::strcmp(argv[index], "--capture") == 0;
+        allowUnavailable = allowUnavailable || std::strcmp(argv[index], "--allow-unavailable") == 0;
+    }
     if (seconds == 0 || seconds > 3600) {
-        std::fprintf(stderr, "usage: windows_wasapi_host [seconds 1..3600]\n");
+        std::fprintf(stderr, "usage: windows_wasapi_host [seconds 1..3600] [--capture] [--allow-unavailable]\n");
         return 2;
     }
     if (!ok(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "COM initialization")) return 1;
 
     IMMDeviceEnumerator *enumerator = nullptr;
     IMMDevice *device = nullptr;
+    IMMDevice *captureDevice = nullptr;
     IAudioClient *audioClient = nullptr;
+    IAudioClient *captureAudioClient = nullptr;
     IAudioRenderClient *renderClient = nullptr;
+    IAudioCaptureClient *captureClient = nullptr;
     WAVEFORMATEX *format = nullptr;
+    WAVEFORMATEX *captureFormat = nullptr;
     HANDLE event = nullptr;
+    HANDLE captureEvent = nullptr;
     parso_engine_t *engine = nullptr;
     std::vector<float> source;
+    std::vector<float> captureLeft;
+    std::vector<float> captureRight;
+    const float *capturePlanes[] = {nullptr, nullptr};
     int result = 1;
 
     do {
@@ -142,6 +214,46 @@ int main(int argc, char **argv) {
         }
 
         constexpr REFERENCE_TIME bufferDuration = 100000; // 10 ms.
+        UINT32 captureBufferFrames = 0;
+        if (captureRequested) {
+            if (!ok(enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &captureDevice),
+                    "default capture endpoint") ||
+                !ok(captureDevice->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr,
+                                            reinterpret_cast<void **>(&captureAudioClient)),
+                    "capture IAudioClient activation") ||
+                !ok(captureAudioClient->GetMixFormat(&captureFormat),
+                    "capture mix format query")) {
+                break;
+            }
+            const bool captureFloating = isFloatFormat(captureFormat);
+            if (captureFormat->nChannels < 1 || captureFormat->nChannels > 2 ||
+                (captureFloating && captureFormat->wBitsPerSample != 32) ||
+                (!captureFloating && captureFormat->wBitsPerSample != 16)) {
+                std::fprintf(stderr, "windows_wasapi_host: unsupported capture format\n");
+                break;
+            }
+            if (!ok(captureAudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                                   AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                                   bufferDuration, 0, captureFormat, nullptr),
+                    "capture IAudioClient initialization") ||
+                !ok(captureAudioClient->GetBufferSize(&captureBufferFrames),
+                    "capture buffer-size query") || captureBufferFrames == 0) {
+                break;
+            }
+            captureEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (!captureEvent || !ok(captureAudioClient->SetEventHandle(captureEvent),
+                                      "capture event handle setup") ||
+                !ok(captureAudioClient->GetService(IID_IAudioCaptureClient,
+                                                   reinterpret_cast<void **>(&captureClient)),
+                    "capture-client activation")) {
+                break;
+            }
+            captureLeft.assign(captureBufferFrames, 0.0f);
+            captureRight.assign(captureBufferFrames, 0.0f);
+            capturePlanes[0] = captureLeft.data();
+            capturePlanes[1] = captureRight.data();
+        }
+
         if (!ok(audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
                                          AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                                          bufferDuration, 0, format, nullptr),
@@ -190,7 +302,8 @@ int main(int argc, char **argv) {
             !okParso(parso_engine_set_control(engine, &control), "control publish") ||
             !okParso(parso_engine_set_deck_buffer(engine, 0, &view), "deck buffer") ||
             !okParso(parso_engine_post_command(engine, &command), "play command") ||
-            !ok(audioClient->Start(), "audio client start")) {
+            !ok(audioClient->Start(), "audio client start") ||
+            (captureRequested && !ok(captureAudioClient->Start(), "capture audio client start"))) {
             break;
         }
 
@@ -198,8 +311,18 @@ int main(int argc, char **argv) {
         std::vector<float> right(renderFrames, 0.0f);
         const uint64_t deadline = GetTickCount64() + static_cast<uint64_t>(seconds) * 1000u;
         bool loopOk = true;
+        HANDLE waitHandles[] = {event, captureEvent};
+        const DWORD waitCount = captureRequested ? 2u : 1u;
         while (GetTickCount64() < deadline) {
-            const DWORD wait = WaitForSingleObject(event, 2000);
+            const DWORD wait = WaitForMultipleObjects(waitCount, waitHandles, FALSE, 2000);
+            if (wait == WAIT_OBJECT_0 + 1u && captureRequested) {
+                if (!captureAvailable(engine, captureClient, captureFormat, captureBufferFrames,
+                                      captureLeft, captureRight, capturePlanes)) {
+                    loopOk = false;
+                    break;
+                }
+                continue;
+            }
             if (wait != WAIT_OBJECT_0) {
                 std::fprintf(stderr, "windows_wasapi_host: audio event timed out\n");
                 loopOk = false;
@@ -216,17 +339,23 @@ int main(int argc, char **argv) {
                 break;
             }
         }
+        if (captureRequested) captureAudioClient->Stop();
         audioClient->Stop();
         result = loopOk ? 0 : 1;
     } while (false);
 
     if (engine) parso_engine_destroy(&engine);
     if (event) CloseHandle(event);
+    if (captureEvent) CloseHandle(captureEvent);
     if (format) CoTaskMemFree(format);
+    if (captureFormat) CoTaskMemFree(captureFormat);
     if (renderClient) renderClient->Release();
+    if (captureClient) captureClient->Release();
     if (audioClient) audioClient->Release();
+    if (captureAudioClient) captureAudioClient->Release();
     if (device) device->Release();
+    if (captureDevice) captureDevice->Release();
     if (enumerator) enumerator->Release();
     CoUninitialize();
-    return result;
+    return result == 0 ? 0 : allowUnavailable ? 77 : result;
 }

@@ -439,10 +439,11 @@ if(WIN32)
     )
     if(NOT CMAKE_CROSSCOMPILING)
         add_test(NAME windows_wasapi_host
-            COMMAND parso_windows_wasapi_host 1
+            COMMAND parso_windows_wasapi_host 1 --allow-unavailable
         )
         set_tests_properties(windows_wasapi_host PROPERTIES
             LABELS "native;windows;wasapi;device;consumer"
+            SKIP_RETURN_CODE 77
         )
     endif()
 endif()
