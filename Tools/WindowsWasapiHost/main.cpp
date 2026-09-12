@@ -2,10 +2,10 @@
 #define NOMINMAX
 #endif
 
-#include <initguid.h>
 #include "parso.h"
 
 #include <windows.h>
+#include <initguid.h>
 #include <audioclient.h>
 #include <ksmedia.h>
 #include <mmdeviceapi.h>
