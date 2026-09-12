@@ -65,10 +65,10 @@ public actor SparseCacheStore {
 
     // MARK: - Layout
 
-    fileprivate let evictable: Root
-    fileprivate let durable: Root
-    fileprivate var metas: [String: Meta] = [:]
-    fileprivate var limitBytes: Int64
+    let evictable: Root
+    let durable: Root
+    var metas: [String: Meta] = [:]
+    var limitBytes: Int64
     private var protectedKeys: Set<String> = []
 
     /// Nonisolated view of the same on-disk layout, for callers that need a
@@ -96,7 +96,7 @@ public actor SparseCacheStore {
         metas = loaded
     }
 
-    fileprivate func root(for key: String) -> Root {
+    func root(for key: String) -> Root {
         (metas[key]?.isDurable ?? false) ? durable : evictable
     }
 
@@ -271,7 +271,7 @@ public actor SparseCacheStore {
 
     // MARK: - Eviction
 
-    fileprivate func evictToFit(protecting extraKey: String?) async {
+    func evictToFit(protecting extraKey: String?) async {
         guard limitBytes > 0 else { return }
         var protected = protectedKeys
         if let extraKey { protected.insert(extraKey) }
@@ -307,7 +307,7 @@ public actor SparseCacheStore {
         metas.removeValue(forKey: key)
     }
 
-    fileprivate func discardCachedBytes(for key: String) {
+    func discardCachedBytes(for key: String) {
         let root = root(for: key)
         try? FileManager.default.removeItem(at: root.blobURL(key))
         guard var meta = metas[key] else { return }
@@ -336,11 +336,11 @@ public actor SparseCacheStore {
                     lastAccessedAt: now, createdAt: now, rangeMap: ByteRangeMap())
     }
 
-    fileprivate static func fileSize(_ url: URL) -> Int64? {
+    static func fileSize(_ url: URL) -> Int64? {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
     }
 
-    fileprivate func persistMeta(_ key: String) {
+    func persistMeta(_ key: String) {
         guard let m = metas[key] else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

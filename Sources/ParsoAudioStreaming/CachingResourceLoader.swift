@@ -42,9 +42,9 @@ public struct CachingResourceLoaderConfig: Sendable {
 
 public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAssetResourceLoaderDelegate {
 
-    fileprivate let originalURL: URL
-    fileprivate let store: SparseCacheStore
-    fileprivate let config: CachingResourceLoaderConfig
+    let originalURL: URL
+    let store: SparseCacheStore
+    let config: CachingResourceLoaderConfig
     public let cacheKey: String
 
     private let stateLock = NSLock()
@@ -58,7 +58,7 @@ public final class CachingResourceLoader: NSObject, @unchecked Sendable, AVAsset
     /// Optional injectable session (tests supply one backed by a `URLProtocol`
     /// stub). Defaults to a process-shared session so loaders don't leak one
     /// each.
-    fileprivate let session: URLSession
+    let session: URLSession
 
     private static let sharedSession: URLSession = {
         let cfg = URLSessionConfiguration.default

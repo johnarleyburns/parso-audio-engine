@@ -130,9 +130,10 @@ if(NOT MSVC)
         target_compile_options(Cebur128 PRIVATE -Wno-cpp -Wno-pedantic)
     endif()
 endif()
-if(MINGW)
-    # MinGW does not ship the BSD <sys/queue.h> header used by libebur128.
-    # Keep the compatibility header first-party and outside the vendored tree.
+if(WIN32)
+    # Windows toolchains do not ship the BSD <sys/queue.h> header used by
+    # libebur128. Keep the compatibility header first-party and outside the
+    # vendored tree.
     target_include_directories(Cebur128 PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/Sources/Cebur128/compat"
     )
@@ -176,9 +177,11 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         HAVE_LROUND
         HAVE_FSEEKO
         HAVE_INTTYPES_H
-        HAVE_SYS_PARAM_H
         PACKAGE_VERSION="1.4.3"
     )
+    if(NOT WIN32)
+        target_compile_definitions(Cflac PRIVATE HAVE_SYS_PARAM_H)
+    endif()
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         # GCC's optimized build diagnoses an upstream C99 empty initializer as
         # a pedantic error. Keep the exception on the unchanged vendor target.
@@ -222,6 +225,12 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         PRIVATE Sources/Cvorbis/xiph/src
     )
     target_compile_definitions(Cvorbis PRIVATE HAVE_CONFIG_H)
+    if(WIN32)
+        target_compile_definitions(Cvorbis PRIVATE
+            _USE_MATH_DEFINES
+            M_PI=3.14159265358979323846
+        )
+    endif()
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         # Unmodified libvorbis 1.3.7 uses compact one-line cleanup statements
         # that trigger this diagnostic under the repository's -Werror policy.
@@ -362,6 +371,15 @@ if(PARSO_BUILD_CODEC_BRIDGES)
         target_link_libraries(CGlint PUBLIC m)
     endif()
     set_target_properties(CGlint PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    if(MSVC)
+        # The codec sources are unchanged upstream code. Keep their warnings
+        # visible under /W4, but stop the repository-wide /WX policy at this
+        # compiler boundary; first-party bridges and tests remain /WX.
+        foreach(PARSO_VENDOR_TARGET IN ITEMS Cogg Csrc Cebur128 Cflac Cvorbis Copus CGlint)
+            target_compile_options(${PARSO_VENDOR_TARGET} PRIVATE /WX-)
+        endforeach()
+    endif()
 endif()
 
 add_library(CParsoAPI STATIC
