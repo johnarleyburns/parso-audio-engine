@@ -232,4 +232,68 @@ JNIEXPORT jbyteArray JNICALL Java_com_parsoaudio_ParsoNative_nativeEncodeRecordi
     parso_bytes_release(&encoded);
     return output;
 }
+
+JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRender(
+    JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint frames
+) {
+    if (!fromHandle(handle) || !leftBuffer || !rightBuffer || frames <= 0) return -1;
+    void *leftAddress = env->GetDirectBufferAddress(leftBuffer);
+    void *rightAddress = env->GetDirectBufferAddress(rightBuffer);
+    const jlong leftCapacity = env->GetDirectBufferCapacity(leftBuffer);
+    const jlong rightCapacity = env->GetDirectBufferCapacity(rightBuffer);
+    if (!leftAddress || !rightAddress || leftCapacity < frames * static_cast<jlong>(sizeof(float)) ||
+        rightCapacity < frames * static_cast<jlong>(sizeof(float))) return -1;
+    parso_output_view_t output{};
+    if (parso_output_view_init(&output) != PARSO_STATUS_OK) return -1;
+    output.left = static_cast<float *>(leftAddress);
+    output.right = static_cast<float *>(rightAddress);
+    output.frames = static_cast<uint32_t>(frames);
+    return parso_engine_render(fromHandle(handle), &output) == PARSO_STATUS_OK ? frames : -1;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativeRecordSetActive(
+    JNIEnv *, jclass, jlong handle, jboolean active
+) {
+    parso_engine_t *engine = fromHandle(handle);
+    return engine && parso_engine_record_set_active(engine, active == JNI_TRUE ? 1u : 0u) ==
+            PARSO_STATUS_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_com_parsoaudio_ParsoNative_nativeRecordDrain(
+    JNIEnv *env, jclass, jlong handle, jobject leftBuffer, jobject rightBuffer, jint maxFrames
+) {
+    if (!fromHandle(handle) || !env || !leftBuffer || !rightBuffer || maxFrames <= 0) return -1;
+    void *leftAddress = env->GetDirectBufferAddress(leftBuffer);
+    void *rightAddress = env->GetDirectBufferAddress(rightBuffer);
+    const jlong leftCapacity = env->GetDirectBufferCapacity(leftBuffer);
+    const jlong rightCapacity = env->GetDirectBufferCapacity(rightBuffer);
+    const jlong requiredBytes = static_cast<jlong>(maxFrames) * static_cast<jlong>(sizeof(float));
+    if (!leftAddress || !rightAddress || leftCapacity < requiredBytes ||
+        rightCapacity < requiredBytes) return -1;
+    uint32_t drained = 0;
+    if (parso_engine_record_drain(fromHandle(handle), static_cast<float *>(leftAddress),
+                                  static_cast<float *>(rightAddress),
+                                  static_cast<uint32_t>(maxFrames), &drained) != PARSO_STATUS_OK) {
+        return -1;
+    }
+    return static_cast<jint>(drained);
+}
+
+JNIEXPORT jlong JNICALL Java_com_parsoaudio_ParsoNative_nativeRecordDroppedFrames(
+    JNIEnv *, jclass, jlong handle
+) {
+    uint64_t dropped = 0;
+    return fromHandle(handle) && parso_engine_record_dropped_frames(
+        fromHandle(handle), &dropped) == PARSO_STATUS_OK
+        ? static_cast<jlong>(dropped) : static_cast<jlong>(-1);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_parsoaudio_ParsoNative_nativeRecordReset(
+    JNIEnv *, jclass, jlong handle
+) {
+    return fromHandle(handle) && parso_engine_record_reset(fromHandle(handle)) == PARSO_STATUS_OK
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+
 } // extern "C"
