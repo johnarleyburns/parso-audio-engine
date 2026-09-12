@@ -197,7 +197,10 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     endif()
     set_target_properties(Cflac PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-    add_library(CflacBridge STATIC Sources/CflacBridge/src/parso_flac.c)
+    add_library(CflacBridge STATIC
+        Sources/CflacBridge/src/parso_flac_decode.c
+        Sources/CflacBridge/src/parso_flac_encode.c
+        Sources/CflacBridge/src/parso_flac_range.c)
     target_include_directories(CflacBridge PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CflacBridge/include>
         $<INSTALL_INTERFACE:include>
