@@ -35,8 +35,15 @@ if(NOT build_status EQUAL 0)
     message(FATAL_ERROR "installed consumer build failed: ${build_status}")
 endif()
 
-set(consumer_executable "${consumer_build_dir}/installed_c_consumer")
-set(cpp_consumer_executable "${consumer_build_dir}/installed_cpp_consumer")
+if(WIN32)
+    # Visual Studio generators place executables beneath the configuration
+    # directory, unlike the single-config Unix generators.
+    set(consumer_output_dir "${consumer_build_dir}/Release")
+else()
+    set(consumer_output_dir "${consumer_build_dir}")
+endif()
+set(consumer_executable "${consumer_output_dir}/installed_c_consumer")
+set(cpp_consumer_executable "${consumer_output_dir}/installed_cpp_consumer")
 if(WIN32)
     set(consumer_executable "${consumer_executable}.exe")
     set(cpp_consumer_executable "${cpp_consumer_executable}.exe")
