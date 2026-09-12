@@ -178,9 +178,10 @@ reviewed with [`scripts/run-linux-route-restart-acceptance.py`](scripts/run-linu
 while physical hot-unplug/latency and human listening still require named Linux hardware.
 
 This currently exercises the shared C++ headless render core, including an allocator-instrumented variable-block RT smoke test, and fixture-gated native codec bridges. CI builds and tests these native CMake
-targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix also
-builds the JNI shared library for `arm64-v8a` and `x86_64` and checks its exported symbols; Android
-Gradle/AAR and emulator gates are also covered locally, while the physical device gate remains separate.
+targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix
+cross-builds the public library for `arm64-v8a` and `x86_64`; a separate Gradle/AAR job builds the Oboe-backed JNI library, validates every
+shipped ELF's 16 KiB alignment and JNI exports, builds an external Maven consumer, and runs producer/consumer instrumentation plus a
+launcher smoke on an x86_64 emulator. The physical-device route, latency, capture-quality, and human-listening gates remain separate.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated
 C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows-targeted assembly, while
 the native Windows job builds and runs the C# consumer against the MSVC-built DLL. This does not claim

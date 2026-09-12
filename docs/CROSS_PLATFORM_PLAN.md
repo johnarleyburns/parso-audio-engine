@@ -310,9 +310,13 @@ Gate: documented Python APIs, installed-wheel unit/integration tests, runnable e
 Android hardware validation may be performed later by a contributor or device lab. Until then, label Android device performance/routing unverified and the SDK preview as appropriate; do not block the Linux SDK release on unavailable Android hardware or claim that emulator/Linux results substitute for it.
 
 The CI workflow now runs a pinned Android NDK 27.2.12479018 / CMake 3.22.1 matrix for
-`arm64-v8a` and `x86_64`, builds `libparso_android.so`, and checks the JNI export set. This
-establishes repeatable native ABI evidence only; it does not satisfy the Kotlin/Gradle, AAR,
-emulator, or real-device gates.
+`arm64-v8a` and `x86_64`, cross-builds the public `libparso.so`, and checks its ABI and 16 KiB
+ELF alignment. The Gradle/AAR job separately enables the Oboe-backed JNI target, checks all eight
+shipped native libraries (`libc++_shared.so`, `liboboe.so`, `libparso.so`, and
+`libparso_android.so` for both ABIs), validates the complete JNI export set and microphone
+permission, builds the external Maven consumer, and runs producer/consumer instrumentation plus
+a launcher smoke on an x86_64 API 35 emulator. Physical-device playback/capture, route-change,
+latency, and human-listening gates remain explicitly separate.
 
 ## Documentation, examples, and test deliverables
 

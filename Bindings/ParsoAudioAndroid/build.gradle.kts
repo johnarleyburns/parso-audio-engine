@@ -48,6 +48,7 @@ android {
                 arguments += listOf(
                     "-DPARSO_BUILD_TESTS=OFF",
                     "-DPARSO_BUILD_SHARED_API=ON",
+                    "-DPARSO_BUILD_ANDROID_DEVICE=ON",
                     "-DPARSO_BUILD_CODEC_BRIDGES=ON",
                     "-DPARSO_BUILD_CODEC_FIXTURE_TESTS=OFF",
                     "-DCMAKE_BUILD_TYPE=Release",

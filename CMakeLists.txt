@@ -12,6 +12,7 @@ option(PARSO_BUILD_CODEC_BRIDGES "Build the vendored FLAC/Vorbis/Opus bridge tar
 option(PARSO_BUILD_CODEC_FIXTURE_TESTS "Build native codec fixture smoke tests" ON)
 option(PARSO_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(PARSO_BUILD_LINUX_PIPEWIRE_HOST "Build the Linux PipeWire host adapter" ON)
+option(PARSO_BUILD_ANDROID_DEVICE "Build the Oboe-backed Android JNI/device target" OFF)
 
 set(PARSO_NATIVE_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/Tests/Fixtures/audio" CACHE PATH
     "Directory containing downloaded native codec fixtures")
@@ -403,26 +404,28 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
     # with 16 KiB pages require every shipped shared object to opt into the
     # larger alignment explicitly; keep this on both public Android libraries.
     target_link_options(ParsoAPI PRIVATE "-Wl,-z,max-page-size=16384")
-    find_path(PARSO_ANDROID_JNI_INCLUDE jni.h
-        PATHS "${CMAKE_SYSROOT}/usr/include"
-              "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
-        NO_DEFAULT_PATH
-    )
-    if(NOT PARSO_ANDROID_JNI_INCLUDE)
-        message(FATAL_ERROR "Android JNI headers were not found")
+    if(PARSO_BUILD_ANDROID_DEVICE)
+        find_path(PARSO_ANDROID_JNI_INCLUDE jni.h
+            PATHS "${CMAKE_SYSROOT}/usr/include"
+                  "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+            NO_DEFAULT_PATH
+        )
+        if(NOT PARSO_ANDROID_JNI_INCLUDE)
+            message(FATAL_ERROR "Android JNI headers were not found")
+        endif()
+        add_library(ParsoAndroidJNI SHARED
+            Sources/ParsoAndroidJNI/src/parso_android_jni.cpp
+            Sources/ParsoAndroidJNI/src/parso_android_audio.cpp
+        )
+        target_include_directories(ParsoAndroidJNI PRIVATE
+            "${PARSO_ANDROID_JNI_INCLUDE}"
+            Sources/CParsoAPI/include
+        )
+        find_package(oboe REQUIRED CONFIG)
+        target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI oboe::oboe)
+        target_link_options(ParsoAndroidJNI PRIVATE "-Wl,-z,max-page-size=16384")
+        set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
     endif()
-    add_library(ParsoAndroidJNI SHARED
-        Sources/ParsoAndroidJNI/src/parso_android_jni.cpp
-        Sources/ParsoAndroidJNI/src/parso_android_audio.cpp
-    )
-    target_include_directories(ParsoAndroidJNI PRIVATE
-        "${PARSO_ANDROID_JNI_INCLUDE}"
-        Sources/CParsoAPI/include
-    )
-    find_package(oboe REQUIRED CONFIG)
-    target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI oboe::oboe)
-    target_link_options(ParsoAndroidJNI PRIVATE "-Wl,-z,max-page-size=16384")
-    set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
 endif()
 
 if(WIN32)
