@@ -304,7 +304,7 @@ jobs:
           api-level: 35
           arch: x86_64
           profile: Pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          emulator-options: -no-window -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           script: |
             gradle --no-daemon --project-dir Bindings/ParsoAudioAndroid \
