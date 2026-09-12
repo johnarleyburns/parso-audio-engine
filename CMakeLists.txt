@@ -425,6 +425,28 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
     set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
 endif()
 
+if(WIN32)
+    add_executable(parso_windows_wasapi_host
+        Tools/WindowsWasapiHost/main.cpp
+    )
+    target_include_directories(parso_windows_wasapi_host PRIVATE
+        Sources/CParsoAPI/include
+    )
+    target_link_libraries(parso_windows_wasapi_host PRIVATE
+        $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
+        $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
+        ole32
+    )
+    if(NOT CMAKE_CROSSCOMPILING)
+        add_test(NAME windows_wasapi_host
+            COMMAND parso_windows_wasapi_host 1
+        )
+        set_tests_properties(windows_wasapi_host PROPERTIES
+            LABELS "native;windows;wasapi;device;consumer"
+        )
+    endif()
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PARSO_BUILD_LINUX_PIPEWIRE_HOST)
     find_package(Threads REQUIRED)
     add_executable(parso_linux_pipewire_host

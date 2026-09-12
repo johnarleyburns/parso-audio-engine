@@ -201,6 +201,12 @@ var encoded = CodecServices.Encode(samples, 48_000, 2, AudioCodec.OggVorbis);
 var decoded = CodecServices.Decode(encoded, AudioCodec.OggVorbis);
 ```
 
+The Windows C/C++ preview also includes `parso_windows_wasapi_host`, an event-driven shared-mode
+WASAPI render host. It negotiates the default endpoint format, feeds the common native render
+graph, and converts the stereo float output to the endpoint's 16-bit or 32-bit float format.
+Linux MinGW validates its PE build and linkage; default-device capture, route recovery, and
+native Windows audio execution remain Windows-runner gates.
+
 The CP-PY preview in `bindings/python` provides synchronous codec, SRC, loudness, summary/key/
 structure analysis, headless DJ controls, and record-tap services through standard-library
 `ctypes`; see [`docs/python.md`](docs/python.md) for native-library discovery, ownership, and

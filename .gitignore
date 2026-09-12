@@ -9,6 +9,7 @@ build-linux-sanitize/
 build-linux-static/
 build-linux/
 build-windows-cross/
+build-windows-mingw/
 build-android-*/
 Bindings/ParsoAudioAndroid/.cxx/
 Bindings/ParsoAudioAndroid/.gradle/
