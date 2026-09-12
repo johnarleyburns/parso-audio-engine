@@ -164,7 +164,7 @@ let package = Package(
             name: "CvorbisBridge",
             // `Cvorbis` itself resolves "ogg/ogg.h" only via a private
             // headerSearchPath into `Cogg/include`, which SwiftPM does not
-            // propagate to dependents — so `parso_vorbis.c`'s "ogg/ogg.h"
+            // propagate to dependents — so the Vorbis bridge sources' "ogg/ogg.h"
             // include only resolves by accident of Xcode's automatic header
             // maps. A plain `swift build`/`swift test` of this target (in
             // this package, or from a sibling package depending on this one

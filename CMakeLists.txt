@@ -241,7 +241,9 @@ if(PARSO_BUILD_CODEC_BRIDGES)
     endif()
     set_target_properties(Cvorbis PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-    add_library(CvorbisBridge STATIC Sources/CvorbisBridge/src/parso_vorbis.c)
+    add_library(CvorbisBridge STATIC
+        Sources/CvorbisBridge/src/parso_vorbis_decode.c
+        Sources/CvorbisBridge/src/parso_vorbis_encode.c)
     target_include_directories(CvorbisBridge
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CvorbisBridge/include>
