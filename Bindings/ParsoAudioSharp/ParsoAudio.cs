@@ -1296,6 +1296,31 @@ internal static unsafe partial class NativeMethods
         internal fixed float XfadeAssign[4];
         internal fixed float Fader[4];
         internal fixed float Trim[4];
+        internal float MicLevel;
+        internal fixed float EqLow[4];
+        internal fixed float EqMid[4];
+        internal fixed float EqHigh[4];
+        internal fixed float ColorAmount[4];
+        internal fixed float ColorKind[4];
+        internal fixed float ColorParam[4];
+        internal float BeatfxKind;
+        internal float BeatfxBeats;
+        internal float BeatfxDepth;
+        internal float BeatfxAssign;
+        internal float BeatfxOn;
+        internal float BeatfxXpad;
+        internal float BeatfxBand;
+        internal float MasterReverbSend;
+        internal float MasterReverbSize;
+        internal float MasterReverbDecay;
+        internal float MasterReverbDamp;
+        internal float MasterReverbMode;
+        internal float MasterEqLow;
+        internal float MasterEqMid;
+        internal float MasterEqHigh;
+        internal fixed float DeckTimeRatio[4];
+        internal fixed float DeckPitch[4];
+        internal fixed float DeckKeylock[4];
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1375,13 +1400,24 @@ internal static unsafe partial class NativeMethods
             AbiVersion = AbiVersion,
             MasterLevel = 0.8f,
             LimiterCeilingDb = -0.3f,
-            LimiterEnabled = 1.0f
+            LimiterEnabled = 1.0f,
+            BeatfxBeats = 0.5f,
+            BeatfxDepth = 0.5f,
+            BeatfxXpad = -1.0f,
+            MasterReverbSize = 0.6f,
+            MasterReverbDecay = 0.6f,
+            MasterReverbDamp = 0.5f,
+            MasterEqLow = 0.0f,
+            MasterEqMid = 0.0f,
+            MasterEqHigh = 0.0f
         };
         for (var index = 0; index < 4; index++)
         {
             control.XfadeAssign[index] = 2.0f;
             control.Fader[index] = 1.0f;
             control.Trim[index] = 0.5f;
+            control.ColorParam[index] = 0.5f;
+            control.DeckTimeRatio[index] = 1.0f;
         }
         return control;
     }
