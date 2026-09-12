@@ -318,10 +318,17 @@ jobs:
             adb shell am force-stop com.parsoaudio.consumer
             adb shell am start -W -n com.parsoaudio.consumer/.MainActivity | tee launcher-start.txt
             grep -F 'Status: ok' launcher-start.txt
-            sleep 2
             adb shell dumpsys activity activities | grep -F 'com.parsoaudio.consumer/.MainActivity'
-            adb shell uiautomator dump /sdcard/parso-window.xml >/dev/null
-            adb exec-out cat /sdcard/parso-window.xml | grep -F 'encoded='
+            found=0
+            for attempt in $(seq 1 10); do
+              if adb shell uiautomator dump /sdcard/parso-window.xml >/dev/null 2>&1 && \
+                 adb exec-out cat /sdcard/parso-window.xml | grep -F 'encoded='; then
+                found=1
+                break
+              fi
+              sleep 1
+            done
+            test "$found" -eq 1
 
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
