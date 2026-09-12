@@ -426,6 +426,7 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
         endif()
         add_library(ParsoAndroidJNI SHARED
             Sources/ParsoAndroidJNI/src/parso_android_jni.cpp
+            Sources/ParsoAndroidJNI/src/parso_android_jni_offline.cpp
             Sources/ParsoAndroidJNI/src/parso_android_audio.cpp
         )
         target_include_directories(ParsoAndroidJNI PRIVATE
