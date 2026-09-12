@@ -63,64 +63,12 @@ struct Root: Sendable {
 
 public actor SparseCacheStore {
 
-    // MARK: - Metadata
-
-    public struct Meta: Codable, Sendable, Equatable {
-        public var totalBytes: Int64?
-        public var cachedBytes: Int64
-        public var complete: Bool
-        public var lastAccessedAt: Date
-        public var createdAt: Date
-        public var rangeMap: ByteRangeMap
-        /// Free-form entry tag. `nil` decodes as `"audio"` for legacy JSON.
-        public var kind: String?
-        /// `nil`/`false` decodes as an evictable (streaming) entry.
-        public var durable: Bool?
-        /// Byte size of each named derived artifact sitting beside the blob.
-        public var derivedBytes: [String: Int64]?
-
-        public var effectiveKind: String { kind ?? "audio" }
-        public var isDurable: Bool { durable ?? false }
-        public var derivedTotal: Int64 { (derivedBytes ?? [:]).values.reduce(0, +) }
-
-        public init(totalBytes: Int64?, cachedBytes: Int64, complete: Bool,
-                    lastAccessedAt: Date, createdAt: Date, rangeMap: ByteRangeMap,
-                    kind: String? = nil, durable: Bool? = nil,
-                    derivedBytes: [String: Int64]? = nil) {
-            self.totalBytes = totalBytes
-            self.cachedBytes = cachedBytes
-            self.complete = complete
-            self.lastAccessedAt = lastAccessedAt
-            self.createdAt = createdAt
-            self.rangeMap = rangeMap
-            self.kind = kind
-            self.durable = durable
-            self.derivedBytes = derivedBytes
-        }
-
-        // Lenient decode: a partly-written or older-schema metadata file must not
-        // throw (a silent decode failure would drop a user's cached entry).
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            let now = Date()
-            totalBytes = try c.decodeIfPresent(Int64.self, forKey: .totalBytes) ?? nil
-            cachedBytes = try c.decodeIfPresent(Int64.self, forKey: .cachedBytes) ?? 0
-            complete = try c.decodeIfPresent(Bool.self, forKey: .complete) ?? false
-            lastAccessedAt = try c.decodeIfPresent(Date.self, forKey: .lastAccessedAt) ?? now
-            createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? now
-            rangeMap = try c.decodeIfPresent(ByteRangeMap.self, forKey: .rangeMap) ?? ByteRangeMap()
-            kind = try c.decodeIfPresent(String.self, forKey: .kind)
-            durable = try c.decodeIfPresent(Bool.self, forKey: .durable)
-            derivedBytes = try c.decodeIfPresent([String: Int64].self, forKey: .derivedBytes)
-        }
-    }
-
     // MARK: - Layout
 
-    private let evictable: Root
-    private let durable: Root
-    private var metas: [String: Meta] = [:]
-    private var limitBytes: Int64
+    fileprivate let evictable: Root
+    fileprivate let durable: Root
+    fileprivate var metas: [String: Meta] = [:]
+    fileprivate var limitBytes: Int64
     private var protectedKeys: Set<String> = []
 
     /// Nonisolated view of the same on-disk layout, for callers that need a
@@ -148,100 +96,8 @@ public actor SparseCacheStore {
         metas = loaded
     }
 
-    private func root(for key: String) -> Root {
+    fileprivate func root(for key: String) -> Root {
         (metas[key]?.isDurable ?? false) ? durable : evictable
-    }
-
-    // MARK: - Accounting
-
-    public func currentLimit() -> Int64 { limitBytes }
-
-    public func setLimit(_ bytes: Int64) async {
-        limitBytes = bytes
-        await evictToFit(protecting: nil)
-    }
-
-    /// Streaming-budget total: durable entries are excluded.
-    public func totalCachedBytes() -> Int64 {
-        metas.values
-            .filter { !$0.isDurable }
-            .reduce(0) { $0 + $1.cachedBytes + $1.derivedTotal }
-    }
-
-    public func totalStoredBytes() -> Int64 {
-        metas.values.reduce(0) { $0 + $1.cachedBytes + $1.derivedTotal }
-    }
-
-    public func contains(_ key: String) -> Bool { metas[key] != nil }
-
-    public func isComplete(_ key: String) -> Bool { completeFileURL(for: key) != nil }
-
-    public func isDurable(_ key: String) -> Bool { metas[key]?.isDurable ?? false }
-
-    public func meta(for key: String) -> Meta? { metas[key] }
-
-    /// Count of complete entries, optionally filtered to one kind.
-    public func completeEntryCount(kind: String? = nil) -> Int {
-        metas.values.filter { $0.complete && (kind == nil || $0.effectiveKind == kind) }.count
-    }
-
-    public func durableEntryCount() -> Int {
-        metas.values.filter { $0.isDurable }.count
-    }
-
-    public func rangeMap(for key: String) -> ByteRangeMap {
-        metas[key]?.rangeMap ?? ByteRangeMap()
-    }
-
-    public func totalBytes(for key: String) -> Int64? { metas[key]?.totalBytes }
-
-    public func fileURL(for key: String) -> URL { root(for: key).blobURL(key) }
-
-    public func derivedURL(for key: String, name: String) -> URL {
-        root(for: key).derivedURL(key, name)
-    }
-
-    public func hasDerived(for key: String, name: String) -> Bool {
-        FileManager.default.fileExists(atPath: derivedURL(for: key, name: name).path)
-    }
-
-    /// A real on-disk URL only when metadata and blob agree on a complete file.
-    /// Repairs metadata that trusted a response length rather than the finished
-    /// file's actual size; clears metadata whose blob was purged/truncated.
-    public func completeFileURL(for key: String) -> URL? {
-        guard let meta = metas[key], meta.complete else { return nil }
-        let url = fileURL(for: key)
-        guard let size = Self.fileSize(url), size > 0 else {
-            discardCachedBytes(for: key)
-            return nil
-        }
-        if meta.totalBytes != size || meta.cachedBytes != size || !meta.rangeMap.covers(total: size) {
-            var repaired = meta
-            var map = ByteRangeMap()
-            map.insert(0..<size)
-            repaired.totalBytes = size
-            repaired.cachedBytes = size
-            repaired.rangeMap = map
-            repaired.complete = true
-            repaired.lastAccessedAt = Date()
-            metas[key] = repaired
-            persistMeta(key)
-        }
-        touch(key)
-        return url
-    }
-
-    /// Contiguous cached bytes from `offset` that a readable file actually backs.
-    public func cachedContiguousBytes(for key: String, from offset: Int64) -> Int64 {
-        guard let meta = metas[key] else { return 0 }
-        let contiguous = meta.rangeMap.contiguousBytes(from: offset)
-        guard contiguous > 0 else { return 0 }
-        guard let size = Self.fileSize(fileURL(for: key)), size >= offset + contiguous else {
-            discardCachedBytes(for: key)
-            return 0
-        }
-        touch(key)
-        return contiguous
     }
 
     // MARK: - Mutation (driven by the resource loader)
@@ -415,7 +271,7 @@ public actor SparseCacheStore {
 
     // MARK: - Eviction
 
-    private func evictToFit(protecting extraKey: String?) async {
+    fileprivate func evictToFit(protecting extraKey: String?) async {
         guard limitBytes > 0 else { return }
         var protected = protectedKeys
         if let extraKey { protected.insert(extraKey) }
@@ -451,7 +307,7 @@ public actor SparseCacheStore {
         metas.removeValue(forKey: key)
     }
 
-    private func discardCachedBytes(for key: String) {
+    fileprivate func discardCachedBytes(for key: String) {
         let root = root(for: key)
         try? FileManager.default.removeItem(at: root.blobURL(key))
         guard var meta = metas[key] else { return }
@@ -480,11 +336,11 @@ public actor SparseCacheStore {
                     lastAccessedAt: now, createdAt: now, rangeMap: ByteRangeMap())
     }
 
-    private static func fileSize(_ url: URL) -> Int64? {
+    fileprivate static func fileSize(_ url: URL) -> Int64? {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
     }
 
-    private func persistMeta(_ key: String) {
+    fileprivate func persistMeta(_ key: String) {
         guard let m = metas[key] else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -504,64 +360,5 @@ public actor SparseCacheStore {
             }
         }
         return result
-    }
-}
-
-/// A synchronous, actor-free view of a `SparseCacheStore`'s on-disk layout.
-///
-/// Some call sites need to answer "is the complete blob for this key already on
-/// disk?" without `await` — Tonearm's watchOS `PhoneWatchDownloadAdapter` and the
-/// DJ `PlaylistCrateImporter` both decide file-vs-stream synchronously while
-/// building a play request. This type reads the persisted metadata + blob files
-/// directly; it can lag the owning actor by one `persistMeta`, which is
-/// acceptable for those read-only decisions.
-public struct SparseCacheLayout: Sendable {
-    private let evictable: Root
-    private let durable: Root
-
-    public init(evictableRoot: URL, durableRoot: URL? = nil) {
-        evictable = Root(evictableRoot)
-        durable = Root(durableRoot ?? evictableRoot)
-    }
-
-    /// The evictable-tier blob directory. For the uncommon case of an app that
-    /// writes a blob to disk itself and then registers it with the store
-    /// (Voxglass's artwork tier): write into here, then call `registerComplete`.
-    public var evictableBlobsDirectory: URL { evictable.blobDir }
-
-    /// Blob URL for `key`, preferring the durable root when a blob is present
-    /// there, else the evictable root (even if nothing exists yet).
-    public func blobURL(for key: String) -> URL {
-        let durableBlob = durable.blobURL(key)
-        return FileManager.default.fileExists(atPath: durableBlob.path)
-            ? durableBlob : evictable.blobURL(key)
-    }
-
-    /// Metadata file URL for `key`, with the same durable-then-evictable
-    /// preference as `blobURL(for:)`.
-    public func metaURL(for key: String) -> URL {
-        let durableMeta = durable.metaURL(key)
-        return FileManager.default.fileExists(atPath: durableMeta.path)
-            ? durableMeta : evictable.metaURL(key)
-    }
-
-    /// Named derived-artifact URL for `key` (e.g. Tonearm's Opus→CAF sibling).
-    public func derivedURL(for key: String, name: String) -> URL {
-        let durableDerived = durable.derivedURL(key, name)
-        return FileManager.default.fileExists(atPath: durableDerived.path)
-            ? durableDerived : evictable.derivedURL(key, name)
-    }
-
-    /// True when a persisted metadata file marks `key` complete and a non-empty
-    /// blob backing it is on disk (covering the recorded total when known).
-    public func completeBlobExists(for key: String) -> Bool {
-        guard let data = try? Data(contentsOf: metaURL(for: key)),
-              let meta = try? JSONDecoder().decode(SparseCacheStore.Meta.self, from: data),
-              meta.complete else { return false }
-        guard let size = (try? FileManager.default
-            .attributesOfItem(atPath: blobURL(for: key).path)[.size] as? NSNumber)?.int64Value,
-              size > 0 else { return false }
-        if let total = meta.totalBytes, total > 0 { return size >= total }
-        return true
     }
 }
