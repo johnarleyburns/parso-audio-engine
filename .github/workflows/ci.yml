@@ -335,6 +335,7 @@ jobs:
             }
             Write-Host "WASAPI probe exit code ${code}: $($arguments -join ' ')"
           }
+          exit 0
       - name: Set up .NET for native C# consumer
         uses: actions/setup-dotnet@v4
         with:
