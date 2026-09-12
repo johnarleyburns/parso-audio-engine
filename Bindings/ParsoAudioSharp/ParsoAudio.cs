@@ -1280,6 +1280,7 @@ internal static unsafe partial class NativeMethods
         internal uint MaxFrames;
         internal uint DeckCount;
         internal uint Reserved;
+        internal uint IsolatorProfile;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1362,7 +1363,8 @@ internal static unsafe partial class NativeMethods
         AbiVersion = AbiVersion,
         SampleRateHz = sampleRateHz,
         MaxFrames = maxFrames,
-        DeckCount = deckCount
+        DeckCount = deckCount,
+        IsolatorProfile = 0
     };
 
     internal static Control DefaultControl()
