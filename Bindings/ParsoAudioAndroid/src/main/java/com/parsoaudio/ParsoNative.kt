@@ -62,4 +62,16 @@ object ParsoNative {
     ): Int
     @JvmStatic external fun nativeRecordDroppedFrames(handle: Long): Long
     @JvmStatic external fun nativeRecordReset(handle: Long): Boolean
+    @JvmStatic external fun nativeDeviceCreate(
+        engineHandle: Long, sampleRateHz: Int, maxFrames: Int, captureFrames: Int
+    ): Long
+    @JvmStatic external fun nativeDeviceDestroy(handle: Long)
+    @JvmStatic external fun nativeDeviceStart(handle: Long): Boolean
+    @JvmStatic external fun nativeDeviceStop(handle: Long): Boolean
+    @JvmStatic external fun nativeDeviceState(handle: Long): Int
+    @JvmStatic external fun nativeDeviceReadCapture(
+        handle: Long, output: java.nio.ByteBuffer, maxFrames: Int
+    ): Int
+    @JvmStatic external fun nativeDeviceAvailableCapture(handle: Long): Int
+    @JvmStatic external fun nativeDeviceDroppedCapture(handle: Long): Long
 }

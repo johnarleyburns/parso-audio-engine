@@ -19,8 +19,10 @@ polling. `ParsoAnalysis`
 provides synchronous off-audio-thread summary, key, and structure calls over borrowed
 direct native-order float buffers. `ParsoRecorder` copies drained stereo blocks on the control side
 and encodes WAV, FLAC, or AAC through the shared native codec service; MP3 and Ogg recording remain
-explicitly unavailable. The module is a packaging seam: device playback,
-capture, route changes, Vorbis runtime fixture parity, emulator execution, and JVM lifetime instrumentation remain separate acceptance gates.
+explicitly unavailable. `ParsoAudioDevice` adds an Oboe low-latency output callback and
+bounded mono capture ring; `ParsoAudioRoute` owns API 26+ audio focus and reopens the device
+on route changes. Emulator lifecycle/callback coverage is enabled; physical microphone
+permissions, route recovery, latency, and listening acceptance remain device gates.
 
 To stage a local Maven artifact for an application consumer:
 

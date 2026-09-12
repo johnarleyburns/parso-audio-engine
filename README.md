@@ -78,7 +78,7 @@ targets: [
 The cross-platform work starts with the existing C/C++ real-time targets and a versioned, C-clean
 facade. Linux provides a C11/C++17 SDK built with CMake, a host-callback render example, and an
 optional PipeWire device adapter. Android packages the same native library in an AAR with a small JNI
-bridge; the Oboe device adapter remains a separate device-completion slice. Control and offline work move into shared native services gradually;
+bridge and an Oboe device adapter with bounded capture, focus, and route lifecycle seams. Control and offline work move into shared native services gradually;
 Swift remains a compatibility API during that migration. No Swift runtime or Apple framework will be
 required by the native artifacts.
 
@@ -91,8 +91,10 @@ integration tests, installed-package consumer builds, and Linux human-listening 
 The Android source seam includes a closeable `ParsoEngine` wrapper around direct native-order
 `ByteBuffer` planes and is packaged by `Bindings/ParsoAudioAndroid` into a release AAR for
 arm64-v8a and x86_64. It requires serialized ownership and callback shutdown before `close`;
-the AAR, external consumer, and emulator runtime gates pass locally; physical device output,
-capture, and route handling remain separate acceptance gates.
+`ParsoAudioDevice` uses Oboe with preallocated render buffers and a bounded capture ring, while
+`ParsoAudioRoute` owns Android audio focus and route-change reopen handling. AAR, external
+consumer, and emulator runtime gates pass locally; physical output, capture quality, latency,
+and human-listening acceptance remain hardware gates.
 
 The native CP1 smoke build is available through CMake:
 

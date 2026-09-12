@@ -124,6 +124,9 @@ class ParsoEngine private constructor(
         }
     }
 
+    /** Native handle for [ParsoAudioDevice]; stop the device before closing this engine. */
+    internal fun nativeHandleForDevice(): Long = requireOpen()
+
     /**
      * Install caller-owned direct float planes for a deck. The wrapper retains
      * the ByteBuffer references until replacement or [close].

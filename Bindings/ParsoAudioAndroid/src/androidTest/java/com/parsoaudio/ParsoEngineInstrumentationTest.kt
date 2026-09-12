@@ -94,4 +94,27 @@ class ParsoEngineInstrumentationTest {
         assertEquals('F'.code.toByte(), wav[2])
         assertEquals('F'.code.toByte(), wav[3])
     }
+
+    @Test
+    fun nativeOboeDeviceStartsAndStops() {
+        ParsoEngine(maxFrames = 256).use { engine ->
+            ParsoAudioDevice(
+                engine = engine,
+                maxFrames = 256,
+                captureFrames = 48_000,
+            ).use { device ->
+                assertTrue(device.start())
+                assertTrue(
+                    device.state() == AudioDeviceState.RUNNING ||
+                        device.state() == AudioDeviceState.RUNNING_WITHOUT_INPUT,
+                )
+                Thread.sleep(100)
+                val capture = ByteBuffer.allocateDirect(256 * Float.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                assertTrue(device.readCapture(capture, 256) >= 0)
+                assertTrue(device.stop())
+                assertEquals(AudioDeviceState.STOPPED, device.state())
+            }
+        }
+    }
 }

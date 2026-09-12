@@ -8,6 +8,7 @@ plugins {
 }
 
 dependencies {
+    implementation("com.google.oboe:oboe:1.10.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
@@ -24,6 +25,10 @@ android {
     namespace = "com.parsoaudio"
     compileSdk = 35
     ndkVersion = parsoNdkVersion
+
+    buildFeatures {
+        prefab = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -46,6 +51,7 @@ android {
                     "-DPARSO_BUILD_CODEC_BRIDGES=ON",
                     "-DPARSO_BUILD_CODEC_FIXTURE_TESTS=OFF",
                     "-DCMAKE_BUILD_TYPE=Release",
+                    "-DANDROID_STL=c++_shared",
                 )
                 cppFlags += listOf("-std=c++17")
                 targets += listOf("ParsoAPI", "ParsoAndroidJNI")

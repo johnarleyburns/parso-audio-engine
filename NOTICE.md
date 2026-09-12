@@ -16,6 +16,7 @@ retains its own license; none use a prohibited copyleft license.
 | Signalsmith Stretch | MIT | https://github.com/Signalsmith-Audio/signalsmith-stretch | Time-stretch / pitch-shift |
 | Signalsmith Linear | MIT | https://github.com/Signalsmith-Audio/linear | Stretch FFT and DSP support |
 | Freeverb (reverb constants) | Public Domain | Jezar at Dreampoint | Reverb tuning reference |
+| Oboe 1.10.0 | Apache-2.0 | https://github.com/google/oboe | Android low-latency playback/capture |
 
 Apple frameworks used under the Apple SDK license (linked, not redistributed):
 AVFoundation, AudioToolbox, Accelerate.

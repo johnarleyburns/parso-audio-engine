@@ -413,12 +413,14 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
     endif()
     add_library(ParsoAndroidJNI SHARED
         Sources/ParsoAndroidJNI/src/parso_android_jni.cpp
+        Sources/ParsoAndroidJNI/src/parso_android_audio.cpp
     )
     target_include_directories(ParsoAndroidJNI PRIVATE
         "${PARSO_ANDROID_JNI_INCLUDE}"
         Sources/CParsoAPI/include
     )
-    target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI)
+    find_package(oboe REQUIRED CONFIG)
+    target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI oboe::oboe)
     target_link_options(ParsoAndroidJNI PRIVATE "-Wl,-z,max-page-size=16384")
     set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
 endif()
