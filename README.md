@@ -217,6 +217,12 @@ structure analysis, headless DJ controls, and record-tap services through standa
 `ctypes`; see [`docs/python.md`](docs/python.md) for native-library discovery, ownership, and
 local verification. Device IO and fresh installed-wheel execution remain separate release gates.
 
+The JavaScript binding in `bindings/javascript` provides the same current C-ABI service surface
+for Electron through a stable Node-API addon and for React Native through a documented
+`NativeModules.ParsoAudio` host contract. See [`docs/javascript.md`](docs/javascript.md) for
+installation, typed-array ownership, and the rule that device callbacks stay native rather than
+crossing the JavaScript bridge.
+
 For the Linux native, Windows cross-build, and Android native toolchains on Debian/Ubuntu x86_64, run:
 
 ```bash

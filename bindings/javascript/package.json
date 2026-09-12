@@ -1,0 +1,33 @@
+{
+  "name": "@parsoaudio/javascript",
+  "version": "0.1.0",
+  "description": "Electron and React Native bindings for parso-audio-engine",
+  "license": "MIT",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./src/index.js",
+      "import": "./src/index.js",
+      "types": "./src/index.d.ts"
+    },
+    "./electron": {
+      "require": "./src/electron.js",
+      "import": "./src/electron.js",
+      "types": "./src/index.d.ts"
+    },
+    "./react-native": {
+      "require": "./src/react-native.js",
+      "import": "./src/react-native.js",
+      "types": "./src/index.d.ts"
+    }
+  },
+  "files": ["src", "native", "react-native", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "peerDependencies": { "react-native": ">=0.72" },
+  "peerDependenciesMeta": { "react-native": { "optional": true } },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:native": "node --test test/native.test.js"
+  }
+}

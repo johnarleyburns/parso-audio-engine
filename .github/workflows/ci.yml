@@ -119,6 +119,20 @@ jobs:
           PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
             /tmp/parso-python-venv/bin/python bindings/python/examples/render_acceptance.py \
             --output-dir /tmp/parso-python-acceptance --seconds 30
+      - name: Build and test Electron Node-API binding
+        run: |
+          node --version
+          cmake -S . -B build-js \
+            -DPARSO_BUILD_NODE_ADDON=ON \
+            -DPARSO_BUILD_TESTS=OFF \
+            -DPARSO_BUILD_CODEC_FIXTURE_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-js --target ParsoNodeAddon --parallel
+          PARSO_NODE_ADDON="$PWD/build-js/parso_node.node" \
+            node --test bindings/javascript/test/*.test.js
+          node --check bindings/javascript/src/index.js
+          node --check bindings/javascript/src/electron.js
+          node --check bindings/javascript/src/react-native.js
       - name: Install Windows GNU cross-compiler
         run: |
           sudo apt-get update

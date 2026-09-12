@@ -13,6 +13,7 @@ option(PARSO_BUILD_CODEC_FIXTURE_TESTS "Build native codec fixture smoke tests" 
 option(PARSO_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(PARSO_BUILD_LINUX_PIPEWIRE_HOST "Build the Linux PipeWire host adapter" ON)
 option(PARSO_BUILD_ANDROID_DEVICE "Build the Oboe-backed Android JNI/device target" OFF)
+option(PARSO_BUILD_NODE_ADDON "Build the stable Node-API addon for Electron" OFF)
 
 set(PARSO_NATIVE_FIXTURES_DIR "${CMAKE_SOURCE_DIR}/Tests/Fixtures/audio" CACHE PATH
     "Directory containing downloaded native codec fixtures")
@@ -459,6 +460,55 @@ if(ANDROID AND PARSO_BUILD_SHARED_API)
         target_link_libraries(ParsoAndroidJNI PRIVATE ParsoAPI oboe::oboe)
         target_link_options(ParsoAndroidJNI PRIVATE "-Wl,-z,max-page-size=16384")
         set_target_properties(ParsoAndroidJNI PROPERTIES OUTPUT_NAME parso_android)
+    endif()
+endif()
+
+if(PARSO_BUILD_NODE_ADDON)
+    execute_process(
+        COMMAND node -p "require('path').resolve(require('path').dirname(process.execPath), '..', 'include', 'node')"
+        OUTPUT_VARIABLE PARSO_NODE_RUNTIME_INCLUDE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE PARSO_NODE_RUNTIME_RESULT
+    )
+    if(NOT PARSO_NODE_RUNTIME_RESULT EQUAL 0)
+        message(FATAL_ERROR "PARSO_BUILD_NODE_ADDON requires a working Node.js executable")
+    endif()
+    find_path(PARSO_NODE_API_INCLUDE node_api.h
+        PATHS
+            "${PARSO_NODE_RUNTIME_INCLUDE}"
+            /usr/include/node
+            /usr/local/include/node
+        NO_DEFAULT_PATH
+    )
+    if(NOT PARSO_NODE_API_INCLUDE)
+        message(FATAL_ERROR "PARSO_BUILD_NODE_ADDON requires Node-API headers (node_api.h)")
+    endif()
+    add_library(ParsoNodeAddon MODULE
+        bindings/javascript/native/parso_node.cpp
+    )
+    target_include_directories(ParsoNodeAddon SYSTEM PRIVATE
+        "${PARSO_NODE_API_INCLUDE}"
+    )
+    target_include_directories(ParsoNodeAddon PRIVATE
+        Sources/CParsoAPI/include
+    )
+    target_compile_definitions(ParsoNodeAddon PRIVATE NAPI_VERSION=8)
+    target_link_libraries(ParsoNodeAddon PRIVATE ParsoAPI)
+    set_target_properties(ParsoNodeAddon PROPERTIES
+        OUTPUT_NAME "parso_node"
+        PREFIX ""
+        SUFFIX ".node"
+    )
+    if(APPLE)
+        set_target_properties(ParsoNodeAddon PROPERTIES
+            BUILD_RPATH "@loader_path"
+            INSTALL_RPATH "@loader_path"
+        )
+    elseif(UNIX)
+        set_target_properties(ParsoNodeAddon PROPERTIES
+            BUILD_RPATH "$ORIGIN"
+            INSTALL_RPATH "$ORIGIN"
+        )
     endif()
 endif()
 
