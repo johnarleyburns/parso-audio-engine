@@ -473,6 +473,7 @@ if(WIN32)
         $<$<BOOL:${PARSO_BUILD_SHARED_API}>:ParsoAPI>
         $<$<NOT:$<BOOL:${PARSO_BUILD_SHARED_API}>>:CParsoAPI>
         ole32
+        uuid
     )
     if(NOT CMAKE_CROSSCOMPILING)
         add_test(NAME windows_wasapi_host
