@@ -93,8 +93,9 @@ The Android source seam includes a closeable `ParsoEngine` wrapper around direct
 arm64-v8a and x86_64. It requires serialized ownership and callback shutdown before `close`;
 `ParsoAudioDevice` uses Oboe with preallocated render buffers and a bounded capture ring, while
 `ParsoAudioRoute` owns Android audio focus and route-change reopen handling. AAR, external
-consumer, and emulator runtime gates pass locally; physical output, capture quality, latency,
-and human-listening acceptance remain hardware gates.
+consumer, and static ABI/package gates pass locally and in CI; Android runtime execution is
+intentionally excluded from CI. Physical output, capture quality, latency, route behavior,
+and human-listening acceptance remain manual hardware gates.
 
 The native CP1 smoke build is available through CMake:
 
@@ -180,8 +181,10 @@ while physical hot-unplug/latency and human listening still require named Linux 
 This currently exercises the shared C++ headless render core, including an allocator-instrumented variable-block RT smoke test, and fixture-gated native codec bridges. CI builds and tests these native CMake
 targets on native macOS, Linux, and Windows runners; Windows uses the Visual Studio 2022 x64 toolchain. A pinned Android NDK matrix
 cross-builds the public library for `arm64-v8a` and `x86_64`; a separate Gradle/AAR job builds the Oboe-backed JNI library, validates every
-shipped ELF's 16 KiB alignment and JNI exports, builds an external Maven consumer, and runs producer/consumer instrumentation plus a
-launcher smoke on an x86_64 emulator. The physical-device route, latency, capture-quality, and human-listening gates remain separate.
+shipped ELF's 16 KiB alignment and JNI exports, compiles the producer/consumer instrumentation,
+and builds an external Maven consumer. Emulator/simulator and attached-device execution are
+intentionally excluded from CI; physical-device route, latency, capture-quality, and
+human-listening gates remain separate.
 The shared `parso` library is also emitted for managed interop. The CP-WIN preview adds a source-generated
 C# wrapper under `Bindings/ParsoAudioSharp`; Linux CI cross-compiles its Windows-targeted assembly, while
 the native Windows job builds and runs the C# consumer against the MSVC-built DLL. This does not claim

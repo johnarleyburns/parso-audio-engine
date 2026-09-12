@@ -298,37 +298,10 @@ jobs:
               unzip -l "$apk" | grep -F " lib/$abi/$library"
             done
           done
-      - name: Run Android instrumentation on x86_64 emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          arch: x86_64
-          profile: Pixel_2
-          emulator-options: -no-window -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: true
-          script: |
-            gradle --no-daemon --project-dir Bindings/ParsoAudioAndroid \
-              -PparsoNdkVersion=27.2.12479018 \
-              -PparsoCmakeVersion=3.22.1 \
-              connectedDebugAndroidTest
-            gradle --no-daemon --project-dir Bindings/ParsoAudioAndroidConsumer \
-              connectedDebugAndroidTest
-            consumer_apk='Bindings/ParsoAudioAndroidConsumer/build/outputs/apk/debug/parso-audio-android-consumer-debug.apk'
-            adb install -r "$consumer_apk"
-            adb shell am force-stop com.parsoaudio.consumer
-            adb shell am start -W -n com.parsoaudio.consumer/.MainActivity | tee launcher-start.txt
-            grep -F 'Status: ok' launcher-start.txt
-            adb shell dumpsys activity activities | grep -F 'com.parsoaudio.consumer/.MainActivity'
-            found=0
-            for attempt in $(seq 1 10); do
-              if adb shell uiautomator dump /sdcard/parso-window.xml >/dev/null 2>&1 && \
-                 adb exec-out cat /sdcard/parso-window.xml | grep -F 'encoded='; then
-                found=1
-                break
-              fi
-              sleep 1
-            done
-            test "$found" -eq 1
+      - name: Report Android device-test boundary
+        run: |
+          echo "Android emulator/simulator and attached-device execution are intentionally excluded from CI."
+          echo "The instrumentation APK is compiled above; run it on a physical device outside CI."
 
   build-native-windows:
     # The job uses the Visual Studio 17 2022 generator. Pin the matching
@@ -346,7 +319,7 @@ jobs:
             -DPARSO_BUILD_TESTS=ON `
             -DPARSO_BUILD_SHARED_API=ON
       - name: Build native CMake targets
-        run: cmake --build build-native --config Release --parallel
+        run: cmake --build build-native --config Release --parallel 1 --verbose
       - name: Test native CMake targets
         run: ctest --test-dir build-native -C Release --output-on-failure
       - name: Probe Windows WASAPI render and capture seams

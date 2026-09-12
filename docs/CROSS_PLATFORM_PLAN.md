@@ -6,7 +6,7 @@ Status: implementation authorized; CP1 Linux build/headless slice is verified. C
 
 Keep the existing Swift products and add Kotlin/Android, Linux C/C++, Windows C/C++, Windows C#, and approachable Python 3 APIs over one shared native engine. The Windows C and C++ APIs use the versioned C ABI and C++17 wrapper; the C# API uses generated P/Invoke over that C ABI rather than binding to C++ types. Python should make file IO, analysis, DSP, mixing, and recording easy to use from scripts and interactive sessions. First deliver PCM-driven DSP/rendering, then complete file IO, DJ control, analysis, and recording parity. Playback, streaming, and neural products require their own acceptance inventory; they must not be implicitly advertised as portable when only the DJ engine is ready.
 
-Proposed initial targets: Android API 26+, arm64-v8a devices and x86_64 emulators; Linux x86_64 and aarch64 with a documented glibc baseline; Windows x64 with MSVC and .NET. Preserve the Apple deployment targets in `Package.swift`. These are planning defaults, to be confirmed by the first toolchain/device spike. No Swift runtime should be needed on Android, Linux, or Windows native artifacts.
+Proposed initial targets: Android API 26+, arm64-v8a devices and x86_64 package-validation artifacts; Linux x86_64 and aarch64 with a documented glibc baseline; Windows x64 with MSVC and .NET. Preserve the Apple deployment targets in `Package.swift`. These are planning defaults, to be confirmed by the first toolchain/device spike. No Swift runtime should be needed on Android, Linux, or Windows native artifacts. Emulator/simulator execution is intentionally not part of CI; Android runtime acceptance is performed manually on physical hardware.
 
 Windows support is a separate binding and platform gate. Linux will produce the best-effort Windows
 cross-builds that can be reproduced locally, using CMake with an audited MinGW-w64 or LLVM/Clang
@@ -204,12 +204,13 @@ services, `ParsoEngine`'s bounded record tap, and the control-side `ParsoRecorde
 and AAC output through the shared codec service. These surfaces compile through the local Maven AAR
 and an external application consumer. The consumer now includes a runnable sample activity and an
 AndroidJUnit4 end-to-end scenario covering those services plus engine render/record drain;
-instrumentation execution and performance remain hosted emulator/device gates.
+instrumentation execution and performance remain manual physical-device gates; emulator/simulator
+execution is intentionally not part of CI.
 
 Gate: JVM API/lifetime tests, the external AAR consumer build, JNI instrumentation compilation, and
-16 KB page-size validation now pass locally and in CI. Instrumentation execution, emulator behavior,
-and real-device playback/capture/route-change/underrun tests remain. Emulator tests do not establish
-latency performance.
+16 KB page-size validation now pass locally and in CI. Instrumentation execution and real-device
+playback/capture/route-change/underrun tests remain manual hardware gates. No emulator or simulator
+is run in CI, and package validation does not establish latency performance.
 
 ### CP5 — Linux playback and native SDK packaging
 
@@ -299,7 +300,7 @@ Gate: documented Python APIs, installed-wheel unit/integration tests, runnable e
 
 ### CP7 — Cross-platform release gate
 
-- CI: existing Apple Swift tests plus native macOS CMake tests; Linux GCC/Clang native tests, sanitizers, and best-effort Windows cross-builds; native Windows MSVC/CMake/C/C++/C# tests; Python installed-wheel unit/integration/example tests across declared interpreter versions and architectures; Android NDK builds, Kotlin tests, emulator instrumentation, and a scheduled hardware run.
+- CI: existing Apple Swift tests plus native macOS CMake tests; Linux GCC/Clang native tests, sanitizers, and best-effort Windows cross-builds; native Windows MSVC/CMake/C/C# tests; Python installed-wheel unit/integration/example tests across declared interpreter versions and architectures; Android NDK/AAR/package gates and Kotlin compilation. No emulator or simulator is run in CI; Android hardware validation is manual.
 - Run matching serialized command scenarios through Swift, C, C++, C#, Kotlin, and Python, covering every matrix row. Use numeric audio tolerances and exact discrete-state assertions. Python release acceptance includes its own Linux human listening results, not only native results; C# Windows acceptance includes native DLL and platform-backend tests.
 - Instrument allocation and prohibited operations around engine DSP calls, including transitions and queue pressure. Keep measurement outside RT kernels where it requires system calls. Verify zero allocations after preparation.
 - The native CTest suite now includes an allocator-instrumented `pe_step`/`pe_render` consumer that warms the engine, exercises variable callback sizes, and rejects post-preparation C++ allocations.
@@ -314,9 +315,10 @@ The CI workflow now runs a pinned Android NDK 27.2.12479018 / CMake 3.22.1 matri
 ELF alignment. The Gradle/AAR job separately enables the Oboe-backed JNI target, checks all eight
 shipped native libraries (`libc++_shared.so`, `liboboe.so`, `libparso.so`, and
 `libparso_android.so` for both ABIs), validates the complete JNI export set and microphone
-permission, builds the external Maven consumer, and runs producer/consumer instrumentation plus
-a launcher smoke on an x86_64 API 35 emulator. Physical-device playback/capture, route-change,
-latency, and human-listening gates remain explicitly separate.
+permission, compiles the producer/consumer instrumentation, and builds the external Maven
+consumer. Emulator/simulator and attached-device execution are intentionally excluded from CI.
+Physical-device playback/capture, route-change, latency, and human-listening gates remain
+explicitly separate.
 
 ## Documentation, examples, and test deliverables
 
