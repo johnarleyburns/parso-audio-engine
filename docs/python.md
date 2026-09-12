@@ -57,6 +57,21 @@ each render block is drained, then `encode()` through the shared native WAV,
 FLAC, or AAC service. It never runs Python on the render callback, and it
 rejects unsupported MP3/Ogg recording selectors.
 
+## Optional NumPy interoperability
+
+The base package remains standard-library-only. Install the optional extra for
+analysis and notebook workflows:
+
+```bash
+python -m pip install 'parso-audio[numpy]'
+```
+
+`DecodedPcm.as_numpy()` exposes decoded interleaved PCM as a `(frames,
+channels)` `float32` array. The default is a read-only zero-copy view backed by
+the `DecodedPcm.samples` storage; `as_numpy(copy=True)` returns an independent,
+writable array. NumPy is a control/offline convenience and is never called by
+the native render callback.
+
 ## Local verification
 
 After building the native package with CMake:

@@ -111,6 +111,7 @@ jobs:
         run: |
           python3 -m venv /tmp/parso-python-venv
           /tmp/parso-python-venv/bin/python -m pip install --disable-pip-version-check "setuptools>=68"
+          /tmp/parso-python-venv/bin/python -m pip install --disable-pip-version-check "numpy>=1.24"
           /tmp/parso-python-venv/bin/python -m pip install --no-deps --no-build-isolation ./bindings/python
           PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
             /tmp/parso-python-venv/bin/python -m unittest discover \

@@ -35,3 +35,14 @@ python3 bindings/python/examples/render_acceptance.py \
 
 Device IO remains a platform milestone; analysis, DJ control, and recording are
 native services surfaced through this facade.
+
+For analysis and notebook workflows, install the optional NumPy extra:
+
+```bash
+python -m pip install 'parso-audio[numpy]'
+```
+
+`DecodedPcm.as_numpy()` returns a `(frames, channels)` float32 array. By default
+it is a read-only zero-copy view over the decoded PCM; use `copy=True` when a
+writable array or independent lifetime is required. NumPy is not needed by the
+core binding or by real-time rendering.

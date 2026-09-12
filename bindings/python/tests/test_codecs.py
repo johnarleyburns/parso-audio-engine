@@ -50,6 +50,29 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(decoded.frames, 0)
         self.assertEqual(len(decoded.samples), decoded.frames)
 
+    def test_decoded_pcm_numpy_view_is_optional_and_shaped(self) -> None:
+        samples = [
+            0.25 * math.sin(2.0 * math.pi * 440.0 * index / 48_000.0)
+            for index in range(4_800)
+        ]
+        decoded = self.audio.decode(
+            self.audio.encode(samples, 48_000, 1, AudioCodec.WAV), AudioCodec.WAV
+        )
+        try:
+            import numpy as np
+        except ImportError:
+            with self.assertRaisesRegex(ImportError, "optional 'numpy'"):
+                decoded.as_numpy()
+            return
+        view = decoded.as_numpy()
+        self.assertIsInstance(view, np.ndarray)
+        self.assertEqual(view.shape, (decoded.frames, decoded.channel_count))
+        self.assertEqual(view.dtype, np.dtype("float32"))
+        self.assertFalse(view.flags.writeable)
+        writable = decoded.as_numpy(copy=True)
+        self.assertTrue(writable.flags.writeable)
+        writable[0, 0] = 0.0
+
     def test_sample_rate_conversion(self) -> None:
         samples = [0.25 * math.sin(2.0 * math.pi * 440.0 * index / 48_000.0) for index in range(4_800)]
         converted = self.audio.convert_sample_rate(samples, 48_000, 24_000, 1)

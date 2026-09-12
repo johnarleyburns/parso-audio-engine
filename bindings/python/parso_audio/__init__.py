@@ -156,6 +156,32 @@ class DecodedPcm:
     channel_count: int
     sample_rate_hz: int
 
+    def as_numpy(self, *, copy: bool = False):
+        """Return PCM as a NumPy ``(frames, channels)`` array.
+
+        NumPy is an optional dependency. The default result is a read-only,
+        zero-copy view backed by ``samples``; pass ``copy=True`` when a
+        writable array or independent lifetime is required.
+        """
+
+        try:
+            import numpy as np
+        except ImportError as error:
+            raise ImportError(
+                "DecodedPcm.as_numpy() requires the optional 'numpy' dependency; "
+                "install parso-audio[numpy]"
+            ) from error
+        expected_samples = self.frames * self.channel_count
+        if len(self.samples) != expected_samples:
+            raise ValueError("decoded PCM metadata does not match its sample storage")
+        result = np.frombuffer(
+            self.samples, dtype=np.dtype("=f4"), count=expected_samples
+        ).reshape((self.frames, self.channel_count))
+        if copy:
+            return result.copy()
+        result.setflags(write=False)
+        return result
+
 
 @dataclass(frozen=True)
 class LoudnessResult:
