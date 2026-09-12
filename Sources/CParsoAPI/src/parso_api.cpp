@@ -1452,9 +1452,13 @@ PARSO_API parso_status_t parso_structure_measure(
             }
         }
         if (boundaries.size() == 1 && features.size() > 8) {
-            const uint32_t quarter = std::max<size_t>(1, features.size() / 4);
-            boundaries.push_back(quarter);
-            boundaries.push_back(std::min<size_t>(features.size() - 1, quarter * 2));
+            if (features.size() > std::numeric_limits<uint32_t>::max()) {
+                return fail(PARSO_STATUS_INVALID_SIZE, "structure feature count is too large");
+            }
+            const size_t quarter = std::max<size_t>(1, features.size() / 4);
+            boundaries.push_back(static_cast<uint32_t>(quarter));
+            const size_t midpoint = std::min(features.size() - 1, quarter * 2);
+            boundaries.push_back(static_cast<uint32_t>(midpoint));
         }
         std::sort(boundaries.begin(), boundaries.end());
         boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());

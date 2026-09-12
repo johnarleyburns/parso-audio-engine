@@ -76,7 +76,12 @@ static int read_file(const char *path, uint8_t **data, int *size)
 
     *data = NULL;
     *size = 0;
+#if defined(_WIN32)
+    if (fopen_s(&file, path, "rb") != 0)
+        file = NULL;
+#else
     file = fopen(path, "rb");
+#endif
     if (file == NULL || fseek(file, 0, SEEK_END) != 0) {
         if (file != NULL)
             fclose(file);
