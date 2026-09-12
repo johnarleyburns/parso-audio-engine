@@ -585,6 +585,25 @@ class CodecServices:
             ctypes.POINTER(_Bytes),
         ]
         library.parso_codec_write.restype = ctypes.c_int32
+        library.parso_wav_read.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64, ctypes.POINTER(_PcmBuffer)
+        ]
+        library.parso_wav_read.restype = ctypes.c_int32
+        library.parso_pcm_read.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64,
+            ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.POINTER(_PcmBuffer),
+        ]
+        library.parso_pcm_read.restype = ctypes.c_int32
+        library.parso_wav_write.argtypes = [
+            ctypes.POINTER(_PcmBuffer), ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.POINTER(_Bytes),
+        ]
+        library.parso_wav_write.restype = ctypes.c_int32
+        library.parso_pcm_write.argtypes = [
+            ctypes.POINTER(_PcmBuffer), ctypes.c_uint32, ctypes.POINTER(_Bytes)
+        ]
+        library.parso_pcm_write.restype = ctypes.c_int32
         library.parso_src_options_init.argtypes = [ctypes.POINTER(_SrcOptions)]
         library.parso_src_options_init.restype = ctypes.c_int32
         library.parso_src_convert.argtypes = [
@@ -735,6 +754,128 @@ class CodecServices:
             return DecodedPcm(samples, output.frames, output.channel_count, output.sample_rate_hz)
         finally:
             self._library.parso_pcm_buffer_release(ctypes.byref(output))
+
+    def read_wav(self, encoded: Union[bytes, bytearray, memoryview]) -> DecodedPcm:
+        """Read a RIFF/WAVE byte stream into managed float32 PCM."""
+
+        self._ensure_open()
+        data = bytes(encoded)
+        if not data:
+            raise ValueError("encoded data cannot be empty")
+        native_data = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+        output = _PcmBuffer()
+        self._call("PCM-buffer initialization", self._library.parso_pcm_buffer_init, output)
+        try:
+            status = self._library.parso_wav_read(
+                native_data, len(data), ctypes.byref(output)
+            )
+            self._raise_for_status(status, "WAV decoding")
+            return self._copy_decoded(output)
+        finally:
+            self._library.parso_pcm_buffer_release(ctypes.byref(output))
+
+    def read_pcm(
+        self,
+        encoded: Union[bytes, bytearray, memoryview],
+        sample_rate_hz: int,
+        channel_count: int,
+        bits_per_sample: int,
+    ) -> DecodedPcm:
+        """Read little-endian raw PCM into managed float32 PCM."""
+
+        self._ensure_open()
+        data = bytes(encoded)
+        if not data:
+            raise ValueError("encoded data cannot be empty")
+        if sample_rate_hz <= 0 or channel_count not in (1, 2):
+            raise ValueError("sample rate must be positive and channel count must be one or two")
+        if bits_per_sample not in (8, 16, 24, 32):
+            raise ValueError("bits_per_sample must be 8, 16, 24, or 32")
+        native_data = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+        output = _PcmBuffer()
+        self._call("PCM-buffer initialization", self._library.parso_pcm_buffer_init, output)
+        try:
+            status = self._library.parso_pcm_read(
+                native_data, len(data), sample_rate_hz, channel_count,
+                bits_per_sample, ctypes.byref(output),
+            )
+            self._raise_for_status(status, "raw PCM decoding")
+            return self._copy_decoded(output)
+        finally:
+            self._library.parso_pcm_buffer_release(ctypes.byref(output))
+
+    def write_wav(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        bits_per_sample: int = 16,
+        is_float: bool = False,
+    ) -> bytes:
+        """Write interleaved float32-compatible PCM as RIFF/WAVE bytes."""
+
+        return self._write_pcm_container(
+            samples, sample_rate_hz, channel_count, bits_per_sample,
+            "WAV encoding", self._library.parso_wav_write, int(is_float),
+        )
+
+    def write_pcm(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        bits_per_sample: int = 16,
+    ) -> bytes:
+        """Write interleaved float32-compatible PCM as little-endian raw PCM."""
+
+        return self._write_pcm_container(
+            samples, sample_rate_hz, channel_count, bits_per_sample,
+            "raw PCM encoding", self._library.parso_pcm_write,
+        )
+
+    def _write_pcm_container(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+        bits_per_sample: int,
+        operation: str,
+        function: object,
+        is_float: int = 0,
+    ) -> bytes:
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if bits_per_sample not in (8, 16, 24, 32):
+            raise ValueError("bits_per_sample must be 8, 16, 24, or 32")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        native_pcm = _PcmBuffer(
+            size=ctypes.sizeof(_PcmBuffer), abi_version=self._ABI_VERSION,
+            samples=ctypes.c_void_p(pcm.buffer_info()[0]),
+            frames=len(pcm) // channel_count,
+            channel_count=channel_count,
+            sample_rate_hz=sample_rate_hz,
+        )
+        output = _Bytes()
+        self._call("byte-buffer initialization", self._library.parso_bytes_init, output)
+        try:
+            if operation == "WAV encoding":
+                status = function(
+                    ctypes.byref(native_pcm), bits_per_sample, is_float,
+                    ctypes.byref(output),
+                )  # type: ignore[union-attr]
+            else:
+                status = function(
+                    ctypes.byref(native_pcm), bits_per_sample, ctypes.byref(output)
+                )  # type: ignore[union-attr]
+            self._raise_for_status(status, operation)
+            if output.size_bytes > sys.maxsize:
+                raise ParsoError(-1, operation, "output is too large for Python")
+            return ctypes.string_at(output.data, output.size_bytes)
+        finally:
+            self._library.parso_bytes_release(ctypes.byref(output))
 
     def convert_sample_rate(
         self,
@@ -1066,6 +1207,7 @@ class Engine:
         self._max_frames = max_frames
         self._deck_count = deck_count
         self._deck_buffers: dict[int, tuple[tuple[array, ...], object]] = {}
+        self._mic_buffer: Optional[tuple[tuple[array, ...], object]] = None
 
     def _configure_functions(self) -> None:
         library = self._library
@@ -1093,6 +1235,10 @@ class Engine:
             ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_PcmView)
         ]
         library.parso_engine_set_deck_buffer.restype = ctypes.c_int32
+        library.parso_engine_set_mic_buffer.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_PcmView)
+        ]
+        library.parso_engine_set_mic_buffer.restype = ctypes.c_int32
         library.parso_engine_post_command.argtypes = [
             ctypes.c_void_p, ctypes.POINTER(_Command)
         ]
@@ -1101,6 +1247,14 @@ class Engine:
             ctypes.c_void_p, ctypes.POINTER(_OutputView)
         ]
         library.parso_engine_render.restype = ctypes.c_int32
+        library.parso_engine_render_monitor.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_OutputView)
+        ]
+        library.parso_engine_render_monitor.restype = ctypes.c_int32
+        library.parso_engine_render_booth.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_OutputView)
+        ]
+        library.parso_engine_render_booth.restype = ctypes.c_int32
         library.parso_engine_get_stats.argtypes = [
             ctypes.c_void_p, ctypes.POINTER(_Stats)
         ]
@@ -1138,6 +1292,7 @@ class Engine:
             self._raise_for_status(status, "engine destruction")
             self._handle = ctypes.c_void_p()
             self._deck_buffers.clear()
+            self._mic_buffer = None
 
     @_engine_synchronized
     def __enter__(self) -> "Engine":
@@ -1297,6 +1452,39 @@ class Engine:
         self._deck_buffers[deck] = (channel_planes, planes)
 
     @_engine_synchronized
+    def set_mic_buffer(
+        self,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+    ) -> None:
+        """Install copied planar microphone PCM retained until replacement or close."""
+
+        self._ensure_open()
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        channel_planes = tuple(
+            array("f", pcm[index::channel_count]) for index in range(channel_count)
+        )
+        pointer_type = ctypes.POINTER(ctypes.c_float)
+        planes = (pointer_type * channel_count)()
+        for index, channel in enumerate(channel_planes):
+            planes[index] = ctypes.cast(channel.buffer_info()[0], pointer_type)
+        view = _PcmView(
+            size=ctypes.sizeof(_PcmView), abi_version=self._ABI_VERSION,
+            planes=planes, frames=len(pcm) // channel_count,
+            channel_count=channel_count, sample_rate_hz=sample_rate_hz,
+        )
+        status = self._library.parso_engine_set_mic_buffer(
+            self._handle, ctypes.byref(view)
+        )
+        self._raise_for_status(status, "setting microphone buffer")
+        self._mic_buffer = (channel_planes, planes)
+
+    @_engine_synchronized
     def post_command(
         self,
         command_type: Union[EngineCommand, int],
@@ -1429,6 +1617,25 @@ class Engine:
     def render(self, frames: int) -> tuple[array, array]:
         """Render a bounded stereo block into newly allocated managed arrays."""
 
+        return self._render_bus(frames, self._library.parso_engine_render, "engine render")
+
+    @_engine_synchronized
+    def render_monitor(self, frames: int) -> tuple[array, array]:
+        """Render the headphone/monitor bus for the most recent master block."""
+
+        return self._render_bus(
+            frames, self._library.parso_engine_render_monitor, "monitor render"
+        )
+
+    @_engine_synchronized
+    def render_booth(self, frames: int) -> tuple[array, array]:
+        """Render the booth bus for the most recent master block."""
+
+        return self._render_bus(
+            frames, self._library.parso_engine_render_booth, "booth render"
+        )
+
+    def _render_bus(self, frames: int, function: object, operation: str) -> tuple[array, array]:
         self._ensure_open()
         if frames <= 0 or frames > self._max_frames:
             raise ValueError("frames must be positive and no greater than max_frames")
@@ -1439,10 +1646,8 @@ class Engine:
             left=ctypes.c_void_p(left.buffer_info()[0]),
             right=ctypes.c_void_p(right.buffer_info()[0]), frames=frames,
         )
-        status = self._library.parso_engine_render(
-            self._handle, ctypes.byref(output)
-        )
-        self._raise_for_status(status, "engine render")
+        status = function(self._handle, ctypes.byref(output))  # type: ignore[union-attr]
+        self._raise_for_status(status, operation)
         return left, right
 
     @_engine_synchronized

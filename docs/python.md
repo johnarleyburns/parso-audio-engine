@@ -30,18 +30,24 @@ returns an `array('f')` in `DecodedPcm`; native-owned buffers are released
 before the call returns. `CodecServices.close()` is idempotent and operations
 after close raise `ParsoError`.
 
-The current offline gate covers WAV, FLAC, Xiph Ogg Vorbis, Opus, MP3, and AAC
-where the loaded native capability bits advertise them. `convert_sample_rate`
+The current offline gate covers WAV, raw PCM, FLAC, Xiph Ogg Vorbis, Opus, MP3,
+and AAC where the loaded native capability bits advertise them. `convert_sample_rate`
 and `measure_loudness` expose the native SRC and EBU R128 services. `analyze`
 provides the shared deterministic duration, RMS, peak, and energy-envelope BPM
 summary; `estimate_key` and `structure` cover the portable key/structure slice;
-and `waveform` returns caller-sized min/max buckets. ALAC, AIFF, CAF, and device
-IO remain explicit future gates.
+and `waveform` returns caller-sized min/max buckets. `read_wav`, `write_wav`,
+`read_pcm`, and `write_pcm` provide direct little-endian PCM/WAVE access for
+applications that need a container boundary without a codec selector. ALAC,
+AIFF, and CAF remain dependent on native capability additions.
 
 `Engine` provides bounded stereo headless rendering, master-level and crossfader
-controls, copied stats, and event polling;
+controls, copied stats, event polling, and the native microphone, monitor, and
+booth buses;
 `set_deck_buffer` copies and retains planar channel storage until replacement or
-close, and `play`/`pause` queue the portable transport commands. `post_command`
+close; `set_mic_buffer` does the same for a borrowed native microphone capture
+block. `render_monitor` and `render_booth` must follow `render` for the same
+frame count, matching the native callback contract. `play`/`pause` queue the
+portable transport commands. `post_command`
 exposes the versioned command payload (`i0`/`i1`/`i2` and `f0`/`f1`) for the
 shared native transport, with convenience methods for absolute seek, key-lock,
 slip, cues, loops, and hot cues. `poll_events()` drains copied state, playhead,

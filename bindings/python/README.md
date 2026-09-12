@@ -13,8 +13,8 @@ with CodecServices("/path/to/libparso.so") as audio:
     decoded = audio.decode(encoded, AudioCodec.OGG_VORBIS)
 ```
 
-This initial package covers synchronous offline codec, sample-rate conversion,
-loudness, and bounded headless rendering services. `Engine.set_crossfader(position)`
+This package covers synchronous offline codec, raw PCM/WAVE access, sample-rate
+conversion, loudness, and bounded headless rendering services. `Engine.set_crossfader(position)`
 publishes an A/B mixer snapshot with a bounded position in `[-1, 1]`; the extended
 `Engine.set_mixer_controls(...)` surface publishes channel EQ, color FX, Beat FX,
 master reverb, deck mix controls, and `IsolatorProfile.WARM2` engine topology for deterministic listening scenarios. The Linux
@@ -33,8 +33,12 @@ python3 bindings/python/examples/render_acceptance.py \
   --fixture-b tea_roots_isrc_usuan1100472
 ```
 
-Device IO remains a platform milestone; analysis, DJ control, and recording are
-native services surfaced through this facade.
+`CodecServices.read_wav`/`write_wav` and `read_pcm`/`write_pcm` expose direct
+little-endian PCM and WAVE boundaries. `Engine.set_mic_buffer` plus
+`render_monitor` and `render_booth` expose the native auxiliary buses while
+keeping all callback processing in native code. Device IO remains a platform
+milestone; analysis, DJ control, and recording are native services surfaced
+through this facade.
 
 For analysis and notebook workflows, install the optional NumPy extra:
 

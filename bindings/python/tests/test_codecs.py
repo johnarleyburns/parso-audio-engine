@@ -50,6 +50,31 @@ class CodecServicesTests(unittest.TestCase):
         self.assertGreater(decoded.frames, 0)
         self.assertEqual(len(decoded.samples), decoded.frames)
 
+    def test_wav_and_raw_pcm_round_trips(self) -> None:
+        samples = [
+            -0.75, -0.25, 0.0, 0.25, 0.75, 0.5,
+        ]
+        wav = self.audio.write_wav(samples, 48_000, 2, bits_per_sample=16)
+        decoded_wav = self.audio.read_wav(wav)
+        self.assertEqual(decoded_wav.sample_rate_hz, 48_000)
+        self.assertEqual(decoded_wav.channel_count, 2)
+        self.assertEqual(decoded_wav.frames, 3)
+        for actual, expected in zip(decoded_wav.samples, samples):
+            self.assertAlmostEqual(actual, expected, delta=1.0 / 32_768.0)
+
+        raw = self.audio.write_pcm(samples, 48_000, 2, bits_per_sample=16)
+        decoded_raw = self.audio.read_pcm(raw, 48_000, 2, bits_per_sample=16)
+        self.assertEqual(decoded_raw.sample_rate_hz, 48_000)
+        self.assertEqual(decoded_raw.channel_count, 2)
+        self.assertEqual(decoded_raw.frames, 3)
+        for actual, expected in zip(decoded_raw.samples, samples):
+            self.assertAlmostEqual(actual, expected, delta=1.0 / 32_768.0)
+
+        with self.assertRaises(ValueError):
+            self.audio.write_pcm(samples, 48_000, 2, bits_per_sample=20)
+        with self.assertRaises(ValueError):
+            self.audio.read_pcm(raw, 48_000, 2, bits_per_sample=20)
+
     def test_decoded_pcm_numpy_view_is_optional_and_shaped(self) -> None:
         samples = [
             0.25 * math.sin(2.0 * math.pi * 440.0 * index / 48_000.0)
@@ -227,6 +252,20 @@ class CodecServicesTests(unittest.TestCase):
             left, right = engine.render(128)
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
             self.assertEqual(len(left), len(right))
+
+    def test_headless_engine_supports_mic_monitor_and_booth_buses(self) -> None:
+        mic = [
+            0.1 * math.sin(2.0 * math.pi * 440.0 * index / 48_000.0)
+            for index in range(4_800)
+        ]
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_mic_buffer(mic, 48_000, 1)
+            left, right = engine.render(128)
+            monitor_left, monitor_right = engine.render_monitor(128)
+            booth_left, booth_right = engine.render_booth(128)
+            self.assertEqual((len(left), len(right)), (128, 128))
+            self.assertEqual((len(monitor_left), len(monitor_right)), (128, 128))
+            self.assertEqual((len(booth_left), len(booth_right)), (128, 128))
 
     def test_headless_engine_crossfader_control_requires_two_decks(self) -> None:
         with Engine(max_frames=256, library_path=self.library) as engine:
