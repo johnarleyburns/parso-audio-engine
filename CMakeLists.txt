@@ -42,7 +42,13 @@ if(PARSO_ENABLE_SANITIZERS)
 endif()
 
 add_library(CParsoDSP STATIC
-    Sources/CParsoDSP/src/parso_dsp_stub.cpp
+    Sources/CParsoDSP/src/parso_dsp_eq.cpp
+    Sources/CParsoDSP/src/parso_dsp_filter.cpp
+    Sources/CParsoDSP/src/parso_dsp_timepitch.cpp
+    Sources/CParsoDSP/src/parso_dsp_delay.cpp
+    Sources/CParsoDSP/src/parso_dsp_reverb.cpp
+    Sources/CParsoDSP/src/parso_dsp_convolution.cpp
+    Sources/CParsoDSP/src/parso_dsp_limiter_ring.cpp
 )
 target_include_directories(CParsoDSP
     PUBLIC
