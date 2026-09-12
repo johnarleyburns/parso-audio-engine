@@ -1,8 +1,8 @@
-#define INITGUID
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
+#include <initguid.h>
 #include "parso.h"
 
 #include <windows.h>
