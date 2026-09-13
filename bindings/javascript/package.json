@@ -1,6 +1,6 @@
 {
   "name": "@parsoaudio/javascript",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Electron and React Native bindings for parso-audio-engine",
   "license": "MIT",
   "main": "src/index.js",

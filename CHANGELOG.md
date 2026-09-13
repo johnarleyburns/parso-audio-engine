@@ -1,8 +1,8 @@
 # Changelog
 
 All notable changes are documented here. Format: Keep a Changelog; scheme: SemVer.
-The public API is **unstable (0.x)** until it has been validated by a first real integration
-(see docs/SPEC.md §17).
+The public API reached **1.0.0** after validation by the first real integrations
+(see docs/SPEC.md §17). Changes after that release are listed under **Unreleased**.
 
 ## [Unreleased]
 ### Added
@@ -38,7 +38,7 @@ The public API is **unstable (0.x)** until it has been validated by a first real
     `scripts/download-samples.sh`, `SAMPLES-NOTICE.md` (fetched, not committed).
 - Initial repository scaffold: three SPM library products (ParsoAudioCore, ParsoAudioAnalysis, ParsoDJEngine).
 
-### Changed (cdj3000-parity, 0.x source-compat notes)
+### Changed (cdj3000-parity, 1.0.0 source-compat notes)
 - `DJEngine.init` / `HeadlessDJEngine.init` gain `deckCount: Int = 4` (defaulted).
   `deckA`/`deckB`/`channelA`/`channelB` are now computed aliases over
   `decks`/`channels` — same instances, source-compatible.
