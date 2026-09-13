@@ -58,7 +58,7 @@ Every phase includes README/docs, runnable examples, unit tests, and integration
 
 ### CP0 — Establish the contract and baseline
 
-1. Run `swift build` and the full fixture-enabled `swift test` on an Apple runner; record actual results and disabled suites.
+1. Run `swift build` and the full fixture-enabled `swift test` on an Apple runner; record actual results and any conditional fixture skips.
 2. Inventory every public API and FLX4 acceptance row into a matrix: Apple implementation, native coverage, Android/Linux/Python target, corresponding test, milestone.
 3. Separate DJ parity from playback/streaming/neural follow-ups, including newer multi-deck/stem features already exposed by the engine.
 4. Amend SPEC targets, layering, backend policy, and acceptance requirements; reconcile README requirements with Package.swift. Add this CP workstream to the handoff instructions without conflating it with the original phases.

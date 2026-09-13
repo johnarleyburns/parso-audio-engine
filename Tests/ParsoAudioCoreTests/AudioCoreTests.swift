@@ -1,7 +1,6 @@
 //
 //  AudioCoreTests.swift
-//  Enabled suites exercise the real PCMBuffer + generators. Suites that need the
-//  DSP/IO layer are fully specified but `.disabled` until implemented (docs/SPEC.md §9, §13).
+//  Enabled suites exercise the real PCMBuffer, codecs, DSP, and IO layers.
 //
 
 import Testing
@@ -93,7 +92,7 @@ struct SignalGeneratorTests {
     }
 }
 
-// MARK: - Pending implementation (docs/SPEC.md §9, §13)
+// MARK: - Codec, IO, and DSP behavior (docs/SPEC.md §9, §13)
 
 @Suite("Codec roundtrip")
 struct CodecRoundtripTests {

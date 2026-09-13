@@ -4,7 +4,7 @@
 //
 //  • Manifest-integrity tests run immediately (no audio needed).
 //  • Decode + analysis tests are gated on `FixtureLibrary.isAvailable` (auto-skip until you run
-//    `scripts/download-fixtures.sh`) AND `.disabled` until the relevant layer is implemented.
+//    `scripts/download-fixtures.sh`); without the corpus, fixture tests are conditionally skipped.
 //
 //  Test names beginning with "RealFixture" match the CI filter `swift test --filter RealFixture`.
 //

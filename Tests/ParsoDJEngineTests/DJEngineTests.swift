@@ -1,7 +1,6 @@
 //
 //  DJEngineTests.swift
-//  Headless (device-free) engine behavior tests. The API-shape suite runs now;
-//  render-behavior suites are `.disabled` until the RT engine is implemented (docs/SPEC.md §11).
+//  Headless (device-free) engine behavior and render tests.
 //
 
 import Testing
@@ -29,7 +28,7 @@ struct DJAPITests {
     }
 }
 
-// MARK: - Pending implementation (docs/SPEC.md §11)
+// MARK: - Render behavior (docs/SPEC.md §11)
 
 /// Loads two analyzed tone tracks into a headless engine for deterministic assertions.
 @MainActor

@@ -1,7 +1,6 @@
 //
 //  AnalysisSyntheticTests.swift
-//  Ground-truth analysis tests on synthesized signals. The KeyProfiles sanity suite runs now;
-//  estimator suites are `.disabled` until implemented (docs/SPEC.md §10).
+//  Ground-truth analysis tests on synthesized signals and real fixture services.
 //
 
 import Testing
@@ -25,7 +24,7 @@ struct KeyProfileTests {
     }
 }
 
-// MARK: - Pending implementation (docs/SPEC.md §10)
+// MARK: - Analysis implementation (docs/SPEC.md §10)
 
 @Suite("Tempo (synthetic)")
 struct TempoSyntheticTests {
