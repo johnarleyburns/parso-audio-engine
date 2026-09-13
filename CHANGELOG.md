@@ -2,9 +2,21 @@
 
 All notable changes are documented here. Format: Keep a Changelog; scheme: SemVer.
 The public API reached **1.0.0** after validation by the first real integrations
-(see docs/SPEC.md §17). Changes after that release are listed under **Unreleased**.
+(see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current post-tag maintenance
+release candidate is `1.1.1`.
 
 ## [Unreleased]
+
+## [1.1.1] - 2026-09-12
+### Fixed
+- Split the native C++ API and engine translation units so the public API builds cleanly with
+  subobject-linkage warnings treated as errors.
+- Align CMake, Python, JavaScript, Android, CI, documentation, and fixture-download metadata on
+  the `1.1.1` release candidate.
+- Record the maintainer-confirmed Swift two-app and Linux desktop acceptance scope, with Windows and
+  Android hardware gates explicitly unavailable rather than implied to be validated.
+
+## [1.1.0] - 2026-09-12
 ### Added
 - **CDJ-3000 / DJM-A9 parity** (`docs/CDJ3000-parity-research.md`, branch
   `cdj3000-parity`): the DJ engine steps up from the DDJ-FLX4 target to the

@@ -50,8 +50,9 @@ ParsoAudioAnalysis (Swift + vDSP)  tempo/beatgrid · key · structure · wavefor
 ```
 
 Source targets: `Sources/{CParsoDSP,CParsoEngine,Cflac,Cebur128,Csrc,Cvorbis,Copus,ParsoAudioCore,ParsoAudioAnalysis,ParsoDJEngine}`.
-The public Swift API is scaffolded in `Sources/Parso*/*.swift` (stubs calling `unimplemented()`); the
-C-API contracts are in `Sources/CParso*/include/*.h`. `PCMBuffer` is already implemented.
+The public Swift API is implemented in `Sources/Parso*/*.swift`; the C-API contracts are in
+`Sources/CParso*/include/*.h`. The Swift package is validated by the two consuming applications and
+the native C/C++ API is validated by the Linux desktop and CI consumer gates.
 
 **Reuse contract:** `ParsoAudioCore`/`CParsoDSP` and `ParsoAudioAnalysis` must contain **no** DJ
 concept. Only `ParsoDJEngine`/`CParsoEngine` know about decks/crossfader/cues.
@@ -209,11 +210,13 @@ The FLX4 rows above remain the byte-for-byte 2-deck baseline.
 
 ## 16–17. Build / versioning
 `swift build` + `swift test` on macOS; iOS-sim build via `xcodebuild`. CI: build+test, SPDX copyleft
-guard, iOS build; a manual job runs `RealFixture` with downloaded fixtures. SemVer; **1.0.0** is the
-validated stable baseline. **Done**: both consuming
+guard, iOS build; a manual job runs `RealFixture` with downloaded fixtures. SemVer; **1.0.0** was the
+first validated stable baseline and the current post-`1.1.0` maintenance release candidate is
+**1.1.1**. **Done**: both consuming
 apps — `parso-tonearm` (DJ engine convergence, Phase 6) and `parso-voxglass` (decoders/encoders,
 Phase 4) — completed their migration onto this package as their sole audio substrate; tagged
-**1.0.0** (2026-09-07).
+**1.0.0** (2026-09-07). The current release candidate includes the post-`1.1.0` native
+translation-unit refactor and package metadata alignment.
 
 ## 18. Non-goals
 Streaming-service integration, library/browser UI, DVS timecode, external-MIDI/controller mapping

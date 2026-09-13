@@ -83,4 +83,5 @@ scenario, an installed-package consumer build, and platform device checks. Linux
 human listening artifact: the actual rendered WAV, matching JSON event sidecar, and (where reviewable)
 the MP4 overlay. Effects, transitions, cue/loop boundaries, and recording must be audible in the
 artifact; labels cannot be placed over an unchanged source. Android hardware listening and route
-validation remain pending until a device is available and are tracked separately from Linux sign-off.
+validation are unavailable in this release because no device is available and are tracked separately
+from Linux sign-off.

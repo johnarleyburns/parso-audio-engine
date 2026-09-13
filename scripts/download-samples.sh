@@ -52,7 +52,7 @@ PY
         fi
         echo "  ↓ $id  [archive, $license]"
         tmp="$(mktemp -t parso-sample-XXXXXX.zip)"
-        if curl -fL --retry 3 --retry-delay 2 -A "parso-audio-engine/1.0.0" -o "$tmp" "$furl"; then
+        if curl -fL --retry 3 --retry-delay 2 -A "parso-audio-engine/1.1.1" -o "$tmp" "$furl"; then
           mkdir -p "$out" && (cd "$out" && unzip -qo "$tmp") || echo "    !! unzip failed: $id" >&2
         else
           echo "    !! download failed: $id ($furl)" >&2

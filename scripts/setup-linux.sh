@@ -449,9 +449,9 @@ build_android_gradle() {
         testReleaseUnitTest assembleRelease assembleDebugAndroidTest \
         publishReleasePublicationToLocalStagingRepository
     [ -f "$aar" ] || die "Android release AAR was not produced"
-    [ -f "$producer_project/build/maven-repository/com/parsoaudio/parso-audio-android/1.0.0/parso-audio-android-1.0.0.pom" ] || \
+    [ -f "$producer_project/build/maven-repository/com/parsoaudio/parso-audio-android/1.1.1/parso-audio-android-1.1.1.pom" ] || \
         die "Android local Maven publication did not produce its POM"
-    [ -f "$producer_project/build/maven-repository/com/parsoaudio/parso-audio-android/1.0.0/parso-audio-android-1.0.0.aar" ] || \
+    [ -f "$producer_project/build/maven-repository/com/parsoaudio/parso-audio-android/1.1.1/parso-audio-android-1.1.1.aar" ] || \
         die "Android local Maven publication did not produce its AAR"
 
     page_dir="$(mktemp -d "${TMPDIR:-/tmp}/parso-android-aar.XXXXXX")"

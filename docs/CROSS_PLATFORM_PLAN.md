@@ -244,7 +244,11 @@ remain explicit acceptance gates.
 
 ### CP6 — Linux human listening acceptance
 
-The maintainer has Linux and no Android hardware. Make Linux the primary human listening/review host, retaining separate Android automation and an explicitly pending Android hardware gate. Linux listening cannot establish Android device latency or routing correctness.
+The maintainer has confirmed Swift in two consuming applications and Linux on the desktop used for
+review. Windows hardware acceptance and Android device/route validation are unavailable because the
+required hardware is not available. Keep Linux as the primary human listening/review host, retain
+the CI/package gates for Windows and Android, and do not represent either unavailable hardware gate
+as device validation.
 
 1. Add a native acceptance CLI under `Tools/NativeAcceptanceArtifacts`, built by CMake, that needs neither Swift nor Apple frameworks. Reuse `Tests/Fixtures/fixtures.json`, the existing scenario/event conventions, and the WAV + JSON contract consumed by `scripts/render-acceptance-video.py`.
 2. Generate audio through the shipping public native API and shared engine, with the actual rendered signal in the WAV and matching events/analysis in the sidecar. Validate schema compatibility with the existing Python renderer. Do not overlay effect labels on an unchanged source track.
@@ -308,7 +312,10 @@ Gate: documented Python APIs, installed-wheel unit/integration tests, runnable e
 - Verify dependency notices, source pins, SPDX policy, binary architecture/page alignment, exported symbols, and archive contents. Test consuming the packaged artifacts outside the monorepo.
 - Publish SDK/API documentation and an honest platform capability table. Release candidates require Apple regression gates and all advertised portable features to pass; tag/publish only as a deliberate release step.
 
-Android hardware validation may be performed later by a contributor or device lab. Until then, label Android device performance/routing unverified and the SDK preview as appropriate; do not block the Linux SDK release on unavailable Android hardware or claim that emulator/Linux results substitute for it.
+Windows hardware acceptance and Android hardware validation may be performed later by a contributor
+or device lab. Until then, label those device performance/routing behaviors unverified and keep the
+SDK preview status explicit; do not block the Apple/Linux desktop release on unavailable hardware or
+claim that CI, emulator, or Linux results substitute for it.
 
 The CI workflow now runs a pinned Android NDK 27.2.12479018 / CMake 3.22.1 matrix for
 `arm64-v8a` and `x86_64`, cross-builds the public `libparso.so`, and checks its ABI and 16 KiB

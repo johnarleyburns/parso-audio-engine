@@ -334,10 +334,12 @@ python3 scripts/render-acceptance-video.py \
   --output artifacts/acceptance/gostreyshen_world/gostreyshen_world-waveform.mp4
 ```
 
-Linux portable acceptance will use the same WAV + JSON + MP4 contract through a native CMake CLI.
+Linux portable acceptance uses the same WAV + JSON + MP4 contract through a native CMake CLI.
 It requires at least 30 seconds per artifact and a full-track review for phrase/structure scenarios;
-the reviewer records audible results in a manifest. Android hardware listening remains pending until
-a device is available.
+the reviewer records audible results in a manifest. The maintainer has confirmed the Swift library
+in two consuming apps and the Linux native path on the desktop used for review. Windows hardware
+acceptance and Android device listening/route validation are unavailable in this release because the
+required hardware is not available; both remain explicitly outside the shipping support claim.
 
 ---
 
@@ -907,8 +909,8 @@ Phased implementation plan in `docs/SPEC.md §19`. The current workstream is the
 audio unification in `docs/UNIFICATION_PLAN.md`, tracked in `current_status.md`.
 If you're handing this to a coding agent, start it
 at **`AGENTS.md`** — it defines the implement → enable-tests → commit → update-`current_status.md` loop
-and the exact phase order. The public API is at **1.0.0**; changes after that release are tracked
-under `CHANGELOG.md`'s **Unreleased** section.
+and the exact phase order. The current release candidate is **1.1.1**; changes after that release are
+tracked under `CHANGELOG.md`'s **Unreleased** section.
 
 ## License & attribution
 

@@ -45,7 +45,7 @@ PY
     echo "  ↓ $id.$ext"
     # -L follows the redirect to upload.wikimedia.org; UA is required by Commons.
     curl -fL --retry 3 --retry-delay 2 \
-         -A "parso-audio-engine-tests/1.0.0 (https://github.com/; contact: dev)" \
+         -A "parso-audio-engine-tests/1.1.1 (https://github.com/; contact: dev)" \
          -o "$out" "$url" \
       || { echo "    !! failed: $id ($url)" >&2; rm -f "$out"; }
 done
