@@ -46,7 +46,7 @@ public struct KeyEstimator: Sendable {
         let audio = AnalysisBridge.analysisAudio(from: buffer)
         let spectra = STFTKernel(config: STFTConfig()).spectra(audio.mono)
         guard !spectra.isEmpty else { return .fallback }
-        let chromaFrames = spectra.map { KeyDetector.chroma($0) }
+        let chromaFrames = spectra.map { KeyDetector.fusedChroma($0) }
         guard let estimate = KeyDetector.estimate(chromaFrames) else { return .fallback }
         return KeyResult(estimate)
     }
@@ -251,4 +251,3 @@ public enum KeyProfiles {
     /// Pitch-class names, index 0 == C.
     public static let pitchClassNames = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
 }
-

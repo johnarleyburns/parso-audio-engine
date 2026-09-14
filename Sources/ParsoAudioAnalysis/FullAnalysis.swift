@@ -118,7 +118,7 @@ public enum FullAnalysis {
                 beatFeatures = grid.beatSamples.map { sample -> BeatFeature in
                     let frame = Int((Double(sample) / stft.sampleRate / hopSeconds).rounded())
                     let idx = max(0, min(spectra.count - 1, frame))
-                    let chroma = spectra.isEmpty ? HPCP() : KeyDetector.chroma(spectra[idx])
+                    let chroma = spectra.isEmpty ? HPCP() : KeyDetector.fusedChroma(spectra[idx])
                     let rms = frames.isEmpty ? 0 : frames[idx].rms
                     return BeatFeature(chroma: chroma, energy: rms)
                 }
@@ -128,7 +128,7 @@ public enum FullAnalysis {
         // Key from per-frame chroma.
         var key: KeyEstimate?
         if !spectra.isEmpty {
-            let chromaFrames = spectra.map { KeyDetector.chroma($0) }
+            let chromaFrames = spectra.map { KeyDetector.fusedChroma($0) }
             key = KeyDetector.estimate(chromaFrames)
         }
 
