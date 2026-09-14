@@ -29,7 +29,8 @@
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Audial_-_Waking_Up.ogg",
       "sourceFormat": "oggVorbis", "genre": "house", "beatBased": true,
       "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
-      "expected": { "bpm": 123.7, "bpmTolerance": 2.0, "key": null } },
+      "note": "Human reference: Cm / 123.7 BPM. Verified by maintainer.",
+      "expected": { "bpm": 123.7, "bpmTolerance": 2.0, "key": "5A" } },
 
     { "id": "banda_dachy_rally_house", "filename": "BANDA_&_DACHY_-_RALLY_HOUSE.ogg",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:BANDA_%26_DACHY_-_RALLY_HOUSE.ogg",
@@ -63,8 +64,8 @@
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Kingdom-of-darkness-by-Kjartan-Abel.ogg",
       "sourceFormat": "oggVorbis", "genre": "unknown", "beatBased": true,
       "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
-      "note": "Genre uncertain; set beatBased=false if it is not tempo-driven after listening.",
-      "expected": { "bpm": 113.0, "bpmTolerance": 2.0, "key": null } },
+      "note": "Human reference: F♯m / 113.0 BPM. Verified by maintainer. Genre uncertain; set beatBased=false if it is not tempo-driven after listening.",
+      "expected": { "bpm": 113.0, "bpmTolerance": 2.0, "key": "11A" } },
 
     { "id": "lukas_berlin", "filename": "Lukas_-_Berlin.ogg",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Lukas_-_Berlin.ogg",
@@ -84,7 +85,8 @@
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Tim_Derry_-_COLD_LOVE.ogg",
       "sourceFormat": "oggVorbis", "genre": "house", "beatBased": true,
       "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
-      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+      "note": "Human reference: B / 112.0 BPM. Verified by maintainer.",
+      "expected": { "bpm": 112.0, "bpmTolerance": 2.0, "key": "1B" } },
 
     { "id": "wolflund_watching_over_me", "filename": "Wolflund_-_Watching_Over_Me_(feat._Melissa_Pixel).ogg",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Wolflund_-_Watching_Over_Me_(feat._Melissa_Pixel).ogg",
@@ -118,7 +120,8 @@
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Raspberrymusic_-_Lofi_Hip_Hop_Upbeat.ogg",
       "sourceFormat": "oggVorbis", "genre": "lofi-hip-hop", "beatBased": true,
       "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
-      "expected": { "bpm": null, "bpmTolerance": 2.0, "key": null } },
+      "note": "Human reference: D♯m / 93.0 BPM. Verified by maintainer.",
+      "expected": { "bpm": 93.0, "bpmTolerance": 2.0, "key": "2A" } },
 
     { "id": "razrfish_mocassins", "filename": "Razrfish_-_Mocassins.opus",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Razrfish_-_Mocassins.opus",
@@ -138,7 +141,8 @@
       "commonsPage": "https://commons.wikimedia.org/wiki/File:%E1%B4%BC%E1%B4%AC%E1%B5%87%E1%B5%89%E1%B5%83%E1%B5%97%CB%A2_-_I_Need_U_(Deep_House_Instrumental_Vocal_Deep_Slap_House_Type_Beat).opus",
       "sourceFormat": "opus", "genre": "slap-house", "beatBased": true,
       "roles": ["analysis", "decode-opus"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
-      "expected": { "bpm": 125.0, "bpmTolerance": 2.0, "key": null } },
+      "note": "Human reference: Am / 125.0 BPM. Verified by maintainer.",
+      "expected": { "bpm": 125.0, "bpmTolerance": 2.0, "key": "8A" } },
 
     { "id": "oabeats_universe", "filename": "ᴼᴬᵇᵉᵃᵗˢ_-_Universe.opus",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:%E1%B4%BC%E1%B4%AC%E1%B5%87%E1%B5%89%E1%B5%83%E1%B5%97%CB%A2_-_Universe.opus",
