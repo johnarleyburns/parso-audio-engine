@@ -277,12 +277,13 @@ public enum KeyDetector {
     public static func estimate(_ frames: [HPCP],
                                 config: KeyConfig = KeyConfig()) -> KeyEstimate? {
         guard !frames.isEmpty else { return nil }
-        // Use the stable profile for key selection. A mean profile lets
-        // isolated percussive frames and codec artefacts move the tonic toward
-        // a dominant; the public `aggregate` helper remains an arithmetic
-        // mean for callers that need that representation.
+        // Blend the stable and mean profiles. Median-only aggregation can
+        // discard a legitimate section change, while mean-only aggregation is
+        // too sensitive to isolated percussive frames; the stable profile gets
+        // the stronger vote without discarding the track's overall evidence.
+        let mean = aggregate(frames)
         let stable = stableAggregate(frames)
-        let chroma = (0..<12).map { stable[$0] }
+        let chroma = (0..<12).map { mean[$0] * 0.4 + stable[$0] * 0.6 }
 
         var bestTonic = 0
         var bestMinor = false
