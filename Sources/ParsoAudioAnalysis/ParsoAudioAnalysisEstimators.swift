@@ -20,36 +20,16 @@ public struct TempoEstimator: Sendable {
         let hopSeconds = Double(stft.hopSize) / stft.sampleRate
         let envelope = OnsetDetector.envelope(spectra: spectra)
         let onsets = OnsetDetector.peaks(envelope, frameRateHz: 1 / hopSeconds)
-        guard let broadTempo = TempoAnalyzer.estimate(novelty: envelope,
-                                                      hopSeconds: hopSeconds).first else {
+        guard let tempo = TempoAnalyzer.estimate(novelty: envelope,
+                                                 hopSeconds: hopSeconds).first else {
             return empty
         }
 
-        // The low band carries the kick/bass pulse in beat-driven material.
-        // Hats and syncopated upper percussion can otherwise make a 3:4
-        // subdivision look more prominent than the musical beat (notably in
-        // hip-hop and lo-fi recordings). Use that evidence only when it
-        // presents a materially lower, still plausible hypothesis; ordinary
-        // house/disco and synthetic click tracks keep the broad-band result.
-        let lowConfig = OnsetConfig(bands: [20...120], bandWeights: [1.0])
-        let lowEnvelope = OnsetDetector.envelope(spectra: spectra, config: lowConfig)
-        let lowTempo = TempoAnalyzer.estimate(novelty: lowEnvelope,
-                                              hopSeconds: hopSeconds).first
-        let useLowBand = lowTempo.map {
-            broadTempo.bpm < 160 && broadTempo.bpm > $0.bpm * 1.2
-                && $0.bpm >= 70 && $0.bpm <= 115
-        } ?? false
-        let tempo = useLowBand ? lowTempo! : broadTempo
-        let gridEnvelope = useLowBand ? lowEnvelope : envelope
-        let gridOnsets = useLowBand
-            ? OnsetDetector.peaks(lowEnvelope, frameRateHz: 1 / hopSeconds)
-            : onsets
-
-        let grid = BeatTracker.grid(novelty: gridEnvelope, hopSeconds: hopSeconds,
+        let grid = BeatTracker.grid(novelty: envelope, hopSeconds: hopSeconds,
                                     sampleRate: stft.sampleRate,
-                                    onsets: gridOnsets, bpm: tempo.bpm)
+                                    onsets: onsets, bpm: tempo.bpm)
         let downbeatIndices = grid.map {
-            BeatTracker.downbeats(beatSamples: $0.beatSamples, novelty: gridEnvelope,
+            BeatTracker.downbeats(beatSamples: $0.beatSamples, novelty: envelope,
                                   hopSeconds: hopSeconds, sampleRate: stft.sampleRate)
         } ?? []
         return .fromPipeline(grid: grid, tempoBPM: tempo.bpm, tempoConfidence: tempo.confidence,
