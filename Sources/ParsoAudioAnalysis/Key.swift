@@ -186,24 +186,23 @@ public enum KeyDetector {
         return c.normalized()
     }
 
-    /// Fuse the broad-spectrum chroma with a fundamental-weighted bass chroma.
-    /// Dense mixes often contain fifths more prominently than their roots in
-    /// the upper partials; a low-register vote stabilizes tonic selection while
-    /// retaining the broad spectrum for mode and melodic evidence. Bass energy
-    /// is corroborated by the broad view before it is allowed to dominate: a
-    /// lone sub-register resonance is not reliable key evidence.
+    /// Fuse broad-spectrum chroma with a mid-band tonal chroma. Dense mixes
+    /// often contain fifths more prominently than their roots in the upper
+    /// partials; the mid band carries stable vocal and melodic evidence while
+    /// the broad view preserves the track's overall tonal field.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
         let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                            magnitudeExponent: 0.5))
-        let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
-                                                         maxFreqHz: 500))
+        let mid = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
+                                                        maxFreqHz: 2_000,
+                                                        magnitudeExponent: 0.5))
         var fused = HPCP()
         for i in 0..<12 {
-            // Keep the full tonal field primary. A small corroborated bass
-            // contribution still resolves clean synthetic root chords without
-            // letting a single low-register resonance define a mix's key.
-            let corroboratedBass = sqrt(broad[i] * bass[i])
-            fused[i] = broad[i] * 0.80 + corroboratedBass * 0.20
+            // Keep the full tonal field present, while letting the mid band
+            // carry more of the decision than sub-bass or codec/high-shelf
+            // artefacts. Geometric agreement suppresses isolated resonances.
+            let corroboratedMid = sqrt(broad[i] * mid[i])
+            fused[i] = broad[i] * 0.35 + corroboratedMid * 0.65
         }
         return fused.normalized()
     }

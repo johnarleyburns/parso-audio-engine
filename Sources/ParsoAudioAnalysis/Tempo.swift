@@ -145,7 +145,15 @@ public enum TempoAnalyzer {
         // clear half/double-tempo error resolves to the true BPM (§22.4).
         var winners: [Int: TempoCandidate] = [:]
         for s in scored {
-            let variants = [s.bpm, s.bpm / 2, s.bpm * 2].filter { config.range.contains($0) }
+            var variants = [s.bpm, s.bpm / 2, s.bpm * 2]
+            // A common DJ ambiguity is a quarter-note pulse being reported as
+            // a dotted-quarter pulse (4:3). Consider that alternate only in
+            // the ordinary house/disco band; keeping it out of the full search
+            // prevents arbitrary metric families from outranking a clear beat.
+            if (115...130).contains(s.bpm) {
+                variants.append(s.bpm * 0.75)
+            }
+            variants = variants.filter { config.range.contains($0) }
             let bestVariant = variants.max { a, b in
                 let ca = combScore(bpm: a, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(a, config: config) + ioiScore(a) * 0.5
                 let cb = combScore(bpm: b, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(b, config: config) + ioiScore(b) * 0.5
