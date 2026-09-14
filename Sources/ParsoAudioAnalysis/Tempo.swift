@@ -101,16 +101,29 @@ public enum TempoAnalyzer {
         // Inter-onset-interval histogram with octave folding: a period T and
         // 2T/½T reinforce the same tempo class (§22.3).
         let peaks = OnsetDetector.peaks(novelty, config: OnsetConfig(), frameRateHz: 1 / hopSeconds)
-        var ioiHistogram: [Double: Double] = [:]
+        var ioiTempos: [Double] = []
         if peaks.count >= 2 {
             for i in 0..<(peaks.count - 1) {
-                var interval = peaks[i + 1].timeSeconds - peaks[i].timeSeconds
+                let interval = peaks[i + 1].timeSeconds - peaks[i].timeSeconds
                 // Octave-fold into the search range's BPM band (60–220 BPM).
                 var bpm = 60.0 / interval
-                while bpm < config.range.lowerBound { bpm *= 2; interval /= 2 }
-                while bpm > config.range.upperBound { bpm /= 2; interval *= 2 }
-                ioiHistogram[interval, default: 0] += 1
+                while bpm < config.range.lowerBound { bpm *= 2 }
+                while bpm > config.range.upperBound { bpm /= 2 }
+                if config.range.contains(bpm) { ioiTempos.append(bpm) }
             }
+        }
+
+        // Match onset intervals continuously rather than looking up an exact
+        // floating-point dictionary key. Refined onset times do not land on
+        // the half-BPM grid, so the old lookup almost always returned zero.
+        func ioiScore(_ candidate: Double) -> Double {
+            guard !ioiTempos.isEmpty else { return 0 }
+            let sigma = 0.035 // roughly a quarter-tone in tempo ratio
+            let total = ioiTempos.reduce(0.0) { partial, observed in
+                let distance = log2(candidate / observed)
+                return partial + exp(-0.5 * (distance / sigma) * (distance / sigma))
+            }
+            return total / Double(ioiTempos.count)
         }
 
         // Score each candidate BPM: autocorrelation comb + IOI histogram, with
@@ -120,9 +133,7 @@ public enum TempoAnalyzer {
         while bpm <= config.range.upperBound {
             let comb = combScore(bpm: bpm, autocorrelation: ac,
                                  hopSeconds: hopSeconds, config: config)
-            let period = 60.0 / bpm
-            let ioiVotes = ioiHistogram[period, default: 0]
-            let raw = comb + ioiVotes * 0.5
+            let raw = comb + ioiScore(bpm) * 0.5
             scored.append((bpm, raw))
             bpm += config.stepBPM
         }
@@ -135,8 +146,8 @@ public enum TempoAnalyzer {
         for s in scored {
             let variants = [s.bpm, s.bpm / 2, s.bpm * 2].filter { config.range.contains($0) }
             let bestVariant = variants.max { a, b in
-                let ca = combScore(bpm: a, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(a, config: config)
-                let cb = combScore(bpm: b, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(b, config: config)
+                let ca = combScore(bpm: a, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(a, config: config) + ioiScore(a) * 0.5
+                let cb = combScore(bpm: b, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(b, config: config) + ioiScore(b) * 0.5
                 return ca < cb
             } ?? s.bpm
 
@@ -144,7 +155,7 @@ public enum TempoAnalyzer {
             let key = Int((bestVariant / config.stepBPM).rounded())
             let weighted = combScore(bpm: bestVariant, autocorrelation: ac,
                                      hopSeconds: hopSeconds, config: config)
-                * priorWeight(bestVariant, config: config)
+                * priorWeight(bestVariant, config: config) + ioiScore(bestVariant) * 0.5
             if let existing = winners[key] {
                 // Keep the stronger of the two if the same family won twice.
                 if weighted > existing.confidence {

@@ -189,7 +189,9 @@ public enum KeyDetector {
     /// Fuse the broad-spectrum chroma with a fundamental-weighted bass chroma.
     /// Dense mixes often contain fifths more prominently than their roots in
     /// the upper partials; a low-register vote stabilizes tonic selection while
-    /// retaining the broad spectrum for mode and melodic evidence.
+    /// retaining the broad spectrum for mode and melodic evidence. Bass energy
+    /// is corroborated by the broad view before it is allowed to dominate: a
+    /// lone sub-register resonance is not reliable key evidence.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
         let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                            magnitudeExponent: 0.5))
@@ -197,11 +199,11 @@ public enum KeyDetector {
                                                          maxFreqHz: 500))
         var fused = HPCP()
         for i in 0..<12 {
-            // In a mixed recording the upper spectrum often emphasizes the
-            // fifth or a dominant synth partial. Give the low register the
-            // stronger vote so the tonic is anchored by fundamentals while
-            // the broad profile still supplies mode and melodic evidence.
-            fused[i] = broad[i] * 0.30 + bass[i] * 0.70
+            // Geometric agreement retains bass fundamentals that are also
+            // present in the musical body, while suppressing isolated bass
+            // resonances that otherwise become a false tonic.
+            let corroboratedBass = sqrt(broad[i] * bass[i])
+            fused[i] = broad[i] * 0.50 + corroboratedBass * 0.50
         }
         return fused.normalized()
     }
