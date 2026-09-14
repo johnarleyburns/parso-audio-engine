@@ -291,8 +291,13 @@ public enum KeyDetector {
 
         for rot in 0..<12 {
             let rotated = (0..<12).map { chroma[(rot + $0) % 12] }
-            let sMaj = correlate(rotated, krumhanslMajor)
-            let sMin = correlate(rotated, krumhanslMinor)
+            // Correlation captures the scale degrees, but a dominant/fifth
+            // can otherwise win when the recording's root is quieter than its
+            // upper partials. Keep the profile as the primary evidence and
+            // add only a modest tonic-prominence tie-breaker.
+            let tonicBias = Double(chroma[rot]) * 0.25
+            let sMaj = correlate(rotated, krumhanslMajor) + tonicBias
+            let sMin = correlate(rotated, krumhanslMinor) + tonicBias
             scores.append(sMaj)
             scores.append(sMin)
             if sMaj > bestScore { bestScore = sMaj; bestTonic = rot; bestMinor = false }
