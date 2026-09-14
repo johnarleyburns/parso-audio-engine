@@ -238,14 +238,41 @@ public enum KeyDetector {
         return out
     }
 
+    /// Aggregate only the stable part of a recording's chroma. A plain mean
+    /// gives a short kick, fill, or codec artefact the same influence as a
+    /// sustained harmonic frame. The per-pitch-class median is deliberately
+    /// conservative: it preserves notes present through most of the track and
+    /// suppresses one-frame transients without changing the public `aggregate`
+    /// helper's documented arithmetic-mean semantics.
+    static func stableAggregate(_ frames: [HPCP]) -> HPCP {
+        guard !frames.isEmpty else { return HPCP() }
+        var values = [Float](repeating: 0, count: frames.count)
+        var median = [Float](repeating: 0, count: 12)
+        for pc in 0..<12 {
+            for (index, frame) in frames.enumerated() { values[index] = frame[pc] }
+            values.sort()
+            let middle = values.count / 2
+            median[pc] = values.count.isMultiple(of: 2)
+                ? (values[middle - 1] + values[middle]) * 0.5
+                : values[middle]
+        }
+        var out = HPCP(median)
+        out.normalize()
+        return out
+    }
+
     /// Estimate key from per-frame chroma (App. F.6, §24.2): correlate the
     /// aggregated profile against the 24 major/minor templates, pick the argmax,
     /// and derive confidence from the winner's margin over the runner-up.
     public static func estimate(_ frames: [HPCP],
                                 config: KeyConfig = KeyConfig()) -> KeyEstimate? {
         guard !frames.isEmpty else { return nil }
-        let avg = aggregate(frames)
-        let chroma = (0..<12).map { avg[$0] }
+        // Blend the stable and mean profiles. Median-only aggregation can
+        // discard a legitimate section change, while mean-only aggregation is
+        // too sensitive to isolated percussive frames in real recordings.
+        let mean = aggregate(frames)
+        let stable = stableAggregate(frames)
+        let chroma = (0..<12).map { mean[$0] * 0.4 + stable[$0] * 0.6 }
 
         var bestTonic = 0
         var bestMinor = false
