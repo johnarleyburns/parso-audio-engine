@@ -304,6 +304,14 @@ public enum KeyDetector {
         let margin = max(0, bestScore - secondBest)
         let confidence = min(1.0, margin / 0.2)
 
+        // Temporary offline diagnostic for the real-fixture refinement. This
+        // branch is removed once the profile weighting is settled; it is not
+        // on any real-time path.
+        if bestTonic == 6 || bestTonic == 7 {
+            let top = scores.enumerated().sorted { $0.element > $1.element }.prefix(3)
+            print("KEY_DIAG tonic=\(bestTonic) minor=\(bestMinor) top=\(top.map { ($0.offset / 2, $0.offset % 2 == 1, $0.element) }) chroma=\(chroma)")
+        }
+
         guard let camelot = Camelot.from(tonic: bestTonic, isMinor: bestMinor) else {
             return nil
         }
