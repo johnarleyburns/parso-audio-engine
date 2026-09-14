@@ -200,11 +200,13 @@ public enum KeyDetector {
     }
 
     /// Estimator chroma, retaining this entry point for API compatibility.
-    /// Use the full-register harmonic profile: separately normalizing and
-    /// boosting everything below 500 Hz can turn a chord's lowest fifth into
-    /// its apparent tonic when the root and third are above that cutoff.
+    /// Use all registers with square-root compression. A dense mix's strongest
+    /// partial otherwise dominates the pitch-class profile; the public helper
+    /// keeps harmonic reinforcement available for callers that want it, while
+    /// the track estimator uses measured peaks only.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
-        chroma(spectrum)
+        chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
+                                              magnitudeExponent: 0.5))
     }
 
     // MARK: - Key profiles

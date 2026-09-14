@@ -134,10 +134,12 @@ per-beat grid confidence.
 48 kHz mono, same STFT. Per-frame HPCP chroma uses local spectral maxima, with three-point quadratic
 interpolation of log magnitude to estimate the frequency between FFT bins **before** folding onto
 the nearest pitch class with a Gaussian tuning weight (~25 cents). Bass-bin centers at this FFT
-size are too widely spaced to represent semitones. Linear peak magnitudes reinforce fundamentals
-at ÷2/÷3/÷4, weighted by 1/harmonic, over the full configured frequency range; do not independently
-normalize or boost a bass-only profile, which misidentifies inverted chords whose root and third
-fall above its cutoff. Blend the normalized frame mean (40%) and per-pitch median (60%).
+size are too widely spaced to represent semitones. The track estimator uses square-root magnitude
+compression over the full configured frequency range and no harmonic reinforcement; do not
+independently normalize or boost a bass-only profile, which misidentifies inverted chords whose
+root and third fall above its cutoff. The public chroma helper can additionally reinforce
+fundamentals at ÷2/÷3/÷4, weighted by 1/harmonic. Blend the normalized frame mean (40%) and
+per-pitch median (60%).
 Correlate (Pearson) against **Krumhansl–Schmuckler** major/minor profiles
 (`KeyDetector.krumhanslMajor/Minor`) rotated over 12 tonics; argmax → `(tonic, mode)`. Camelot from
 the wheel table; Open Key derived from the Camelot number (offset 7, `d`/`m`). `confidence` =
