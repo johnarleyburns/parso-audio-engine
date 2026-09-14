@@ -20,14 +20,39 @@ public struct TempoEstimator: Sendable {
         let hopSeconds = Double(stft.hopSize) / stft.sampleRate
         let envelope = OnsetDetector.envelope(spectra: spectra)
         let onsets = OnsetDetector.peaks(envelope, frameRateHz: 1 / hopSeconds)
-        guard let tempo = TempoAnalyzer.estimate(novelty: envelope,
-                                                 hopSeconds: hopSeconds).first else {
+        guard let initialTempo = TempoAnalyzer.estimate(novelty: envelope,
+                                                        hopSeconds: hopSeconds).first else {
             return empty
         }
 
-        let grid = BeatTracker.grid(novelty: envelope, hopSeconds: hopSeconds,
-                                    sampleRate: stft.sampleRate,
-                                    onsets: onsets, bpm: tempo.bpm)
+        // Re-rank the small set of musically plausible metric hypotheses by
+        // the onset confidence of the resulting grid. This resolves octave
+        // and 4:3 ambiguities using the actual beat positions, while keeping
+        // the broad tempo search conservative for ordinary tracks.
+        var hypotheses = [initialTempo.bpm]
+        if initialTempo.bpm < 100 { hypotheses.append(initialTempo.bpm * 2) }
+        if (115...130).contains(initialTempo.bpm) {
+            hypotheses.append(initialTempo.bpm * 0.75)
+        }
+        let ranked = hypotheses.enumerated().compactMap { index, bpm -> (Int, Double, BeatGrid)? in
+            guard let grid = BeatTracker.grid(novelty: envelope, hopSeconds: hopSeconds,
+                                              sampleRate: stft.sampleRate,
+                                              onsets: onsets, bpm: bpm),
+                  !grid.confidence.isEmpty else { return nil }
+            let mean = Double(grid.confidence.reduce(0, +)) / Double(grid.confidence.count)
+            return (index, mean, grid)
+        }.sorted {
+            if abs($0.1 - $1.1) > 0.02 { return $0.1 > $1.1 }
+            // Prefer the searched hypothesis on a near-tie. For an octave
+            // tie this remains the conservative candidate unless the faster
+            // grid has materially stronger onset support.
+            return $0.0 < $1.0
+        }
+        let selected = ranked.first
+        let tempo = selected.map { TempoCandidate(bpm: $0.2.bpm,
+                                                   confidence: initialTempo.confidence,
+                                                   rank: initialTempo.rank) } ?? initialTempo
+        let grid = selected?.2
         let downbeatIndices = grid.map {
             BeatTracker.downbeats(beatSamples: $0.beatSamples, novelty: envelope,
                                   hopSeconds: hopSeconds, sampleRate: stft.sampleRate)
