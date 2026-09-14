@@ -36,7 +36,8 @@ public struct TempoEstimator: Sendable {
         let lowTempo = TempoAnalyzer.estimate(novelty: lowEnvelope,
                                               hopSeconds: hopSeconds).first
         let useLowBand = lowTempo.map {
-            broadTempo.bpm > $0.bpm * 1.2 && $0.bpm >= 70 && $0.bpm <= 115
+            broadTempo.bpm < 160 && broadTempo.bpm > $0.bpm * 1.2
+                && $0.bpm >= 70 && $0.bpm <= 115
         } ?? false
         let tempo = useLowBand ? lowTempo! : broadTempo
         let gridEnvelope = useLowBand ? lowEnvelope : envelope

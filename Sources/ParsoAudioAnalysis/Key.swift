@@ -191,7 +191,11 @@ public enum KeyDetector {
                                                          maxFreqHz: 500))
         var fused = HPCP()
         for i in 0..<12 {
-            fused[i] = broad[i] * 0.55 + bass[i] * 0.45
+            // In a mixed recording the upper spectrum often emphasizes the
+            // fifth or a dominant synth partial. Give the low register the
+            // stronger vote so the tonic is anchored by fundamentals while
+            // the broad profile still supplies mode and melodic evidence.
+            fused[i] = broad[i] * 0.30 + bass[i] * 0.70
         }
         return fused.normalized()
     }
