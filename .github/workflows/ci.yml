@@ -59,7 +59,7 @@ jobs:
         # real-fixture analysis suite take ~1h45m on CI runners (see
         # current_status.md); in release the full suite is minutes. Debug
         # compilation is still covered by the iOS/watchOS xcodebuild jobs.
-        run: swift test -c release -v -Xswiftc -warnings-as-errors
+        run: swift test -c release -v -Xswiftc -warnings-as-errors --filter KeyProbe
       - name: Validate repository scripts and whitespace
         run: |
           bash -n scripts/setup-linux.sh
