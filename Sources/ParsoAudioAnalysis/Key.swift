@@ -199,11 +199,11 @@ public enum KeyDetector {
                                                          maxFreqHz: 500))
         var fused = HPCP()
         for i in 0..<12 {
-            // Geometric agreement retains bass fundamentals that are also
-            // present in the musical body, while suppressing isolated bass
-            // resonances that otherwise become a false tonic.
+            // Keep the full tonal field primary. A small corroborated bass
+            // contribution still resolves clean synthetic root chords without
+            // letting a single low-register resonance define a mix's key.
             let corroboratedBass = sqrt(broad[i] * bass[i])
-            fused[i] = broad[i] * 0.50 + corroboratedBass * 0.50
+            fused[i] = broad[i] * 0.80 + corroboratedBass * 0.20
         }
         return fused.normalized()
     }

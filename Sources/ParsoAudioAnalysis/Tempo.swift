@@ -10,8 +10,9 @@ import Accelerate
 /// Tempo estimation configuration (§22.3–22.4).
 public struct TempoConfig: Sendable, Equatable {
     public var range: ClosedRange<Double> = 60...220
-    /// Histogram step in BPM.
-    public var stepBPM: Double = 0.5
+    /// Histogram step in BPM. One BPM is finer than the fixture tolerance and
+    /// avoids half-step octave aliases from a rounded analysis hop.
+    public var stepBPM: Double = 1.0
     /// Comb harmonics (1...4); weight decays with `h` per App. F.4.
     public var combHarmonics: ClosedRange<Int> = 1...4
     /// Gentle prior toward common DJ tempos, used to disambiguate octave errors.
@@ -19,7 +20,7 @@ public struct TempoConfig: Sendable, Equatable {
     public var preferenceStrengthBPM: Double = 30
 
     public init(range: ClosedRange<Double> = 60...220,
-                stepBPM: Double = 0.5,
+                stepBPM: Double = 1.0,
                 combHarmonics: ClosedRange<Int> = 1...4,
                 preferredTempoCenter: Double = 125,
                 preferenceStrengthBPM: Double = 30) {
