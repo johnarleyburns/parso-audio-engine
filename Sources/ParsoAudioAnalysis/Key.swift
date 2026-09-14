@@ -195,15 +195,13 @@ public enum KeyDetector {
                                                            magnitudeExponent: 0.5))
         let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                          maxFreqHz: 500))
-        let fundamentals = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
-                                                                  maxFreqHz: 190))
         var fused = HPCP()
         for i in 0..<12 {
             // In a mixed recording the upper spectrum often emphasizes the
             // fifth or a dominant synth partial. Give the low register the
             // stronger vote so the tonic is anchored by fundamentals while
             // the broad profile still supplies mode and melodic evidence.
-            fused[i] = broad[i] * 0.30 + bass[i] * 0.45 + fundamentals[i] * 0.25
+            fused[i] = broad[i] * 0.30 + bass[i] * 0.70
         }
         return fused.normalized()
     }
