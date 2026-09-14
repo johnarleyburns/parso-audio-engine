@@ -191,17 +191,19 @@ public enum KeyDetector {
     /// the upper partials; a low-register vote stabilizes tonic selection while
     /// retaining the broad spectrum for mode and melodic evidence.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
-        let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: true,
+        let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                            magnitudeExponent: 0.5))
         let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                          maxFreqHz: 500))
+        let fundamentals = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
+                                                                  maxFreqHz: 190))
         var fused = HPCP()
         for i in 0..<12 {
             // In a mixed recording the upper spectrum often emphasizes the
             // fifth or a dominant synth partial. Give the low register the
             // stronger vote so the tonic is anchored by fundamentals while
             // the broad profile still supplies mode and melodic evidence.
-            fused[i] = broad[i] * 0.30 + bass[i] * 0.70
+            fused[i] = broad[i] * 0.30 + bass[i] * 0.45 + fundamentals[i] * 0.25
         }
         return fused.normalized()
     }
@@ -303,14 +305,6 @@ public enum KeyDetector {
         let secondBest = scores.sorted(by: >).dropFirst().first ?? 0
         let margin = max(0, bestScore - secondBest)
         let confidence = min(1.0, margin / 0.2)
-
-        // Temporary offline diagnostic for the real-fixture refinement. This
-        // branch is removed once the profile weighting is settled; it is not
-        // on any real-time path.
-        if bestTonic == 6 || bestTonic == 7 {
-            let top = scores.enumerated().sorted { $0.element > $1.element }.prefix(3)
-            print("KEY_DIAG tonic=\(bestTonic) minor=\(bestMinor) top=\(top.map { ($0.offset / 2, $0.offset % 2 == 1, $0.element) }) chroma=\(chroma)")
-        }
 
         guard let camelot = Camelot.from(tonic: bestTonic, isMinor: bestMinor) else {
             return nil
