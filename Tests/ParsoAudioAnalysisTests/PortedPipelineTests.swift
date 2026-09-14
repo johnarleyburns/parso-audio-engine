@@ -152,6 +152,19 @@ struct PortedTempoBeatTests {
 
 @Suite("Ported key")
 struct PortedKeyTests {
+    @Test(arguments: Array(0...11), [false, true])
+    func invertedChordsRetainRootAndModeAcrossRegisters(tonic: Int, isMinor: Bool) {
+        // Second inversion: the fifth is lowest, with the root and third
+        // above 500 Hz. A separately normalized bass profile loses the chord.
+        let midi = [67, 72, isMinor ? 75 : 76].map { $0 + tonic }
+        let frequencies = midi.map { 440 * pow(2, Double($0 - 69) / 12) }
+        let samples = Synth.tone(frequencies, seconds: 1)
+        let spectra = samples.withUnsafeBufferPointer { STFTKernel().spectra($0) }
+        let estimate = KeyDetector.estimate(spectra.map { KeyDetector.fusedChroma($0) })
+        #expect(estimate?.tonic == tonic)
+        #expect(estimate?.isMinor == isMinor)
+    }
+
     @Test(arguments: Array(36...71))
     func offBinTonesRetainTheirPitchClass(midi: Int) {
         let frequency = 440 * pow(2, Double(midi - 69) / 12)

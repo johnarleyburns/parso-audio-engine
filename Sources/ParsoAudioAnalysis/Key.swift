@@ -199,24 +199,12 @@ public enum KeyDetector {
         return c.normalized()
     }
 
-    /// Fuse the broad-spectrum chroma with a fundamental-weighted bass chroma.
-    /// Dense mixes often contain fifths more prominently than their roots in
-    /// the upper partials; a low-register vote stabilizes tonic selection while
-    /// retaining the broad spectrum for mode and melodic evidence.
+    /// Estimator chroma, retaining this entry point for API compatibility.
+    /// Use the full-register harmonic profile: separately normalizing and
+    /// boosting everything below 500 Hz can turn a chord's lowest fifth into
+    /// its apparent tonic when the root and third are above that cutoff.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
-        let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
-                                                           magnitudeExponent: 0.5))
-        let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
-                                                         maxFreqHz: 500))
-        var fused = HPCP()
-        for i in 0..<12 {
-            // In a mixed recording the upper spectrum often emphasizes the
-            // fifth or a dominant synth partial. Give the low register the
-            // stronger vote so the tonic is anchored by fundamentals while
-            // the broad profile still supplies mode and melodic evidence.
-            fused[i] = broad[i] * 0.30 + bass[i] * 0.70
-        }
-        return fused.normalized()
+        chroma(spectrum)
     }
 
     // MARK: - Key profiles
