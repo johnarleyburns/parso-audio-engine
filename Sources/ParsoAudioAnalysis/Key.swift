@@ -193,8 +193,8 @@ public enum KeyDetector {
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
         let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                            magnitudeExponent: 0.5))
-        let mid = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
-                                                        minFreqHz: 500,
+        let mid = chroma(spectrum, config: ChromaConfig(minFreqHz: 500,
+                                                        harmonicWeighting: false,
                                                         maxFreqHz: 2_000,
                                                         magnitudeExponent: 0.5))
         var fused = HPCP()
