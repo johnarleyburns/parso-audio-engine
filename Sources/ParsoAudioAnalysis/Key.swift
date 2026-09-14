@@ -177,7 +177,7 @@ public enum KeyDetector {
     /// the upper partials; a low-register vote stabilizes tonic selection while
     /// retaining the broad spectrum for mode and melodic evidence.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
-        let broad = chroma(spectrum)
+        let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false))
         let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                          maxFreqHz: 500))
         var fused = HPCP()
