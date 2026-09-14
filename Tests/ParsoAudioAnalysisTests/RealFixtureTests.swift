@@ -17,7 +17,7 @@ import ParsoTestSupport
 
 @Suite("KeyProbe")
 struct KeyProbeTests {
-    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.decodeFixtures.filter(\.expected.key != nil))
+    @Test(.enabled(if: FixtureLibrary.isAvailable), arguments: FixtureLibrary.decodeFixtures.filter { $0.expected.key != nil })
     func comparesChromaStrategies(_ fixture: Fixture) throws {
         let pcm = try AnalysisDecoder.decode(FixtureLibrary.url(for: fixture))
         let spectra = STFTKernel().spectra(pcm.mono)
@@ -25,7 +25,11 @@ struct KeyProbeTests {
         let harmonic = KeyDetector.estimate(spectra.map { KeyDetector.chroma($0) })
         let bass = KeyDetector.estimate(spectra.map { KeyDetector.chroma($0, config: ChromaConfig(harmonicWeighting: false, maxFreqHz: 500)) })
         let fused = KeyDetector.estimate(spectra.map { KeyDetector.fusedChroma($0) })
-        print("KEY_PROBE \(fixture.id) direct=\(direct?.musicalKey ?? \"nil\")/\(direct?.camelot.code ?? \"nil\") harmonic=\(harmonic?.musicalKey ?? \"nil\")/\(harmonic?.camelot.code ?? \"nil\") bass=\(bass?.musicalKey ?? \"nil\")/\(bass?.camelot.code ?? \"nil\") fused=\(fused?.musicalKey ?? \"nil\")/\(fused?.camelot.code ?? \"nil\")")
+        func label(_ estimate: KeyEstimate?) -> String {
+            guard let estimate else { return "nil" }
+            return "\(estimate.musicalKey)/\(estimate.camelot.code)"
+        }
+        print("KEY_PROBE \(fixture.id) direct=\(label(direct)) harmonic=\(label(harmonic)) bass=\(label(bass)) fused=\(label(fused))")
     }
 }
 
