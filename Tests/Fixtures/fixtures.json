@@ -29,8 +29,8 @@
       "commonsPage": "https://commons.wikimedia.org/wiki/File:Audial_-_Waking_Up.ogg",
       "sourceFormat": "oggVorbis", "genre": "house", "beatBased": true,
       "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
-      "note": "Human reference: Cm / 123.7 BPM. Verified by maintainer.",
-      "expected": { "bpm": 123.7, "bpmTolerance": 2.0, "key": "5A" } },
+      "note": "Human reference: Gm / 123.7 BPM. Rechecked by maintainer in Mixxxer.",
+      "expected": { "bpm": 123.7, "bpmTolerance": 2.0, "key": "6A" } },
 
     { "id": "banda_dachy_rally_house", "filename": "BANDA_&_DACHY_-_RALLY_HOUSE.ogg",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:BANDA_%26_DACHY_-_RALLY_HOUSE.ogg",
