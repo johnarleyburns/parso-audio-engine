@@ -25,36 +25,15 @@ public struct TempoEstimator: Sendable {
             return empty
         }
 
-        // Validate the selected comb hypothesis against the beat tracker. The
-        // tempogram can prefer a subdivision (or a triplet-related meter), so
-        // compare the octave and 3:4/4:3 families by their mean snapped-onset
-        // confidence. A wrong family generally leaves most grid beats in
-        // silence; a real beat family retains the onset strength.
-        let hypotheses = [tempo.bpm, tempo.bpm * 2, tempo.bpm / 2,
-                          tempo.bpm * 0.75, tempo.bpm * (4.0 / 3.0)]
-            .filter { TempoConfig().range.contains($0) }
-        let grids = hypotheses.compactMap { bpm in
-            BeatTracker.grid(novelty: envelope, hopSeconds: hopSeconds,
-                              sampleRate: stft.sampleRate,
-                              onsets: onsets, bpm: bpm)
-        }
-        let grid = grids.max {
-            let lhs = Self.gridQuality($0)
-            let rhs = Self.gridQuality($1)
-            return lhs == rhs ? $0.bpm < $1.bpm : lhs < rhs
-        }
-        let selectedTempo = grid?.bpm ?? tempo.bpm
+        let grid = BeatTracker.grid(novelty: envelope, hopSeconds: hopSeconds,
+                                    sampleRate: stft.sampleRate,
+                                    onsets: onsets, bpm: tempo.bpm)
         let downbeatIndices = grid.map {
             BeatTracker.downbeats(beatSamples: $0.beatSamples, novelty: envelope,
                                   hopSeconds: hopSeconds, sampleRate: stft.sampleRate)
         } ?? []
-        return .fromPipeline(grid: grid, tempoBPM: selectedTempo, tempoConfidence: tempo.confidence,
+        return .fromPipeline(grid: grid, tempoBPM: tempo.bpm, tempoConfidence: tempo.confidence,
                              downbeats: downbeatIndices, sampleRate: stft.sampleRate)
-    }
-
-    private static func gridQuality(_ grid: BeatGrid) -> Double {
-        guard !grid.confidence.isEmpty else { return 0 }
-        return grid.confidence.reduce(0) { $0 + Double($1) } / Double(grid.confidence.count)
     }
 }
 
