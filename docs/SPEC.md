@@ -113,7 +113,9 @@ canonical **48 kHz** analysis rate (libsamplerate, sinc-best).
 ### 5.1 Tempo / beatgrid (`TempoEstimator`)
 48 kHz mono. vDSP real-FFT STFT, Hann **4096 / hop 2048** (~23.4 fps). Onset envelope = multi-band
 half-wave-rectified spectral flux (bands 20–120 / 120–2000 / 2000–16000 Hz, percussion-weighted),
-moving-mean drift removal, normalized. Tempo = autocorrelation comb over **60–220 BPM** (harmonics
+moving-mean drift removal, normalized. For tempo, take the square root of the rectified power-domain
+novelty before autocorrelation so downbeat accents do not overwhelm intervening beats; retain the
+uncompressed envelope for beat placement and downbeat accents. Tempo = autocorrelation comb over **60–220 BPM** (harmonics
 1…4, fractional-lag interpolation) blended with an inter-onset-interval histogram, then explicit
 octave resolution (each candidate vs its ×2/÷2 under a gentle Gaussian preference centered
 **125 BPM**, bounded to **0.9…1.0** so the prior cannot suppress a clearly stronger rhythmic score).

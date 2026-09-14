@@ -81,9 +81,10 @@ struct PortedSTFTTests {
 
 @Suite("Ported tempo + beat")
 struct PortedTempoBeatTests {
-    @Test(arguments: [90.0, 93.0, 100.0, 124.0, 128.0, 174.0])
-    func combTempoMatchesClickTrack(bpm: Double) {
-        let (env, hop) = Synth.onsetEnvelope(Synth.clickTrack(bpm: bpm, seconds: 8))
+    @Test(arguments: [90.0, 93.0, 100.0, 120.0, 124.0, 128.0, 140.0, 174.0],
+          [8.0, 12.0, 20.0])
+    func combTempoMatchesClickTrack(bpm: Double, seconds: Double) {
+        let (env, hop) = Synth.onsetEnvelope(Synth.clickTrack(bpm: bpm, seconds: seconds))
         let best = TempoAnalyzer.estimate(novelty: env, hopSeconds: hop).first
         #expect(best != nil)
         #expect(abs((best?.bpm ?? 0) - bpm) <= 1.0)

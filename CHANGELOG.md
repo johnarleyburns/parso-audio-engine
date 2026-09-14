@@ -11,7 +11,8 @@ release candidate is `1.1.1`.
 ### Fixed
 - Resolve Swift analysis pitches between FFT bins and preserve full-register chord evidence,
   correcting bass-bin and chord-inversion key errors. Bound the tempo preference and refine
-  autocorrelation periods to avoid prior-driven tempo-family errors and coarse-frame BPM bias.
+  autocorrelation periods to avoid prior-driven tempo-family errors and coarse-frame BPM bias;
+  use amplitude-domain rhythmic evidence so downbeat accents do not force half-time estimates.
 - Split the native C++ API and engine translation units so the public API builds cleanly with
   subobject-linkage warnings treated as errors.
 - Align CMake, Python, JavaScript, Android, CI, documentation, and fixture-download metadata on

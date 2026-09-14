@@ -133,7 +133,12 @@ public enum TempoAnalyzer {
                                 config: TempoConfig = TempoConfig(),
                                 topK: Int = 3) -> [TempoCandidate] {
         guard novelty.count > 8 else { return [] }
-        let ac = autocorrelation(novelty)
+        // The envelope is power-domain flux. Correlating it directly squares
+        // the accent contrast again, letting loud downbeats erase quieter
+        // intervening beats. Amplitude-domain novelty keeps those beats in the
+        // tempo evidence; the uncompressed envelope still drives beat accents.
+        let rhythmicNovelty = novelty.map { max(0, $0).squareRoot() }
+        let ac = autocorrelation(rhythmicNovelty)
 
         // Inter-onset-interval histogram with octave folding: a period T and
         // 2T/½T reinforce the same tempo class (§22.3).
