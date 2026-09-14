@@ -213,7 +213,13 @@ extension TempoResult {
             meanConf = Double(min(Float(1), mean / peak))
         }
         return TempoResult(
-            bpm: grid.bpm > 0 ? grid.bpm : (tempoBPM ?? 120),
+            // Keep the estimator's selected hypothesis as the public tempo.
+            // The grid still uses its least-squares fit for sample positions,
+            // but a short or onset-sparse recording can make that fit drift
+            // several tenths of a BPM away from the searched hypothesis.
+            // Reporting the same hypothesis used to build the grid keeps the
+            // scalar BPM and beat-grid model consistent.
+            bpm: tempoBPM ?? (grid.bpm > 0 ? grid.bpm : 120),
             confidence: max(tempoConfidence, meanConf),
             beatPositions: beatPositions,
             downbeatPositions: downbeatPositions,
