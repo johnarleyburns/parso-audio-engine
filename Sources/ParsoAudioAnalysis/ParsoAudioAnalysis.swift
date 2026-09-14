@@ -219,8 +219,7 @@ extension TempoResult {
             // several tenths of a BPM away from the searched hypothesis.
             // Reporting the same hypothesis used to build the grid keeps the
             // scalar BPM and beat-grid model consistent.
-            bpm: tempoBPM.map { $0 < 160 ? $0 : (grid.bpm > 0 ? grid.bpm : $0) }
-                ?? (grid.bpm > 0 ? grid.bpm : 120),
+            bpm: (grid.bpm > 0 && grid.bpm <= 160) ? (tempoBPM ?? grid.bpm) : grid.bpm,
             confidence: max(tempoConfidence, meanConf),
             beatPositions: beatPositions,
             downbeatPositions: downbeatPositions,
