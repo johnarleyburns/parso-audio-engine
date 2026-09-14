@@ -34,7 +34,8 @@ struct TempoSyntheticTests {
         let r = TempoEstimator().analyze(track)
         // Accept exact, or half/double (octave) resolution.
         let candidates = [r.bpm, r.bpm * 2, r.bpm / 2]
-        #expect(candidates.contains { abs($0 - bpm) <= 1.0 })
+        #expect(candidates.contains { abs($0 - bpm) <= 1.0 },
+                "requested (bpm), detected (r.bpm), candidates (candidates)")
         #expect(r.confidence > 0.3)
     }
 
