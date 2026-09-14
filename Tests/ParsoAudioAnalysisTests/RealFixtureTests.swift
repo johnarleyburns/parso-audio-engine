@@ -84,7 +84,8 @@ struct FixtureTempoTests {
         if let expected = fixture.expected.bpm {
             let tol = fixture.expected.bpmTolerance ?? 2.0
             let candidates = [a.bpm, a.bpm * 2, a.bpm / 2]
-            #expect(candidates.contains { abs($0 - expected) <= tol })
+            #expect(candidates.contains { abs($0 - expected) <= tol },
+                    "\(fixture.id): detected BPM \(a.bpm), candidates \(candidates), expected \(expected)")
         }
     }
 }
@@ -103,7 +104,8 @@ struct FixtureKeyTests {
         #expect(!a.camelot.isEmpty)
 
         if let expectedKey = fixture.expected.key {
-            #expect(a.camelot == expectedKey || a.openKey == expectedKey)
+            #expect(a.camelot == expectedKey || a.openKey == expectedKey,
+                    "\(fixture.id): detected key tonic=\(a.tonic) mode=\(a.mode) Camelot=\(a.camelot) OpenKey=\(a.openKey), expected \(expectedKey)")
         }
     }
 }
