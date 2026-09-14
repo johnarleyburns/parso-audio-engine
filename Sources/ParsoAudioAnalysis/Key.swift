@@ -285,20 +285,6 @@ public enum KeyDetector {
         let stable = stableAggregate(frames)
         let chroma = (0..<12).map { mean[$0] * 0.4 + stable[$0] * 0.6 }
 
-        // Correlating one aggregate profile can let a strong sustained bass
-        // note outweigh the recurring tonal centers in the rest of a mix.
-        // Accumulate the same profile scores per frame as a complementary
-        // temporal-consensus view, then blend both views below.
-        var frameScores = [Double](repeating: 0, count: 24)
-        for frame in frames {
-            for rot in 0..<12 {
-                let rotated = (0..<12).map { frame[(rot + $0) % 12] }
-                frameScores[rot * 2] += correlate(rotated, krumhanslMajor)
-                frameScores[rot * 2 + 1] += correlate(rotated, krumhanslMinor)
-            }
-        }
-        let frameCount = Double(frames.count)
-
         var bestTonic = 0
         var bestMinor = false
         var bestScore = -Double.greatestFiniteMagnitude
@@ -308,12 +294,10 @@ public enum KeyDetector {
             let rotated = (0..<12).map { chroma[(rot + $0) % 12] }
             let sMaj = correlate(rotated, krumhanslMajor)
             let sMin = correlate(rotated, krumhanslMinor)
-            let majorScore = sMaj * 0.5 + frameScores[rot * 2] / frameCount * 0.5
-            let minorScore = sMin * 0.5 + frameScores[rot * 2 + 1] / frameCount * 0.5
-            scores.append(majorScore)
-            scores.append(minorScore)
-            if majorScore > bestScore { bestScore = majorScore; bestTonic = rot; bestMinor = false }
-            if minorScore > bestScore { bestScore = minorScore; bestTonic = rot; bestMinor = true }
+            scores.append(sMaj)
+            scores.append(sMin)
+            if sMaj > bestScore { bestScore = sMaj; bestTonic = rot; bestMinor = false }
+            if sMin > bestScore { bestScore = sMin; bestTonic = rot; bestMinor = true }
         }
 
         let secondBest = scores.sorted(by: >).dropFirst().first ?? 0
