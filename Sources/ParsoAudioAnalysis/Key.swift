@@ -15,18 +15,22 @@ public struct ChromaConfig: Sendable, Equatable {
     public var octaves: Int = 5
     /// Upper frequency used by the sparse chroma projection.
     public var maxFreqHz: Double = 8_000
+    /// Compression applied to spectral magnitudes before folding. Values
+    /// below one reduce the dominance of a single loud partial.
+    public var magnitudeExponent: Double = 1.0
     /// Harmonic weighting sharpens the tonic: each spectral partial also votes
     /// for the likely fundamental at 1/2×, 1/3× and 1/4× its frequency.
     public var harmonicWeighting: Bool = true
 
     public init(binsPerOctave: Int = 36, minFreqHz: Double = 65.4,
                 octaves: Int = 5, harmonicWeighting: Bool = true,
-                maxFreqHz: Double = 8_000) {
+                maxFreqHz: Double = 8_000, magnitudeExponent: Double = 1.0) {
         self.binsPerOctave = binsPerOctave
         self.minFreqHz = minFreqHz
         self.octaves = octaves
         self.harmonicWeighting = harmonicWeighting
         self.maxFreqHz = maxFreqHz
+        self.magnitudeExponent = magnitudeExponent
     }
 }
 
@@ -171,10 +175,11 @@ public enum KeyDetector {
                 ? spectrum.power[k + 1].squareRoot()
                 : 0
             guard mag >= previous && mag >= next && mag > 1e-6 else { continue }
-            fold(f, mag)
+            let tonalMagnitude = Float(pow(Double(mag), config.magnitudeExponent))
+            fold(f, tonalMagnitude)
             if config.harmonicWeighting {
                 for h in 2...4 {
-                    fold(f / Double(h), mag / Float(h))
+                    fold(f / Double(h), tonalMagnitude / Float(h))
                 }
             }
         }
@@ -186,7 +191,8 @@ public enum KeyDetector {
     /// the upper partials; a low-register vote stabilizes tonic selection while
     /// retaining the broad spectrum for mode and melodic evidence.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
-        let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false))
+        let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
+                                                           magnitudeExponent: 0.5))
         let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                          maxFreqHz: 500))
         var fused = HPCP()
