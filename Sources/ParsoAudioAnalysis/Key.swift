@@ -186,24 +186,22 @@ public enum KeyDetector {
         return c.normalized()
     }
 
-    /// Fuse broad-spectrum chroma with a mid-band tonal chroma. Dense mixes
-    /// often contain fifths more prominently than their roots in the upper
-    /// partials; the mid band carries stable vocal and melodic evidence while
-    /// the broad view preserves the track's overall tonal field.
+    /// Fuse the broad-spectrum chroma with a fundamental-weighted bass chroma.
+    /// Dense mixes often contain fifths more prominently than their roots in
+    /// the upper partials; a low-register vote stabilizes tonic selection while
+    /// retaining the broad spectrum for mode and melodic evidence.
     public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
         let broad = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
                                                            magnitudeExponent: 0.5))
-        let mid = chroma(spectrum, config: ChromaConfig(minFreqHz: 500,
-                                                        harmonicWeighting: false,
-                                                        maxFreqHz: 2_000,
-                                                        magnitudeExponent: 0.5))
+        let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
+                                                         maxFreqHz: 500))
         var fused = HPCP()
         for i in 0..<12 {
-            // Keep the full tonal field present, while letting the mid band
-            // carry more of the decision than sub-bass or codec/high-shelf
-            // artefacts. Geometric agreement suppresses isolated resonances.
-            let corroboratedMid = sqrt(broad[i] * mid[i])
-            fused[i] = broad[i] * 0.35 + corroboratedMid * 0.65
+            // In a mixed recording the upper spectrum often emphasizes the
+            // fifth or a dominant synth partial. Give the low register the
+            // stronger vote so the tonic is anchored by fundamentals while
+            // the broad profile still supplies mode and melodic evidence.
+            fused[i] = broad[i] * 0.30 + bass[i] * 0.70
         }
         return fused.normalized()
     }

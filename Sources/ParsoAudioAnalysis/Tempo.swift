@@ -10,9 +10,8 @@ import Accelerate
 /// Tempo estimation configuration (§22.3–22.4).
 public struct TempoConfig: Sendable, Equatable {
     public var range: ClosedRange<Double> = 60...220
-    /// Histogram step in BPM. One BPM is finer than the fixture tolerance and
-    /// avoids half-step octave aliases from a rounded analysis hop.
-    public var stepBPM: Double = 1.0
+    /// Histogram step in BPM.
+    public var stepBPM: Double = 0.5
     /// Comb harmonics (1...4); weight decays with `h` per App. F.4.
     public var combHarmonics: ClosedRange<Int> = 1...4
     /// Gentle prior toward common DJ tempos, used to disambiguate octave errors.
@@ -20,7 +19,7 @@ public struct TempoConfig: Sendable, Equatable {
     public var preferenceStrengthBPM: Double = 30
 
     public init(range: ClosedRange<Double> = 60...220,
-                stepBPM: Double = 1.0,
+                stepBPM: Double = 0.5,
                 combHarmonics: ClosedRange<Int> = 1...4,
                 preferredTempoCenter: Double = 125,
                 preferenceStrengthBPM: Double = 30) {
@@ -102,29 +101,16 @@ public enum TempoAnalyzer {
         // Inter-onset-interval histogram with octave folding: a period T and
         // 2T/½T reinforce the same tempo class (§22.3).
         let peaks = OnsetDetector.peaks(novelty, config: OnsetConfig(), frameRateHz: 1 / hopSeconds)
-        var ioiTempos: [Double] = []
+        var ioiHistogram: [Double: Double] = [:]
         if peaks.count >= 2 {
             for i in 0..<(peaks.count - 1) {
-                let interval = peaks[i + 1].timeSeconds - peaks[i].timeSeconds
+                var interval = peaks[i + 1].timeSeconds - peaks[i].timeSeconds
                 // Octave-fold into the search range's BPM band (60–220 BPM).
                 var bpm = 60.0 / interval
-                while bpm < config.range.lowerBound { bpm *= 2 }
-                while bpm > config.range.upperBound { bpm /= 2 }
-                if config.range.contains(bpm) { ioiTempos.append(bpm) }
+                while bpm < config.range.lowerBound { bpm *= 2; interval /= 2 }
+                while bpm > config.range.upperBound { bpm /= 2; interval *= 2 }
+                ioiHistogram[interval, default: 0] += 1
             }
-        }
-
-        // Match onset intervals continuously rather than looking up an exact
-        // floating-point dictionary key. Refined onset times do not land on
-        // the half-BPM grid, so the old lookup almost always returned zero.
-        func ioiScore(_ candidate: Double) -> Double {
-            guard !ioiTempos.isEmpty else { return 0 }
-            let sigma = 0.035 // roughly a quarter-tone in tempo ratio
-            let total = ioiTempos.reduce(0.0) { partial, observed in
-                let distance = log2(candidate / observed)
-                return partial + exp(-0.5 * (distance / sigma) * (distance / sigma))
-            }
-            return total / Double(ioiTempos.count)
         }
 
         // Score each candidate BPM: autocorrelation comb + IOI histogram, with
@@ -134,7 +120,9 @@ public enum TempoAnalyzer {
         while bpm <= config.range.upperBound {
             let comb = combScore(bpm: bpm, autocorrelation: ac,
                                  hopSeconds: hopSeconds, config: config)
-            let raw = comb + ioiScore(bpm) * 0.5
+            let period = 60.0 / bpm
+            let ioiVotes = ioiHistogram[period, default: 0]
+            let raw = comb + ioiVotes * 0.5
             scored.append((bpm, raw))
             bpm += config.stepBPM
         }
@@ -145,18 +133,10 @@ public enum TempoAnalyzer {
         // clear half/double-tempo error resolves to the true BPM (§22.4).
         var winners: [Int: TempoCandidate] = [:]
         for s in scored {
-            var variants = [s.bpm, s.bpm / 2, s.bpm * 2]
-            // A common DJ ambiguity is a quarter-note pulse being reported as
-            // a dotted-quarter pulse (4:3). Consider that alternate only in
-            // the ordinary house/disco band; keeping it out of the full search
-            // prevents arbitrary metric families from outranking a clear beat.
-            if (115...130).contains(s.bpm) {
-                variants.append(s.bpm * 0.75)
-            }
-            variants = variants.filter { config.range.contains($0) }
+            let variants = [s.bpm, s.bpm / 2, s.bpm * 2].filter { config.range.contains($0) }
             let bestVariant = variants.max { a, b in
-                let ca = combScore(bpm: a, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(a, config: config) + ioiScore(a) * 0.5
-                let cb = combScore(bpm: b, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(b, config: config) + ioiScore(b) * 0.5
+                let ca = combScore(bpm: a, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(a, config: config)
+                let cb = combScore(bpm: b, autocorrelation: ac, hopSeconds: hopSeconds, config: config) * priorWeight(b, config: config)
                 return ca < cb
             } ?? s.bpm
 
@@ -164,7 +144,7 @@ public enum TempoAnalyzer {
             let key = Int((bestVariant / config.stepBPM).rounded())
             let weighted = combScore(bpm: bestVariant, autocorrelation: ac,
                                      hopSeconds: hopSeconds, config: config)
-                * priorWeight(bestVariant, config: config) + ioiScore(bestVariant) * 0.5
+                * priorWeight(bestVariant, config: config)
             if let existing = winners[key] {
                 // Keep the stronger of the two if the same family won twice.
                 if weighted > existing.confidence {
