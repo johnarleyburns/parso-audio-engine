@@ -13,16 +13,20 @@ public struct ChromaConfig: Sendable, Equatable {
     public var binsPerOctave: Int = 36
     public var minFreqHz: Double = 65.4      // C2
     public var octaves: Int = 5
+    /// Upper frequency used by the sparse chroma projection.
+    public var maxFreqHz: Double = 8_000
     /// Harmonic weighting sharpens the tonic: each spectral partial also votes
     /// for the likely fundamental at 1/2×, 1/3× and 1/4× its frequency.
     public var harmonicWeighting: Bool = true
 
     public init(binsPerOctave: Int = 36, minFreqHz: Double = 65.4,
-                octaves: Int = 5, harmonicWeighting: Bool = true) {
+                octaves: Int = 5, harmonicWeighting: Bool = true,
+                maxFreqHz: Double = 8_000) {
         self.binsPerOctave = binsPerOctave
         self.minFreqHz = minFreqHz
         self.octaves = octaves
         self.harmonicWeighting = harmonicWeighting
+        self.maxFreqHz = maxFreqHz
     }
 }
 
@@ -145,7 +149,7 @@ public enum KeyDetector {
         let tolerance = 0.25
 
         func fold(_ frequency: Double, _ weight: Float) {
-            guard frequency >= config.minFreqHz / 2, frequency <= 8_000 else { return }
+            guard frequency >= config.minFreqHz / 2, frequency <= config.maxFreqHz else { return }
             let midi = 69 + 12 * log2(frequency / 440.0)
             let nearest = midi.rounded()
             let pc = ((Int(nearest) % 12) + 12) % 12
@@ -166,6 +170,21 @@ public enum KeyDetector {
             }
         }
         return c.normalized()
+    }
+
+    /// Fuse the broad-spectrum chroma with a fundamental-weighted bass chroma.
+    /// Dense mixes often contain fifths more prominently than their roots in
+    /// the upper partials; a low-register vote stabilizes tonic selection while
+    /// retaining the broad spectrum for mode and melodic evidence.
+    public static func fusedChroma(_ spectrum: Spectrum) -> HPCP {
+        let broad = chroma(spectrum)
+        let bass = chroma(spectrum, config: ChromaConfig(harmonicWeighting: false,
+                                                         maxFreqHz: 500))
+        var fused = HPCP()
+        for i in 0..<12 {
+            fused[i] = broad[i] * 0.55 + bass[i] * 0.45
+        }
+        return fused.normalized()
     }
 
     // MARK: - Key profiles
