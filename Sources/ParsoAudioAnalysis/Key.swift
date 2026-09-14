@@ -13,8 +13,8 @@ public struct ChromaConfig: Sendable, Equatable {
     public var binsPerOctave: Int = 36
     public var minFreqHz: Double = 65.4      // C2
     public var octaves: Int = 5
-    /// Harmonic weighting sharpens the tonic: each CQT bin also votes at 2×/3×/4×
-    /// its frequency with decaying weight.
+    /// Harmonic weighting sharpens the tonic: each spectral partial also votes
+    /// for the likely fundamental at 1/2×, 1/3× and 1/4× its frequency.
     public var harmonicWeighting: Bool = true
 
     public init(binsPerOctave: Int = 36, minFreqHz: Double = 65.4,
@@ -134,7 +134,8 @@ public enum KeyDetector {
     /// magnitude folds into the nearest pitch class with a Gaussian weight
     /// (tuning tolerance, ~50 cents), so a tone off A440 still lands cleanly on
     /// its class instead of smearing. Optional harmonic weighting reinforces the
-    /// tonic by also folding each bin at ×2/×3/×4 with decaying weight.
+    /// tonic by also folding each observed partial at ÷2/÷3/÷4 to its likely
+    /// fundamental with decaying weight.
     public static func chroma(_ spectrum: Spectrum, config: ChromaConfig = ChromaConfig()) -> HPCP {
         var c = HPCP()
         let binHz = spectrum.binHz
@@ -160,7 +161,7 @@ public enum KeyDetector {
             fold(f, mag)
             if config.harmonicWeighting {
                 for h in 2...4 {
-                    fold(f * Double(h), mag / Float(h))
+                    fold(f / Double(h), mag / Float(h))
                 }
             }
         }
