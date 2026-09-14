@@ -162,6 +162,15 @@ public enum KeyDetector {
         for k in 1..<spectrum.power.count {
             let f = Double(k) * binHz
             let mag = spectrum.power[k].squareRoot()
+            // Integrating every FFT-bin skirt counts broadband energy as if it
+            // were tonal evidence. Keep local spectral maxima so a loud kick,
+            // cymbal, or codec-noise shelf cannot overwhelm the pitch classes
+            // carried by the musical partials.
+            let previous = spectrum.power[k - 1].squareRoot()
+            let next = k + 1 < spectrum.power.count
+                ? spectrum.power[k + 1].squareRoot()
+                : 0
+            guard mag >= previous && mag >= next && mag > 1e-6 else { continue }
             fold(f, mag)
             if config.harmonicWeighting {
                 for h in 2...4 {
