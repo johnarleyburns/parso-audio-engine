@@ -115,7 +115,13 @@ canonical **48 kHz** analysis rate (libsamplerate, sinc-best).
 half-wave-rectified spectral flux (bands 20–120 / 120–2000 / 2000–16000 Hz, percussion-weighted),
 moving-mean drift removal, normalized. Tempo = autocorrelation comb over **60–220 BPM** (harmonics
 1…4, fractional-lag interpolation) blended with an inter-onset-interval histogram, then explicit
-octave resolution (each candidate vs its ×2/÷2 under a gentle Gaussian prior centered **125 BPM**).
+octave resolution (each candidate vs its ×2/÷2 under a gentle Gaussian preference centered
+**125 BPM**, bounded to **0.9…1.0** so the prior cannot suppress a clearly stronger rhythmic score).
+Refine the selected period by weighted least-squares fitting local autocorrelation peaks at its
+first 16 multiples, using three-point parabolic peak positions. Search within max(1 frame, 2% of
+the expected lag), retain only local maxima, and reject refinements outside the search range or
+more than 2% from the selected BPM. This corrects integer-frame lag bias without changing tempo
+families or relying on the snapped beat grid.
 Beat grid: Ellis-style dynamic-programming tracker maximizing `Σ onset(b) − λ·(log Δt/P)²`, re-phased
 to a rigid constant-tempo grid, beats snapped to nearby onsets and sub-frame-refined; BPM re-fit by
 least-squares over `(beat index, sample)`. Downbeats: the bar phase (of 4) with the strongest mean
@@ -123,9 +129,13 @@ accent. `isConstantTempo = true`. `confidence` = normalized comb/prior score, fl
 per-beat grid confidence.
 
 ### 5.2 Key (`KeyEstimator`)
-48 kHz mono, same STFT. Per-frame HPCP chroma: each bin folds onto the nearest pitch class with a
-Gaussian tuning weight (~25 cents) and harmonic reinforcement at ×2/×3/×4; frames averaged and
-L1-normalized. Correlate (Pearson) against **Krumhansl–Schmuckler** major/minor profiles
+48 kHz mono, same STFT. Per-frame HPCP chroma uses local spectral maxima, with three-point quadratic
+interpolation of log magnitude to estimate the frequency between FFT bins **before** folding onto
+the nearest pitch class with a Gaussian tuning weight (~25 cents). Bass-bin centers at this FFT
+size are too widely spaced to represent semitones. The public chroma helper optionally reinforces
+fundamentals at ÷2/÷3/÷4; the estimator fuses normalized broad (30%, square-root magnitude compression)
+and bass (70%, up to 500 Hz) profiles without harmonic reinforcement. It blends the normalized
+frame mean (40%) and per-pitch median (60%). Correlate (Pearson) against **Krumhansl–Schmuckler** major/minor profiles
 (`KeyDetector.krumhanslMajor/Minor`) rotated over 12 tonics; argmax → `(tonic, mode)`. Camelot from
 the wheel table; Open Key derived from the Camelot number (offset 7, `d`/`m`). `confidence` =
 `(best − runnerUp) / 0.2`, clamped.

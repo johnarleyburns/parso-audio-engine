@@ -83,11 +83,48 @@ public enum TempoAnalyzer {
         return score
     }
 
-    /// Tempo prior: a broad Gaussian around the preferred center. Applied as an
-    /// additive factor so a clearly-scoring true tempo still wins.
+    /// Bounded preference around the preferred center. The prior may break an
+    /// ambiguity, but must not erase rhythmic evidence far from 125 BPM.
     static func priorWeight(_ bpm: Double, config: TempoConfig) -> Double {
         let d = (bpm - config.preferredTempoCenter) / config.preferenceStrengthBPM
-        return exp(-0.5 * d * d)
+        return 0.9 + 0.1 * exp(-0.5 * d * d)
+    }
+
+    /// Refine the selected period using the spacing of nearby autocorrelation
+    /// peaks. Linear sampling of a coarse envelope favors integer-frame lags;
+    /// fitting several multiples of the period recovers sub-frame precision
+    /// without switching to another rhythmic hypothesis or fitting snapped beats.
+    static func refinedBPM(_ bpm: Double, autocorrelation ac: [Float],
+                           hopSeconds: Double, config: TempoConfig) -> Double {
+        guard ac.count > 2, bpm > 0, hopSeconds > 0 else { return bpm }
+        let period = 60 / bpm / hopSeconds
+        var numerator = 0.0
+        var denominator = 0.0
+        for harmonic in 1...16 {
+            let h = Double(harmonic)
+            let target = period * h
+            let radius = max(1, target * 0.02)
+            let lo = max(1, Int(floor(target - radius)))
+            let hi = min(ac.count - 2, Int(ceil(target + radius)))
+            guard lo <= hi else { continue }
+            var peak = lo
+            for index in lo...hi where ac[index] > ac[peak] { peak = index }
+            guard ac[peak] > 0, ac[peak] > ac[peak - 1],
+                  ac[peak] >= ac[peak + 1] else { continue }
+            let left = Double(ac[peak - 1])
+            let center = Double(ac[peak])
+            let right = Double(ac[peak + 1])
+            let curvature = left - 2 * center + right
+            guard curvature < 0 else { continue }
+            let lag = Double(peak) + 0.5 * (left - right) / curvature
+            guard abs(lag - target) <= radius else { continue }
+            numerator += center * h * lag
+            denominator += center * h * h
+        }
+        guard denominator > 0, numerator > 0 else { return bpm }
+        let refined = 60 / (numerator / denominator) / hopSeconds
+        guard config.range.contains(refined), abs(refined - bpm) <= bpm * 0.02 else { return bpm }
+        return refined
     }
 
     /// Estimate tempo from the onset novelty envelope. Returns the top-K
@@ -167,7 +204,9 @@ public enum TempoAnalyzer {
             .prefix(topK)
             .map { TempoCandidate(bpm: $0.bpm, confidence: normalized($0.confidence, among: Array(winners.values)), rank: $0.rank) }
         return sorted.enumerated().map { idx, c in
-            TempoCandidate(bpm: c.bpm, confidence: c.confidence, rank: idx)
+            TempoCandidate(bpm: refinedBPM(c.bpm, autocorrelation: ac,
+                                           hopSeconds: hopSeconds, config: config),
+                           confidence: c.confidence, rank: idx)
         }
     }
 

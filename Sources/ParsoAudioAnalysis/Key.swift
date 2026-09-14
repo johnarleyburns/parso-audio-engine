@@ -138,18 +138,17 @@ public enum KeyDetector {
 
     // MARK: - Per-frame chroma
 
-    /// Per-frame HPCP from one spectrum (App. F.6, §24.1). Each FFT bin's
-    /// magnitude folds into the nearest pitch class with a Gaussian weight
-    /// (tuning tolerance, ~50 cents), so a tone off A440 still lands cleanly on
-    /// its class instead of smearing. Optional harmonic weighting reinforces the
+    /// Per-frame HPCP from one spectrum (App. F.6, §24.1). Interpolated spectral
+    /// peaks fold into the nearest pitch class with a Gaussian tuning weight
+    /// (~25 cents). Optional harmonic weighting reinforces the
     /// tonic by also folding each observed partial at ÷2/÷3/÷4 to its likely
     /// fundamental with decaying weight.
     public static func chroma(_ spectrum: Spectrum, config: ChromaConfig = ChromaConfig()) -> HPCP {
         var c = HPCP()
         let binHz = spectrum.binHz
-        // Gaussian half-width in semitones (~25 cents): wide enough to absorb
-        // detuned instruments and FFT-bin quantization, narrow enough that a
-        // tone folds onto exactly one pitch class.
+        // Gaussian half-width in semitones (~25 cents). Estimate the actual
+        // peak frequency before applying this weight: at 48 kHz / 4096, bass
+        // bins span multiple semitones and cannot themselves identify a note.
         let tolerance = 0.25
 
         func fold(_ frequency: Double, _ weight: Float) {
@@ -164,7 +163,6 @@ public enum KeyDetector {
         }
 
         for k in 1..<spectrum.power.count {
-            let f = Double(k) * binHz
             let mag = spectrum.power[k].squareRoot()
             // Integrating every FFT-bin skirt counts broadband energy as if it
             // were tonal evidence. Keep local spectral maxima so a loud kick,
@@ -175,6 +173,21 @@ public enum KeyDetector {
                 ? spectrum.power[k + 1].squareRoot()
                 : 0
             guard mag >= previous && mag >= next && mag > 1e-6 else { continue }
+            // Three-point quadratic interpolation in log magnitude. A Hann
+            // main lobe is smooth between bins; rounding to its largest bin
+            // mislabels, for example, A2 (110 Hz) as G#2 (105.47 Hz).
+            // Keep a boundary peak unshifted when its right neighbor is absent.
+            var offset = 0.0
+            if k + 1 < spectrum.power.count {
+                let left = log(max(Double(previous), 1e-12))
+                let center = log(Double(mag))
+                let right = log(max(Double(next), 1e-12))
+                let curvature = left - 2 * center + right
+                if curvature < -1e-12 {
+                    offset = max(-0.5, min(0.5, 0.5 * (left - right) / curvature))
+                }
+            }
+            let f = (Double(k) + offset) * binHz
             let tonalMagnitude = Float(pow(Double(mag), config.magnitudeExponent))
             fold(f, tonalMagnitude)
             if config.harmonicWeighting {

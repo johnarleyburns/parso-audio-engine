@@ -81,7 +81,7 @@ struct PortedSTFTTests {
 
 @Suite("Ported tempo + beat")
 struct PortedTempoBeatTests {
-    @Test(arguments: [90.0, 100.0, 124.0, 128.0])
+    @Test(arguments: [90.0, 93.0, 100.0, 124.0, 128.0, 174.0])
     func combTempoMatchesClickTrack(bpm: Double) {
         let (env, hop) = Synth.onsetEnvelope(Synth.clickTrack(bpm: bpm, seconds: 8))
         let best = TempoAnalyzer.estimate(novelty: env, hopSeconds: hop).first
@@ -152,6 +152,21 @@ struct PortedTempoBeatTests {
 
 @Suite("Ported key")
 struct PortedKeyTests {
+    @Test(arguments: Array(36...71))
+    func offBinTonesRetainTheirPitchClass(midi: Int) {
+        let frequency = 440 * pow(2, Double(midi - 69) / 12)
+        let samples = Synth.tone([frequency], seconds: 0.1)
+        let spectrum = samples.withUnsafeBufferPointer {
+            STFTKernel().spectrum($0.baseAddress!)
+        }
+        let chroma = KeyDetector.chroma(spectrum,
+                                       config: ChromaConfig(harmonicWeighting: false))
+        let strongest = chroma.values.indices.max { chroma[$0] < chroma[$1] }
+        #expect(strongest == midi % 12,
+                "MIDI \(midi) at \(frequency) Hz must not be rounded to an FFT-bin pitch")
+        #expect(chroma[midi % 12] > 0.9)
+    }
+
     private func chroma(_ freqs: [Double], seconds: Double) -> [HPCP] {
         let spectra = Synth.tone(freqs, seconds: seconds).withUnsafeBufferPointer { STFTKernel().spectra($0) }
         return spectra.map { KeyDetector.chroma($0) }
