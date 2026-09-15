@@ -105,6 +105,27 @@ done
 The individual files are the authoritative listening artifacts; the loop is
 intentionally sequential but each scenario can also be launched on its own.
 
+### Optional Linux spoken listening guide
+
+If the effect cues are difficult to follow, Linux reviewers can generate derived WAV copies with
+clear spoken instructions at the beginning of each file. This is an optional developer aid only:
+it is not a product dependency, is not run by the build or CI, and never changes the authoritative
+source WAVs. The first run installs the CPU-only Kyutai Pocket TTS environment and downloads its
+model into a user-local cache; use a persistent output directory outside the repository:
+
+```bash
+./scripts/generate-linux-tts-review.sh \
+  --input-dir /tmp/parso-linux-music-review/python \
+  --output-dir /tmp/parso-linux-music-review/pocket-tts-preview
+```
+
+The generated `*_pocket-tts-guided.wav` files contain a spoken cue followed by the unchanged
+source audio, and `tts-preview.json` records the source commit, model/voice sources, instructions,
+and pending human-review status. The script uses Pocket TTS code under MIT; its downloaded model
+weights are CC-BY-4.0 and are not redistributed by this project. The default voice is from Kyutai's
+CC0 voice collection. To use a different catalog voice or conditioning file, pass `--voice
+NAME|PATH|URL` and verify that voice's license before distributing any derived audio.
+
 Index generated Linux artifacts before review so the files, native commit, format, duration, and
 human status are recorded together:
 

@@ -63,6 +63,7 @@ jobs:
       - name: Validate repository scripts and whitespace
         run: |
           bash -n scripts/setup-linux.sh
+          bash -n scripts/generate-linux-tts-review.sh
           git diff --check
       - name: SPDX copyleft guard
         run: |
@@ -100,6 +101,7 @@ jobs:
       - name: Validate repository scripts and whitespace
         run: |
           bash -n scripts/setup-linux.sh
+          bash -n scripts/generate-linux-tts-review.sh
           git diff --check
       - name: Build native CMake targets
         run: |
