@@ -27,6 +27,10 @@ PARSO_API parso_status_t parso_control_init(parso_control_t *control) {
     control->master_eq_low = 0.0f;
     control->master_eq_mid = 0.0f;
     control->master_eq_high = 0.0f;
+    control->mic_talkover_depth_db = -14.0f;
+    control->cue_master_mix = 0.5f;
+    control->headphone_level = 0.7f;
+    control->booth_level = 0.8f;
     for (uint32_t index = 0; index < PARSO_MAX_DECKS; ++index) {
         control->xfade_assign[index] = 2.0f;
         control->fader[index] = 1.0f;
@@ -157,6 +161,19 @@ PARSO_API parso_status_t parso_engine_set_control(
         nativeControl.limiter_ceiling_db = control->limiter_ceiling_db;
         nativeControl.limiter_enabled = control->limiter_enabled;
         nativeControl.mic_level = control->mic_level;
+        nativeControl.mic_eq_low = control->mic_eq_low;
+        nativeControl.mic_eq_high = control->mic_eq_high;
+        nativeControl.mic_talkover_on = control->mic_talkover_on;
+        nativeControl.mic_talkover_depth_db = control->mic_talkover_depth_db;
+        nativeControl.mic_talkover_threshold = control->mic_talkover_threshold;
+        nativeControl.mic_fx_on = control->mic_fx_on;
+        nativeControl.cue_master_mix = control->cue_master_mix;
+        nativeControl.master_cue = control->master_cue;
+        nativeControl.headphone_level = control->headphone_level;
+        nativeControl.booth_level = control->booth_level;
+        nativeControl.booth_eq_low = control->booth_eq_low;
+        nativeControl.booth_eq_mid = control->booth_eq_mid;
+        nativeControl.booth_eq_high = control->booth_eq_high;
         for (uint32_t index = 0; index < PARSO_MAX_DECKS; ++index) {
             nativeControl.xfade_assign[index] = control->xfade_assign[index];
             nativeControl.fader[index] = control->fader[index];
@@ -187,6 +204,8 @@ PARSO_API parso_status_t parso_engine_set_control(
             nativeControl.deck_time_ratio[index] = control->deck_time_ratio[index];
             nativeControl.deck_pitch[index] = control->deck_pitch[index];
             nativeControl.deck_keylock[index] = control->deck_keylock[index];
+            nativeControl.cue_pfl[index] = control->cue_pfl[index];
+            nativeControl.fader_start[index] = control->fader_start[index];
         }
         pe_set_control(engine->handle.engine, &nativeControl);
         lastError = "ok";
@@ -221,6 +240,69 @@ PARSO_API parso_status_t parso_engine_set_deck_buffer(
         return PARSO_STATUS_OK;
     } catch (...) {
         return fail(PARSO_STATUS_INTERNAL, "exception caught while setting deck buffer");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_set_stem_buffer(
+    parso_engine_t *engine, uint32_t deck, uint32_t voice,
+    const parso_pcm_view_t *view
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (deck >= engine->handle.deckCount || voice >= 4u)
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "stem deck or voice is out of range");
+        const parso_status_t viewStatus = validateView(view);
+        if (viewStatus != PARSO_STATUS_OK) return viewStatus;
+        if (view->frames > static_cast<uint64_t>(INT64_MAX))
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "stem frame count exceeds signed 64-bit range");
+        pe_deck_set_stem_buffer(
+            engine->handle.engine, static_cast<int>(deck), static_cast<int>(voice),
+            view->planes, static_cast<int>(view->channel_count),
+            static_cast<int64_t>(view->frames)
+        );
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while setting stem buffer");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_clear_stems(
+    parso_engine_t *engine, uint32_t deck
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (deck >= engine->handle.deckCount)
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "stem deck is out of range");
+        pe_deck_clear_stems(engine->handle.engine, static_cast<int>(deck));
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while clearing stems");
+    }
+}
+
+PARSO_API parso_status_t parso_engine_set_sampler_slot(
+    parso_engine_t *engine, uint32_t slot, const parso_pcm_view_t *view
+) {
+    try {
+        if (validateEngine(engine ? &engine->handle : nullptr) != PARSO_STATUS_OK)
+            return PARSO_STATUS_CLOSED;
+        if (slot >= 16u) return fail(PARSO_STATUS_INVALID_ARGUMENT, "sampler slot is out of range");
+        const parso_status_t viewStatus = validateView(view);
+        if (viewStatus != PARSO_STATUS_OK) return viewStatus;
+        if (view->frames > static_cast<uint64_t>(INT64_MAX))
+            return fail(PARSO_STATUS_INVALID_ARGUMENT, "sampler frame count exceeds signed 64-bit range");
+        pe_sampler_set_slot(
+            engine->handle.engine, static_cast<int>(slot), view->planes,
+            static_cast<int>(view->channel_count), static_cast<int64_t>(view->frames)
+        );
+        lastError = "ok";
+        return PARSO_STATUS_OK;
+    } catch (...) {
+        return fail(PARSO_STATUS_INTERNAL, "exception caught while setting sampler slot");
     }
 }
 

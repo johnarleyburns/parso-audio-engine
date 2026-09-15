@@ -446,6 +446,21 @@ class _Control(ctypes.Structure):
         ("deck_time_ratio", ctypes.c_float * 4),
         ("deck_pitch", ctypes.c_float * 4),
         ("deck_keylock", ctypes.c_float * 4),
+        ("mic_eq_low", ctypes.c_float),
+        ("mic_eq_high", ctypes.c_float),
+        ("mic_talkover_on", ctypes.c_float),
+        ("mic_talkover_depth_db", ctypes.c_float),
+        ("mic_talkover_threshold", ctypes.c_float),
+        ("mic_fx_on", ctypes.c_float),
+        ("cue_master_mix", ctypes.c_float),
+        ("master_cue", ctypes.c_float),
+        ("headphone_level", ctypes.c_float),
+        ("cue_pfl", ctypes.c_float * 4),
+        ("fader_start", ctypes.c_float * 4),
+        ("booth_level", ctypes.c_float),
+        ("booth_eq_low", ctypes.c_float),
+        ("booth_eq_mid", ctypes.c_float),
+        ("booth_eq_high", ctypes.c_float),
     ]
 
 
@@ -1207,6 +1222,8 @@ class Engine:
         self._max_frames = max_frames
         self._deck_count = deck_count
         self._deck_buffers: dict[int, tuple[tuple[array, ...], object]] = {}
+        self._stem_buffers: dict[tuple[int, int], tuple[tuple[array, ...], object]] = {}
+        self._sampler_buffers: dict[int, tuple[tuple[array, ...], object]] = {}
         self._mic_buffer: Optional[tuple[tuple[array, ...], object]] = None
 
     def _configure_functions(self) -> None:
@@ -1235,6 +1252,16 @@ class Engine:
             ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_PcmView)
         ]
         library.parso_engine_set_deck_buffer.restype = ctypes.c_int32
+        library.parso_engine_set_stem_buffer.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(_PcmView)
+        ]
+        library.parso_engine_set_stem_buffer.restype = ctypes.c_int32
+        library.parso_engine_clear_stems.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        library.parso_engine_clear_stems.restype = ctypes.c_int32
+        library.parso_engine_set_sampler_slot.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(_PcmView)
+        ]
+        library.parso_engine_set_sampler_slot.restype = ctypes.c_int32
         library.parso_engine_set_mic_buffer.argtypes = [
             ctypes.c_void_p, ctypes.POINTER(_PcmView)
         ]
@@ -1292,6 +1319,8 @@ class Engine:
             self._raise_for_status(status, "engine destruction")
             self._handle = ctypes.c_void_p()
             self._deck_buffers.clear()
+            self._stem_buffers.clear()
+            self._sampler_buffers.clear()
             self._mic_buffer = None
 
     @_engine_synchronized
@@ -1348,6 +1377,7 @@ class Engine:
         self,
         *,
         crossfader: float = 0.0,
+        xfade_curve: float = 0.0,
         master_level: float = 0.8,
         xfade_assign: tuple[float, float, float, float] = (0.0, 1.0, 2.0, 2.0),
         fader: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
@@ -1376,6 +1406,25 @@ class Engine:
         deck_time_ratio: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
         deck_pitch: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
         deck_keylock: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        limiter_ceiling_db: float = -0.3,
+        limiter_enabled: bool = True,
+        mic_level: float = 0.0,
+        cue_mode: float = 0.0,
+        mic_eq_low: float = 0.0,
+        mic_eq_high: float = 0.0,
+        mic_talkover_on: bool = False,
+        mic_talkover_depth_db: float = -14.0,
+        mic_talkover_threshold: float = 0.02,
+        mic_fx_on: bool = False,
+        cue_master_mix: float = 0.5,
+        master_cue: bool = False,
+        headphone_level: float = 0.7,
+        cue_pfl: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        fader_start: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+        booth_level: float = 0.8,
+        booth_eq_low: float = 0.0,
+        booth_eq_mid: float = 0.0,
+        booth_eq_high: float = 0.0,
     ) -> None:
         """Publish the portable mixer/FX snapshot used by offline scenarios."""
 
@@ -1383,6 +1432,7 @@ class Engine:
         control = _Control(size=ctypes.sizeof(_Control), abi_version=self._ABI_VERSION)
         self._call("control initialization", self._library.parso_control_init, control)
         control.crossfader = crossfader
+        control.xfade_curve = xfade_curve
         control.master_level = master_level
         for name, values in (
             ("xfade_assign", xfade_assign), ("fader", fader), ("trim", trim),
@@ -1390,7 +1440,8 @@ class Engine:
             ("color_amount", color_amount), ("color_kind", color_kind),
             ("color_param", color_param),
             ("deck_time_ratio", deck_time_ratio), ("deck_pitch", deck_pitch),
-            ("deck_keylock", deck_keylock),
+            ("deck_keylock", deck_keylock), ("cue_pfl", cue_pfl),
+            ("fader_start", fader_start),
         ):
             if len(values) != 4:
                 raise ValueError(f"{name} must contain four deck values")
@@ -1412,6 +1463,23 @@ class Engine:
         control.master_eq_low = master_eq_low
         control.master_eq_mid = master_eq_mid
         control.master_eq_high = master_eq_high
+        control.limiter_ceiling_db = limiter_ceiling_db
+        control.limiter_enabled = float(limiter_enabled)
+        control.mic_level = mic_level
+        control.cue_mode = cue_mode
+        control.mic_eq_low = mic_eq_low
+        control.mic_eq_high = mic_eq_high
+        control.mic_talkover_on = float(mic_talkover_on)
+        control.mic_talkover_depth_db = mic_talkover_depth_db
+        control.mic_talkover_threshold = mic_talkover_threshold
+        control.mic_fx_on = float(mic_fx_on)
+        control.cue_master_mix = cue_master_mix
+        control.master_cue = float(master_cue)
+        control.headphone_level = headphone_level
+        control.booth_level = booth_level
+        control.booth_eq_low = booth_eq_low
+        control.booth_eq_mid = booth_eq_mid
+        control.booth_eq_high = booth_eq_high
         status = self._library.parso_engine_set_control(self._handle, ctypes.byref(control))
         self._raise_for_status(status, "setting mixer controls")
 
@@ -1450,6 +1518,95 @@ class Engine:
         )
         self._raise_for_status(status, "setting deck buffer")
         self._deck_buffers[deck] = (channel_planes, planes)
+
+    @_engine_synchronized
+    def set_stem_buffer(
+        self,
+        deck: int,
+        voice: int,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+    ) -> None:
+        """Install one resident stem voice for a deck.
+
+        Voices are numbered vocals=0, drums=1, bass=2, other=3. The copied
+        planes remain alive until replacement, ``clear_stems``, or ``close``.
+        """
+
+        self._ensure_open()
+        if deck < 0 or deck >= self._deck_count or not 0 <= voice < 4:
+            raise ValueError("deck or stem voice is out of range")
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        channel_planes = tuple(
+            array("f", pcm[index::channel_count]) for index in range(channel_count)
+        )
+        pointer_type = ctypes.POINTER(ctypes.c_float)
+        planes = (pointer_type * channel_count)()
+        for index, channel in enumerate(channel_planes):
+            planes[index] = ctypes.cast(channel.buffer_info()[0], pointer_type)
+        view = _PcmView(
+            size=ctypes.sizeof(_PcmView), abi_version=self._ABI_VERSION,
+            planes=planes, frames=len(pcm) // channel_count,
+            channel_count=channel_count, sample_rate_hz=sample_rate_hz,
+        )
+        status = self._library.parso_engine_set_stem_buffer(
+            self._handle, deck, voice, ctypes.byref(view)
+        )
+        self._raise_for_status(status, "setting stem buffer")
+        self._stem_buffers[(deck, voice)] = (channel_planes, planes)
+
+    @_engine_synchronized
+    def clear_stems(self, deck: int) -> None:
+        """Disarm all stem voices on a deck and restore its full-mix source."""
+
+        self._ensure_open()
+        if deck < 0 or deck >= self._deck_count:
+            raise ValueError("deck is out of range")
+        status = self._library.parso_engine_clear_stems(self._handle, deck)
+        self._raise_for_status(status, "clearing stems")
+        for voice in range(4):
+            self._stem_buffers.pop((deck, voice), None)
+
+    @_engine_synchronized
+    def set_sampler_slot(
+        self,
+        slot: int,
+        samples: Samples,
+        sample_rate_hz: int,
+        channel_count: int,
+    ) -> None:
+        """Install copied PCM for one of the sixteen resident sampler slots."""
+
+        self._ensure_open()
+        if not 0 <= slot < 16:
+            raise ValueError("sampler slot must be between zero and fifteen")
+        pcm = _as_float_array(samples)
+        if not pcm or channel_count not in (1, 2) or sample_rate_hz <= 0:
+            raise ValueError("PCM must be non-empty, one or two channel, and have a positive rate")
+        if len(pcm) % channel_count:
+            raise ValueError("sample count must be divisible by channel_count")
+        channel_planes = tuple(
+            array("f", pcm[index::channel_count]) for index in range(channel_count)
+        )
+        pointer_type = ctypes.POINTER(ctypes.c_float)
+        planes = (pointer_type * channel_count)()
+        for index, channel in enumerate(channel_planes):
+            planes[index] = ctypes.cast(channel.buffer_info()[0], pointer_type)
+        view = _PcmView(
+            size=ctypes.sizeof(_PcmView), abi_version=self._ABI_VERSION,
+            planes=planes, frames=len(pcm) // channel_count,
+            channel_count=channel_count, sample_rate_hz=sample_rate_hz,
+        )
+        status = self._library.parso_engine_set_sampler_slot(
+            self._handle, slot, ctypes.byref(view)
+        )
+        self._raise_for_status(status, "setting sampler slot")
+        self._sampler_buffers[slot] = (channel_planes, planes)
 
     @_engine_synchronized
     def set_mic_buffer(
@@ -1612,6 +1769,178 @@ class Engine:
             EngineCommand.BEATLOOP, deck, f0=beats,
             f1=math.nan if start_seconds is None else start_seconds,
         )
+
+    def loop_in(self, deck: int, seconds: Optional[float] = None) -> None:
+        """Set the manual loop-in point, or use the current playhead."""
+
+        if seconds is not None and (not math.isfinite(seconds) or seconds < 0.0):
+            raise ValueError("seconds must be finite and non-negative")
+        self.post_command(EngineCommand.LOOP_IN, deck,
+                          f0=math.nan if seconds is None else seconds)
+
+    def loop_out(self, deck: int, seconds: Optional[float] = None) -> None:
+        """Complete a manual loop from its loop-in point."""
+
+        if seconds is not None and (not math.isfinite(seconds) or seconds < 0.0):
+            raise ValueError("seconds must be finite and non-negative")
+        self.post_command(EngineCommand.LOOP_OUT, deck,
+                          f0=math.nan if seconds is None else seconds)
+
+    def reloop_exit(self, deck: int) -> None:
+        """Toggle the available loop, or exit its active playback."""
+
+        self.post_command(EngineCommand.RELOOP_EXIT, deck)
+
+    def scale_loop(self, deck: int, factor: float) -> None:
+        """Scale the current loop around its center (0.5 halves, 2 doubles)."""
+
+        if not math.isfinite(factor) or factor <= 0.0:
+            raise ValueError("loop scale must be finite and positive")
+        self.post_command(EngineCommand.LOOP_SCALE, deck, f0=factor)
+
+    def move_loop(self, deck: int, beats: float) -> None:
+        """Move the current loop by a signed number of beats."""
+
+        if not math.isfinite(beats):
+            raise ValueError("loop movement must be finite")
+        self.post_command(EngineCommand.LOOP_MOVE, deck, f0=beats)
+
+    def beat_jump(self, deck: int, beats: float, *, quantized: bool = False,
+                  grain_beats: float = 1.0) -> None:
+        """Jump by beats, optionally deferring the action to the next grid line."""
+
+        if not math.isfinite(beats) or not math.isfinite(grain_beats) or grain_beats <= 0.0:
+            raise ValueError("beat jump and grain must be finite; grain must be positive")
+        self.post_command(EngineCommand.BEATJUMP, deck, i2=2 if quantized else 0,
+                          f0=beats, f1=grain_beats)
+
+    def sync_to_frame(self, deck: int, target_frame: float) -> None:
+        """Align a deck to a native source frame computed by the host clock."""
+
+        if not math.isfinite(target_frame) or target_frame < 0.0:
+            raise ValueError("target_frame must be finite and non-negative")
+        self.post_command(EngineCommand.SYNC, deck, f0=target_frame)
+
+    def unsync(self, deck: int) -> None:
+        """Disengage sync state for a deck."""
+
+        self.post_command(EngineCommand.UNSYNC, deck)
+
+    def jog_touch(self, deck: int, *, vinyl_mode: bool = True,
+                  was_playing: bool = False) -> None:
+        """Begin a jog gesture, optionally engaging vinyl scratch behavior."""
+
+        self.post_command(EngineCommand.JOG_TOUCH, deck, i0=int(vinyl_mode),
+                          i1=int(was_playing))
+
+    def jog_move(self, deck: int, delta_frames: float) -> None:
+        """Move a jog gesture by source frames (positive or negative)."""
+
+        if not math.isfinite(delta_frames):
+            raise ValueError("delta_frames must be finite")
+        self.post_command(EngineCommand.JOG_MOVE, deck, f0=delta_frames)
+
+    def jog_release(self, deck: int, *, vinyl_mode: bool = True,
+                    was_playing: bool = False) -> None:
+        """End a jog gesture and resume transport when it was previously playing."""
+
+        self.post_command(EngineCommand.JOG_RELEASE, deck, i0=int(vinyl_mode),
+                          i1=int(was_playing))
+
+    def set_reverse(self, deck: int, enabled: bool) -> None:
+        """Enable reverse playback; with slip enabled, release returns to the shadow playhead."""
+
+        self.post_command(EngineCommand.SET_REVERSE, deck, i0=int(enabled))
+
+    def set_vinyl_speed(self, deck: int, brake_seconds: float,
+                        spinup_seconds: float) -> None:
+        """Set brake and spin-up durations for vinyl transport gestures."""
+
+        if (not math.isfinite(brake_seconds) or not math.isfinite(spinup_seconds) or
+                brake_seconds < 0.0 or spinup_seconds < 0.0):
+            raise ValueError("vinyl speed values must be finite and non-negative")
+        self.post_command(EngineCommand.VINYL_SPEED, deck, f0=brake_seconds,
+                          f1=spinup_seconds)
+
+    def set_echo(self, deck: int, enabled: bool, beats: float = 1.0,
+                 depth: float = 0.5, feedback: float = 0.4,
+                 *, release: bool = False) -> None:
+        """Set the per-deck beat echo and optionally release its tail."""
+
+        if (not math.isfinite(beats) or beats <= 0.0 or not math.isfinite(depth) or
+                not 0.0 <= depth <= 1.0 or not math.isfinite(feedback) or
+                not 0.0 <= feedback <= 0.95):
+            raise ValueError("echo beats/depth/feedback are out of range")
+        self.post_command(EngineCommand.ECHO_SET, deck, i0=int(enabled),
+                          i1=round(feedback * 1000.0), i2=int(release),
+                          f0=beats, f1=depth)
+
+    def set_beatfx_kind(self, kind: int) -> None:
+        """Select one of the native Beat FX kinds (0 through 19)."""
+
+        if not 0 <= kind <= 19:
+            raise ValueError("Beat FX kind must be between zero and nineteen")
+        self.post_command(EngineCommand.BEATFX_KIND, -1, f0=float(kind))
+
+    def set_beatfx_enabled(self, enabled: bool) -> None:
+        """Enable or disable the selected Beat FX unit."""
+
+        self.post_command(EngineCommand.BEATFX_ONOFF, -1, f0=float(enabled))
+
+    def release_beatfx(self) -> None:
+        """Disable Beat FX while retaining its audible tail."""
+
+        self.post_command(EngineCommand.BEATFX_RELEASE, -1)
+
+    def configure_sampler(self, slot: int, mode: int = 0, gain: float = 1.0) -> None:
+        """Configure a sampler slot: one-shot=0, loop=1, gate=2."""
+
+        if not 0 <= slot < 16 or not 0 <= mode <= 2 or not math.isfinite(gain) or gain < 0.0:
+            raise ValueError("sampler slot, mode, or gain is out of range")
+        self.post_command(EngineCommand.SAMPLER_CONFIG, -1, i0=slot, i1=mode,
+                          f0=gain)
+
+    def set_sampler_master_gain(self, gain: float) -> None:
+        """Set the sampler master gain using the reserved master slot selector."""
+
+        if not math.isfinite(gain) or gain < 0.0:
+            raise ValueError("sampler gain must be finite and non-negative")
+        self.post_command(EngineCommand.SAMPLER_CONFIG, -1, i0=-1, f0=gain)
+
+    def trigger_sampler(self, slot: int) -> None:
+        """Trigger a resident sampler slot."""
+
+        if not 0 <= slot < 16:
+            raise ValueError("sampler slot must be between zero and fifteen")
+        self.post_command(EngineCommand.SAMPLER_TRIGGER, -1, i0=slot)
+
+    def stop_sampler(self, slot: int) -> None:
+        """Stop a resident sampler slot."""
+
+        if not 0 <= slot < 16:
+            raise ValueError("sampler slot must be between zero and fifteen")
+        self.post_command(EngineCommand.SAMPLER_STOP, -1, i0=slot)
+
+    def set_stem_gain(self, deck: int, voice: int, gain: float) -> None:
+        """Set a stem voice gain (vocals=0, drums=1, bass=2, other=3)."""
+
+        if not 0 <= voice < 4 or not math.isfinite(gain) or not 0.0 <= gain <= 4.0:
+            raise ValueError("stem voice or gain is out of range")
+        self.post_command(EngineCommand.STEM_GAIN, deck, i0=voice, f0=gain)
+
+    def set_stem_mute(self, deck: int, voice: int, muted: bool) -> None:
+        """Mute or unmute one resident stem voice."""
+
+        if not 0 <= voice < 4:
+            raise ValueError("stem voice must be between zero and three")
+        self.post_command(EngineCommand.STEM_MUTE, deck, i0=voice, i1=int(muted))
+
+    def set_stem_solo(self, deck: int, voice: int, soloed: bool) -> None:
+        """Solo or unsolo one resident stem voice."""
+
+        if not 0 <= voice < 4:
+            raise ValueError("stem voice must be between zero and three")
+        self.post_command(EngineCommand.STEM_SOLO, deck, i0=voice, i1=int(soloed))
 
     @_engine_synchronized
     def render(self, frames: int) -> tuple[array, array]:

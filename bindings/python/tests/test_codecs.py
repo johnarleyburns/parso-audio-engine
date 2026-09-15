@@ -350,6 +350,90 @@ class CodecServicesTests(unittest.TestCase):
             self.assertEqual(len(left), len(right))
             self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
 
+    def test_headless_engine_covers_portable_dj_control_surface(self) -> None:
+        source = [0.2] * 9_600
+        stem = [0.4] * 9_600
+        sampler = [0.3] * 2_400
+        with Engine(max_frames=256, library_path=self.library) as engine:
+            engine.set_deck_buffer(0, source, 48_000, 1)
+            engine.set_stem_buffer(0, 0, stem, 48_000, 1)
+            engine.set_sampler_slot(0, sampler, 48_000, 1)
+            engine.set_mixer_controls(
+                xfade_curve=1.0,
+                mic_eq_low=-3.0,
+                mic_eq_high=2.0,
+                mic_talkover_on=True,
+                mic_talkover_depth_db=-12.0,
+                mic_talkover_threshold=0.01,
+                mic_fx_on=True,
+                limiter_ceiling_db=-1.0,
+                limiter_enabled=False,
+                mic_level=0.4,
+                cue_mode=2.0,
+                cue_master_mix=0.25,
+                master_cue=True,
+                headphone_level=0.6,
+                cue_pfl=(1.0, 0.0, 0.0, 0.0),
+                fader_start=(1.0, 0.0, 0.0, 0.0),
+                booth_level=0.7,
+                booth_eq_low=-2.0,
+                booth_eq_mid=1.0,
+                booth_eq_high=2.0,
+            )
+            engine.set_vinyl_speed(0, 0.02, 0.02)
+            engine.play(0)
+            engine.loop_in(0, 0.01)
+            engine.loop_out(0, 0.05)
+            engine.scale_loop(0, 0.5)
+            engine.move_loop(0, 1.0)
+            engine.beat_jump(0, 1.0)
+            engine.set_reverse(0, True)
+            engine.set_reverse(0, False)
+            engine.set_echo(0, True, beats=0.5, depth=0.7, feedback=0.5)
+            engine.set_echo(0, False, release=True)
+            engine.set_stem_gain(0, 0, 0.75)
+            engine.set_stem_mute(0, 0, True)
+            engine.set_stem_solo(0, 0, True)
+            engine.configure_sampler(0, mode=1, gain=0.8)
+            engine.set_sampler_master_gain(0.9)
+            engine.trigger_sampler(0)
+            engine.set_beatfx_kind(1)
+            engine.set_beatfx_enabled(True)
+            engine.release_beatfx()
+            engine.jog_touch(0, vinyl_mode=True, was_playing=True)
+            engine.jog_move(0, 64.0)
+            engine.jog_release(0, vinyl_mode=True, was_playing=True)
+            engine.sync_to_frame(0, 128.0)
+            engine.unsync(0)
+            left, right = engine.render(256)
+            self.assertEqual((len(left), len(right)), (256, 256))
+            self.assertTrue(any(abs(sample) > 1.0e-6 for sample in left))
+            engine.clear_stems(0)
+
+    def test_engine_close_is_a_repeatable_cancellation_boundary(self) -> None:
+        for _ in range(12):
+            engine = Engine(max_frames=64, library_path=self.library)
+            stopped = threading.Event()
+            errors = []
+
+            def render_until_cancelled() -> None:
+                try:
+                    while not stopped.is_set():
+                        engine.render(32)
+                except ParsoError as error:
+                    if error.status != -6:
+                        errors.append(error)
+
+            worker = threading.Thread(target=render_until_cancelled)
+            worker.start()
+            self.assertTrue(worker.is_alive() or stopped.is_set())
+            engine.close()
+            stopped.set()
+            worker.join(2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            engine.close()
+
     def test_warm2_profile_isolates_low_mid_and_high_bands(self) -> None:
         def render_rms(frequency: float, band: str | None) -> float:
             samples = [0.2 * math.sin(2.0 * math.pi * frequency * index / 48_000.0)

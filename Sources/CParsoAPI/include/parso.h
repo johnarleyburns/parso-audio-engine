@@ -276,6 +276,23 @@ typedef struct {
     float deck_time_ratio[PARSO_MAX_DECKS];
     float deck_pitch[PARSO_MAX_DECKS];
     float deck_keylock[PARSO_MAX_DECKS];
+    /* Extended portable mixer controls. Appended to preserve the existing
+     * control prefix for ABI consumers compiled against version 1. */
+    float mic_eq_low;
+    float mic_eq_high;
+    float mic_talkover_on;
+    float mic_talkover_depth_db;
+    float mic_talkover_threshold;
+    float mic_fx_on;
+    float cue_master_mix;
+    float master_cue;
+    float headphone_level;
+    float cue_pfl[PARSO_MAX_DECKS];
+    float fader_start[PARSO_MAX_DECKS];
+    float booth_level;
+    float booth_eq_low;
+    float booth_eq_mid;
+    float booth_eq_high;
 } parso_control_t;
 
 /* Planar, non-interleaved, borrowed 32-bit float PCM. */
@@ -492,6 +509,19 @@ PARSO_API parso_status_t parso_engine_set_deck_buffer(
     parso_engine_t *engine,
     uint32_t deck,
     const parso_pcm_view_t *view
+);
+/* Provide a resident stem voice (0 vocals, 1 drums, 2 bass, 3 other) for a
+ * deck. The borrowed planes remain live until replacement, clear, or destroy. */
+PARSO_API parso_status_t parso_engine_set_stem_buffer(
+    parso_engine_t *engine, uint32_t deck, uint32_t voice,
+    const parso_pcm_view_t *view
+);
+PARSO_API parso_status_t parso_engine_clear_stems(
+    parso_engine_t *engine, uint32_t deck
+);
+/* Provide a resident sampler slot buffer (0...15). */
+PARSO_API parso_status_t parso_engine_set_sampler_slot(
+    parso_engine_t *engine, uint32_t slot, const parso_pcm_view_t *view
 );
 /* Provide a borrowed planar capture block for the mic strip. The host owns
  * the planes and must keep them alive until the next mic-buffer replacement

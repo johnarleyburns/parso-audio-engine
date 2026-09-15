@@ -161,6 +161,19 @@ public:
         return parso_engine_set_deck_buffer(handle_, deck, &view);
     }
 
+    parso_status_t setStemBuffer(uint32_t deck, uint32_t voice,
+                                 const parso_pcm_view_t &view) noexcept {
+        return parso_engine_set_stem_buffer(handle_, deck, voice, &view);
+    }
+
+    parso_status_t clearStems(uint32_t deck) noexcept {
+        return parso_engine_clear_stems(handle_, deck);
+    }
+
+    parso_status_t setSamplerSlot(uint32_t slot, const parso_pcm_view_t &view) noexcept {
+        return parso_engine_set_sampler_slot(handle_, slot, &view);
+    }
+
     parso_status_t setMicBuffer(const parso_pcm_view_t &view) noexcept {
         return parso_engine_set_mic_buffer(handle_, &view);
     }
