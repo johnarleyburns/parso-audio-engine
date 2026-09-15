@@ -55,7 +55,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
         const float assignedGain = assignment < 0.5f ? gainA :
             (assignment < 1.5f ? gainB : ((deckIndex % 2 == 0) ? gainA : gainB));
         channelGains[deckIndex] = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
-            engine->control.fader[deckIndex].load(std::memory_order_relaxed) * assignedGain;
+            assignedGain;
     }
 
     pd_limiter_set_ceiling(engine->masterLimiter,
@@ -147,10 +147,9 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
         const float assignment = engine->control.xfadeAssign[deckIndex].load(std::memory_order_relaxed);
         const float assignedGain = assignment < 0.5f ? gainA :
             (assignment < 1.5f ? gainB : ((deckIndex % 2 == 0) ? gainA : gainB));
-        const float trimFader = engine->control.trim[deckIndex].load(std::memory_order_relaxed) *
-            engine->control.fader[deckIndex].load(std::memory_order_relaxed);
-        channelGains[deckIndex] = trimFader * assignedGain;
-        cueGains[deckIndex] = trimFader;
+        const float trim = engine->control.trim[deckIndex].load(std::memory_order_relaxed);
+        channelGains[deckIndex] = trim * assignedGain;
+        cueGains[deckIndex] = trim;
     }
 
     for (int frame = 0; frame < frames; ++frame) {
@@ -163,9 +162,10 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
             const float sample = 0.5f * (
                 sampleAt(deck, 0, deck.position) + sampleAt(deck, rightChannel, deck.position)
             );
-            masterSignal += sample * channelGains[deckIndex];
+            const float fader = smoothedChannelFader(engine, deckIndex);
+            masterSignal += sample * channelGains[deckIndex] * fader;
             if (engine->control.cuePFL[deckIndex].load(std::memory_order_relaxed) > 0.5f) {
-                cueSignal += sample * cueGains[deckIndex];
+                cueSignal += sample * cueGains[deckIndex] * fader;
             }
         }
         if (masterCue > 0.5f) {

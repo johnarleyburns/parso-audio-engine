@@ -40,10 +40,6 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 dry[deckIndex][frame] = 0.0f;
                 continue;
             }
-            if (scratching && std::fabs(deck.jogVelocity) < 0.0001) {
-                dry[deckIndex][frame] = 0.0f;
-                continue;
-            }
             if (deck.stemsArmed) {
                 float summed = 0.0f;
                 for (int voice = 0; voice < 4; ++voice) {
@@ -53,7 +49,9 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                     if (!v.present) continue;
                     const int rc = v.channelCount > 1 ? 1 : 0;
                     // Voices share the deck playhead; clamp to each voice's length.
-                    const double pos = std::min(deck.position, static_cast<double>(v.frames - 1));
+                    const double readerPosition = scratching && deck.jogAudioInitialized
+                        ? deck.jogAudioPosition : deck.position;
+                    const double pos = std::min(readerPosition, static_cast<double>(v.frames - 1));
                     const int64_t lower = static_cast<int64_t>(pos < 0.0 ? 0.0 : pos);
                     const int64_t upper = lower + 1 < v.frames ? lower + 1 : lower;
                     const float frac = static_cast<float>(pos - static_cast<double>(lower));
@@ -66,7 +64,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             } else {
                 const int rightChannel = deck.channelCount > 1 ? 1 : 0;
                 dry[deckIndex][frame] = 0.5f * (
-                    sampleAt(deck, 0, deck.position) + sampleAt(deck, rightChannel, deck.position)
+                    sampleAt(deck, 0, scratching && deck.jogAudioInitialized
+                        ? deck.jogAudioPosition : deck.position) +
+                    sampleAt(deck, rightChannel, scratching && deck.jogAudioInitialized
+                        ? deck.jogAudioPosition : deck.position)
                 );
             }
             // Fade-in cue ramp (CDJ3000 parity C6).
@@ -82,18 +83,21 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             if (deck.slip) deck.shadowPosition += forwardIncrement;
             const double motor = static_cast<double>(deck.motorLevel);
             const double positionIncrement = scratching
-                ? deck.jogVelocity
+                ? 0.0
                 : (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
             deck.position += positionIncrement;
             if (scratching) {
-                // Keep the platter moving for the duration of a gesture. A
-                // per-sample 0.96 decay collapses a jog into a click and is
-                // perceptually unlike a hand moving a record.
-                deck.jogVelocity *= 0.9997;
-                if (std::fabs(deck.jogVelocity) < 0.0001) deck.jogVelocity = 0.0;
-                if (deck.position < 0.0) deck.position = 0.0;
-                if (deck.position > static_cast<double>(deck.frames - 1)) {
-                    deck.position = static_cast<double>(deck.frames - 1);
+                // Move the audio reader continuously toward the latest platter
+                // target. A zero delta is a genuine held-record pause, not
+                // silence, and reversing direction never seeks the reader.
+                if (deck.jogAudioInitialized && deck.jogBlendFrames > 0) {
+                    const double remaining = static_cast<double>(deck.jogBlendFrames);
+                    deck.jogAudioPosition +=
+                        (deck.jogTargetPosition - deck.jogAudioPosition) / remaining;
+                    --deck.jogBlendFrames;
+                    if (deck.jogBlendFrames == 0) {
+                        deck.jogAudioPosition = deck.jogTargetPosition;
+                    }
                 }
                 continue;
             }
@@ -260,7 +264,8 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 sample = processColorFX(engine->decks[deckIndex], sample,
                                         engine->decks[deckIndex].sampleRate, deckIndex, engine->control);
             }
-            channelSignals[deckIndex] = sample * channelGains[deckIndex];
+            channelSignals[deckIndex] = sample * channelGains[deckIndex] *
+                smoothedChannelFader(engine, deckIndex);
             const float channelPeak = std::fabs(channelSignals[deckIndex]);
             if (channelPeak > deckPeaks[deckIndex]) deckPeaks[deckIndex] = channelPeak;
         }

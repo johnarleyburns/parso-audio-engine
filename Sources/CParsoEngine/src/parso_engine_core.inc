@@ -28,6 +28,26 @@ static float sampleAt(const DeckState& deck, int channel, double position) {
     return a + (b - a) * fraction;
 }
 
+// Channel faders are continuous controls. Smoothing them on the render thread
+// keeps scratch clicks musically percussive instead of turning a control jump
+// into a full-scale sample discontinuity. The first render adopts the current
+// target exactly so a newly-created engine does not fade in unexpectedly.
+static float smoothedChannelFader(pe_engine* engine, int deckIndex) {
+    DeckState& deck = engine->decks[deckIndex];
+    const float rawTarget = engine->control.fader[deckIndex].load(std::memory_order_relaxed);
+    const float target = std::isfinite(rawTarget)
+        ? std::max(0.0f, std::min(1.0f, rawTarget)) : 0.0f;
+    if (!deck.faderInitialized) {
+        deck.smoothedFader = target;
+        deck.faderInitialized = true;
+        return target;
+    }
+    const float sampleRate = static_cast<float>(engine->sampleRate);
+    const float smoothing = 1.0f - std::exp(-1.0f / (sampleRate * 0.010f));
+    deck.smoothedFader += smoothing * (target - deck.smoothedFader);
+    return deck.smoothedFader;
+}
+
 // EQ (3-band RBJ isolator) and the master brickwall limiter are now the
 // CParsoDSP kernels — see render(). The hand-rolled one-pole EQ, the
 // approximate soft limiter and their `dbToGain` helper were removed in

@@ -208,6 +208,26 @@ struct CueJogNudgeTests {
         #expect(e.deckA.playhead > 1.0)
     }
 
+    @Test func vinylScratchStrokesStayContinuous() {
+        let e = makeLoadedHeadless()
+        e.mixer.crossfader = -1
+        e.deckA.play()
+        _ = e.render(frames: 4096)
+        e.deckA.jogTouchBegan()
+
+        var samples: [Float] = []
+        for delta in [1_300.0, -1_200.0, 900.0, -800.0, 700.0, -600.0] {
+            e.deckA.jogMoved(deltaSamples: delta)
+            samples.append(contentsOf: e.render(frames: 128).left)
+        }
+        var maxJump: Float = 0
+        for index in 1..<samples.count {
+            maxJump = max(maxJump, abs(samples[index] - samples[index - 1]))
+        }
+        e.deckA.jogTouchEnded()
+        #expect(maxJump < 0.3, "sample-to-sample jump \(maxJump) suggests a discontinuous scratch reader")
+    }
+
     @Test func nudgeTemporarilyChangesPlaybackRate() {
         let e = makeLoadedHeadless()
         e.deckA.nudge(1)
@@ -1134,6 +1154,24 @@ struct MixerProTierTests {
         sharp.mixer.channelA.fader = 0.5
         let sOut = sharp.render(frames: 8192).left
         #expect(rms(sOut) > rms(lOut) * 1.3)   // sharp is hotter at half throw
+    }
+
+    @Test func channelFaderCutsStayClickFree() {
+        let e = toneEngine(300)
+        e.mixer.crossfader = -1
+        e.deckA.play()
+        _ = e.render(frames: 4096)
+
+        var samples: [Float] = []
+        for index in 0..<8 {
+            e.mixer.channelA.fader = index.isMultiple(of: 2) ? 0 : 1
+            samples.append(contentsOf: e.render(frames: 64).left)
+        }
+        var maxJump: Float = 0
+        for index in 1..<samples.count {
+            maxJump = max(maxJump, abs(samples[index] - samples[index - 1]))
+        }
+        #expect(maxJump < 0.3, "sample-to-sample jump \(maxJump) suggests an unsmoothed channel-fader cut")
     }
 
     @Test func masterIsolatorIsBitTransparentAtZero() {

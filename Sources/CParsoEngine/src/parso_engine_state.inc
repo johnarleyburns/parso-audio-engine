@@ -31,7 +31,12 @@ struct DeckState {
     bool slip = false;
     bool reverse = false;   // CDJ3000 parity C2 — REV / Slip Reverse
     bool jogTouched = false;
-    double jogVelocity = 0.0;  // source frames per output frame while scratching
+    double jogAudioPosition = 0.0;
+    double jogTargetPosition = 0.0;
+    int jogBlendFrames = 0;
+    bool jogAudioInitialized = false;
+    float smoothedFader = 1.0f;
+    bool faderInitialized = false;
     // Vinyl Speed Adjust (CDJ3000 parity C2): motorLevel eases toward motorTarget
     // (0 = stopped, 1 = full speed) at brake / spin-up rates. Zero seconds == the
     // classic instant start/stop.
