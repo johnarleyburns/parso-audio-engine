@@ -12,18 +12,25 @@ import sys
 
 
 LISTENING_FIXTURES = {
-    "house": "stringed_disco",
-    "electronic": "tea_roots_isrc_usuan1100472",
+    "house": "tech_live",
+    "electronic": "upbeat_forever",
     "smart-fader-a": "lukas_lucas_impala",
     "smart-fader-b": "gostreyshen_world",
     "smart-cfx": "porch_blues",
     "beatfx-a": "mary_stafford_royal_garden_blues",
     "beatfx-b": "st_louis_blues",
-    "scratch": "upbeat_forever",
+    "scratch": "stringed_disco",
+    "scratch-b": "bobby_jimmy_ugly_knuckle_butt",
     "loop-a": "divertimento_k131",
     "loop-b": "divertissement_pizzicato",
     "warm2": "in_a_heartbeat",
 }
+
+SCENARIO_NAMES = (
+    "crossfader-sweep", "smart-fader", "smart-cfx", "beatfx-echo-out", "scratch",
+    "scratch-foundations", "scratch-cuts", "scratch-combos", "turntable-manipulation",
+    "beat-juggle", "phasing-flanging", "loop-and-cue", "warm2-isolator",
+)
 
 
 def run(command: list[str], *, cwd: Path, environment: dict[str, str] | None = None) -> None:
@@ -31,18 +38,21 @@ def run(command: list[str], *, cwd: Path, environment: dict[str, str] | None = N
     subprocess.run(command, cwd=cwd, env=environment, check=True)
 
 
-def fixture_path(fixture_root: Path, fixture_id: str) -> Path:
+def fixture_path(fixture_root: Path, fixture_id: str, allowed_formats: set[str]) -> Path:
     manifest_path = fixture_root / "fixtures.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     fixture = next((track for track in manifest["tracks"] if track["id"] == fixture_id), None)
     if fixture is None:
         raise ValueError(f"unknown fixture '{fixture_id}'; check {manifest_path}")
-    if fixture.get("sourceFormat") != "mp3":
+    source_format = fixture.get("sourceFormat")
+    if source_format not in allowed_formats:
         raise ValueError(
-            f"fixture '{fixture_id}' is {fixture.get('sourceFormat')}, not mp3; "
-            "the Linux music gate intentionally uses real MP3 fixtures"
+            f"fixture '{fixture_id}' is {source_format}, expected one of {sorted(allowed_formats)}"
         )
-    path = fixture_root / "audio" / f"{fixture_id}.mp3"
+    suffix = {"mp3": ".mp3", "oggVorbis": ".ogg"}.get(source_format)
+    if suffix is None:
+        raise ValueError(f"fixture format '{source_format}' has no Linux listening suffix")
+    path = fixture_root / "audio" / f"{fixture_id}{suffix}"
     if not path.is_file():
         raise ValueError(f"fixture is not downloaded: {path}; run ./scripts/download-fixtures.sh")
     return path.resolve()
@@ -84,8 +94,8 @@ def main() -> int:
     }
     if len(set(fixture_ids.values())) != len(fixture_ids):
         parser.error("every listening scenario slot must use a distinct MP3 fixture")
-    input_mp3 = {
-        slot: fixture_path(fixture_root, fixture_id)
+    input_audio = {
+        slot: fixture_path(fixture_root, fixture_id, {"mp3", "oggVorbis"} if slot == "scratch-b" else {"mp3"})
         for slot, fixture_id in fixture_ids.items()
     }
     if not args.no_build:
@@ -99,8 +109,8 @@ def main() -> int:
     # Keep one native artifact as the deterministic cross-backend parity anchor.
     run(
         [str(native_executable), "--output-dir", str(native_dir), "--seconds", str(args.seconds),
-         "--scenario", "crossfader-sweep", "--input-mp3-a", str(input_mp3["house"]),
-         "--input-mp3-b", str(input_mp3["electronic"]), "--fixture-a", fixture_ids["house"],
+         "--scenario", "crossfader-sweep", "--input-mp3-a", str(input_audio["house"]),
+         "--input-mp3-b", str(input_audio["electronic"]), "--fixture-a", fixture_ids["house"],
          "--fixture-b", fixture_ids["electronic"]],
         cwd=repo_root,
     )
@@ -117,7 +127,7 @@ def main() -> int:
     ]
     for slot in LISTENING_FIXTURES:
         python_command.extend([
-            f"--input-mp3-{slot}", str(input_mp3[slot]),
+            f"--input-audio-{slot}", str(input_audio[slot]),
             f"--fixture-{slot}", fixture_ids[slot],
         ])
     run(python_command, cwd=repo_root, environment=environment)
@@ -134,7 +144,7 @@ def main() -> int:
     summary = {
         "schemaVersion": 1,
         "scenario": "all-listening-scenarios",
-        "scenarios": ["crossfader-sweep", "smart-fader", "smart-cfx", "beatfx-echo-out", "scratch", "loop-and-cue", "warm2-isolator"],
+        "scenarios": list(SCENARIO_NAMES),
         "fixtures": list(fixture_ids.values()),
         "seconds": args.seconds,
         "manifest": str(manifest),

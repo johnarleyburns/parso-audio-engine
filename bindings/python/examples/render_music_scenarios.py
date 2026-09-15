@@ -1,4 +1,4 @@
-"""Render every Linux headless-engine listening scenario from real MP3 fixtures."""
+"""Render every Linux headless-engine listening scenario from real audio fixtures."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ SCENARIO_SECONDS = 30.0
 class Track:
     fixture_id: str
     path: Path
+    source_format: str
     samples: array
     sample_rate_hz: int
     channel_count: int
@@ -42,15 +43,31 @@ SCENARIOS = (
     Scenario("smart-fader", "BPM-matched same-genre transition with bass duck and echo tail", "smart-fader-a", "smart-fader-b"),
     Scenario("smart-cfx", "one-track wash, filter, and sweep CFX presets", "smart-cfx", None),
     Scenario("beatfx-echo-out", "beat-synced echo-out release before the incoming track", "beatfx-a", "beatfx-b"),
-    Scenario("scratch", "one-track baby, chirp, scribble, backspin, and transformer scratches", "scratch", None),
+    Scenario("scratch", "overview of record-control and fader scratch primitives", "scratch", None),
+    Scenario("scratch-foundations", "baby, scribble, drag, forward, and backward foundation scratches", "scratch", None),
+    Scenario("scratch-cuts", "chirp, one- and two-click flare, orbit, transform, and crab scratches", "scratch", None),
+    Scenario("scratch-combos", "tear, twiddle, and boomerang combination scratches", "scratch", None),
+    Scenario("turntable-manipulation", "pitch bend, platter drag, motor-off, hydroplane, and tone play", "scratch", None),
+    Scenario("beat-juggle", "two-deck beat juggling with a second hip-hop record", "scratch", "scratch-b"),
+    Scenario("phasing-flanging", "two copies of the disco record drifting into phase and flange", "scratch", "scratch"),
     Scenario("loop-and-cue", "cue, hot-cue jump, quantized loop, and exit before the incoming track", "loop-a", "loop-b"),
     Scenario("warm2-isolator", "one-track 300 Hz/4 kHz fourth-order three-band master isolator", "warm2", None),
 )
 
 TRACK_SLOTS = (
     "house", "electronic", "smart-fader-a", "smart-fader-b", "smart-cfx",
-    "beatfx-a", "beatfx-b", "scratch", "loop-a", "loop-b", "warm2",
+    "beatfx-a", "beatfx-b", "scratch", "scratch-b", "loop-a", "loop-b", "warm2",
 )
+
+SCRATCH_INVENTORY = {
+    "scratch": ["record-control overview"],
+    "scratch-foundations": ["baby scratch", "scribble", "drag / strobe", "forward cutting", "backward cutting"],
+    "scratch-cuts": ["chirp", "1-click flare", "2-click flare", "orbit", "transform", "crab"],
+    "scratch-combos": ["tear", "twiddle", "boomerang"],
+    "turntable-manipulation": ["pitch bend / platter", "motor off", "hydroplane", "tone play"],
+    "beat-juggle": ["beat juggling with distinct disco and hip-hop records"],
+    "phasing-flanging": ["phasing / flanging with two copies of the disco record"],
+}
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -80,6 +97,21 @@ def render_scenario(
     def add(time: float, name: str, action: Callable[[Engine], None]) -> None:
         pending.append((time, name, action))
 
+    def jog_sequence(start: float, name: str, deltas: tuple[float, ...], interval: float = 0.14,
+                     release: bool = True) -> None:
+        """Schedule a named vinyl-hand pattern from real jog commands."""
+
+        events.append(event(start, f"{name}-start"))
+        add(start, f"{name}-start", lambda engine: engine.jog_touch(0, vinyl_mode=True, was_playing=True))
+        for index, delta in enumerate(deltas):
+            time = start + 0.08 + index * interval
+            events.append(event(time, f"{name}-stroke"))
+            add(time, f"{name}-stroke", lambda engine, delta=delta: engine.jog_move(0, delta))
+        if release:
+            end = start + 0.08 + len(deltas) * interval
+            events.append(event(end, f"{name}-end"))
+            add(end, f"{name}-end", lambda engine: engine.jog_release(0, vinyl_mode=True, was_playing=True))
+
     if scenario.name == "crossfader-sweep":
         events.extend((event(0.0, "crossfader-start-minus-one"), event(seconds, "crossfader-end-plus-one")))
     elif scenario.name == "smart-fader":
@@ -94,30 +126,52 @@ def render_scenario(
         add(22.0, "beatfx-echo-out-release", lambda engine: engine.post_command(EngineCommand.BEATFX_RELEASE))
         add(24.0, "play-deck-b-after-echo-tail", lambda engine: engine.play(1))
     elif scenario.name == "scratch":
-        events.extend((event(4.0, "baby-scratch-touch"), event(7.0, "baby-scratch-release"),
-                       event(8.5, "chirp-scratch-touch"), event(11.5, "chirp-scratch-release"),
-                       event(13.0, "backspin-start"), event(14.2, "backspin-release"),
-                       event(18.0, "transformer-gate"), event(20.0, "transformer-open")))
-        add(4.0, "baby-scratch-touch", lambda engine: engine.post_command(EngineCommand.JOG_TOUCH, 0, i0=1, i1=1))
-        baby_pattern = (1800.0, -1800.0, 1500.0, -1500.0, 1200.0, -1200.0,
-                        900.0, -900.0, 650.0, -650.0, 450.0, -450.0)
-        for index, delta in enumerate(baby_pattern):
-            time = 4.12 + index * 0.20
-            events.append(event(time, "baby-scratch-forward" if delta > 0 else "baby-scratch-back"))
-            add(time, "baby-scratch-move", lambda engine, delta=delta:
-                engine.post_command(EngineCommand.JOG_MOVE, 0, f0=delta))
-        add(7.0, "baby-scratch-release", lambda engine: engine.post_command(EngineCommand.JOG_RELEASE, 0, i0=1, i1=1))
-        add(8.5, "chirp-scratch-touch", lambda engine: engine.post_command(EngineCommand.JOG_TOUCH, 0, i0=1, i1=1))
-        chirp_pattern = (700.0, -350.0, 700.0, -350.0, 500.0, -250.0,
-                         500.0, -250.0, 350.0, -175.0, 350.0, -175.0)
-        for index, delta in enumerate(chirp_pattern):
-            time = 8.62 + index * 0.20
-            events.append(event(time, "chirp-scratch-forward" if delta > 0 else "chirp-scratch-back"))
-            add(time, "chirp-scratch-move", lambda engine, delta=delta:
-                engine.post_command(EngineCommand.JOG_MOVE, 0, f0=delta))
-        add(11.5, "chirp-scratch-release", lambda engine: engine.post_command(EngineCommand.JOG_RELEASE, 0, i0=1, i1=1))
-        add(13.0, "backspin-start", lambda engine: (engine.set_slip(0, True), engine.post_command(EngineCommand.SET_REVERSE, 0, i0=1)))
-        add(14.2, "backspin-release", lambda engine: engine.post_command(EngineCommand.SET_REVERSE, 0, i0=0))
+        jog_sequence(3.0, "baby-scratch", (2200.0, -2200.0, 1800.0, -1800.0, 1400.0, -1400.0), 0.24)
+        jog_sequence(7.0, "chirp-scratch", (900.0, -450.0, 900.0, -450.0, 650.0, -325.0), 0.24)
+        jog_sequence(11.0, "scribble-scratch", (260.0, -260.0) * 12, 0.07)
+        jog_sequence(14.5, "transform-scratch", (700.0, -700.0) * 7, 0.20)
+        add(18.0, "backspin-start", lambda engine: (engine.set_slip(0, True), engine.set_reverse(0, True)))
+        add(20.0, "backspin-release", lambda engine: engine.set_reverse(0, False))
+        events.append(event(20.0, "backspin-release"))
+    elif scenario.name == "scratch-foundations":
+        jog_sequence(3.0, "baby-scratch", (2400.0, -2400.0, 1900.0, -1900.0, 1500.0, -1500.0), 0.24)
+        jog_sequence(7.0, "scribble-scratch", (280.0, -280.0) * 18, 0.06)
+        jog_sequence(11.0, "drag-strobe", (360.0,) * 15, 0.18)
+        jog_sequence(16.0, "forward-cut", (1900.0, -900.0, 1600.0, -700.0, 1300.0, -500.0), 0.28)
+        jog_sequence(21.0, "backward-cut", (-1900.0, 900.0, -1600.0, 700.0, -1300.0, 500.0), 0.28)
+    elif scenario.name == "scratch-cuts":
+        jog_sequence(3.0, "chirp-scratch", (1100.0, -550.0, 1100.0, -550.0, 850.0, -425.0, 850.0, -425.0), 0.20)
+        jog_sequence(8.0, "one-click-flare", (1200.0, -700.0) * 8, 0.16)
+        jog_sequence(13.0, "two-click-flare", (1200.0, -700.0) * 8, 0.12)
+        jog_sequence(18.0, "orbit-flare", (1000.0, -500.0, -1000.0, 500.0) * 4, 0.14)
+        jog_sequence(23.0, "transform-scratch", (650.0, -650.0) * 7, 0.18)
+        jog_sequence(27.0, "crab-scratch", (420.0, -420.0) * 8, 0.09)
+    elif scenario.name == "scratch-combos":
+        jog_sequence(3.0, "tear-scratch", (1300.0, 0.0, 900.0, -1200.0, 0.0, -800.0, 1100.0, 0.0, 700.0), 0.42)
+        jog_sequence(10.0, "twiddle-scratch", (850.0, -425.0) * 8, 0.16)
+        jog_sequence(17.0, "boomerang-scratch", (1200.0, -500.0, 300.0, -1100.0,
+                                                    1100.0, -300.0, 500.0, -1200.0) * 2, 0.20)
+    elif scenario.name == "turntable-manipulation":
+        events.extend((event(3.0, "pitch-bend-platters-start"), event(7.0, "pitch-bend-platters-end"),
+                       event(13.0, "motor-off-start"), event(18.0, "motor-off-release"),
+                       event(20.0, "hydroplane-start"), event(24.0, "hydroplane-end"),
+                       event(25.0, "tone-play-start"), event(29.0, "tone-play-end")))
+        add(13.0, "motor-off-start", lambda engine: (engine.set_vinyl_speed(0, 3.0, 1.0), engine.pause(0)))
+        add(18.0, "motor-off-release", lambda engine: engine.play(0))
+        jog_sequence(20.0, "hydroplane", (240.0,) * 16, 0.20)
+    elif scenario.name == "beat-juggle":
+        events.extend((event(3.0, "beat-juggle-start"), event(13.0, "beat-juggle-end")))
+        add(3.0, "beat-juggle-start", lambda engine: (engine.set_hotcue(0, 0, 0.5), engine.set_hotcue(1, 0, 0.5)))
+        add(13.0, "beat-juggle-end", lambda engine: (engine.set_slip(0, False), engine.set_slip(1, False)))
+        for index in range(8):
+            time = 4.0 + index * 1.0
+            deck = index % 2
+            events.append(event(time, "beat-juggle-hotcue-a" if deck == 0 else "beat-juggle-hotcue-b"))
+            add(time, "beat-juggle-hotcue", lambda engine, deck=deck: engine.jump_hotcue(deck, 0))
+    elif scenario.name == "phasing-flanging":
+        events.extend((event(3.0, "phasing-flanging-start"), event(13.0, "phasing-flanging-drift"),
+                       event(27.0, "phasing-flanging-end")))
+        add(3.0, "phasing-flanging-start", lambda engine: (engine.seek(0, 1.0), engine.seek(1, 1.0)))
     elif scenario.name == "loop-and-cue":
         events.extend((event(3.0, "set-primary-cue"), event(6.0, "set-hotcue-1"),
                        event(10.0, "quantized-four-beat-loop"), event(18.0, "jump-hotcue-1"),
@@ -163,6 +217,8 @@ def render_scenario(
             beatfx_on = False
             reverb_send = 0.0
             time_ratio = [1.0, 1.0, 1.0, 1.0]
+            deck_pitch = [0.0, 0.0, 0.0, 0.0]
+            deck_keylock = [1.0, 1.0, 0.0, 0.0]
             master_eq = [0.0, 0.0, 0.0]
 
             if scenario.name == "crossfader-sweep":
@@ -196,6 +252,53 @@ def render_scenario(
                 crossfader = -1.0
                 if 18.0 <= time < 20.0:
                     faders[0] = 0.0 if int((time - 18.0) * 8.0) % 2 else 1.0
+                deck_keylock[0] = 0.0
+            elif scenario.name == "scratch-foundations":
+                crossfader = -1.0
+                deck_keylock[0] = 0.0
+                if 16.0 <= time < 24.0:
+                    faders[0] = 0.0 if int((time - 16.0) * 2.0) % 2 else 1.0
+            elif scenario.name == "scratch-cuts":
+                crossfader = -1.0
+                deck_keylock[0] = 0.0
+                if 8.0 <= time < 13.0:
+                    faders[0] = 0.0 if int((time - 8.0) / 0.24) % 2 else 1.0
+                elif 13.0 <= time < 18.0:
+                    faders[0] = 0.0 if int((time - 13.0) / 0.14) % 2 else 1.0
+                elif 18.0 <= time < 23.0:
+                    faders[0] = 0.0 if int((time - 18.0) / 0.16) % 2 else 1.0
+                elif 23.0 <= time < 27.0:
+                    faders[0] = 0.0 if int((time - 23.0) / 0.10) % 2 else 1.0
+                elif 27.0 <= time:
+                    faders[0] = 0.0 if int((time - 27.0) / 0.045) % 2 else 1.0
+            elif scenario.name == "scratch-combos":
+                crossfader = -1.0
+                deck_keylock[0] = 0.0
+                if 10.0 <= time < 17.0:
+                    faders[0] = 0.0 if int((time - 10.0) / 0.16) % 2 else 1.0
+                elif 17.0 <= time:
+                    faders[0] = 0.0 if int((time - 17.0) / 0.18) % 2 else 1.0
+            elif scenario.name == "turntable-manipulation":
+                crossfader = -1.0
+                deck_keylock[0] = 0.0
+                if 3.0 <= time < 7.0:
+                    phase = (time - 3.0) / 4.0
+                    time_ratio[0] = 0.90 + 0.20 * (0.5 - 0.5 * math.cos(2.0 * math.pi * phase))
+                elif 25.0 <= time:
+                    tone_step = min(4, int((time - 25.0) / 0.8))
+                    time_ratio[0] = (0.50, 0.75, 1.00, 1.25, 1.50)[tone_step]
+            elif scenario.name == "beat-juggle":
+                deck_keylock[0] = 0.0
+                deck_keylock[1] = 0.0
+                if track_a.bpm > 0 and track_b and track_b.bpm > 0:
+                    time_ratio[1] = clamp(track_a.bpm / track_b.bpm, 0.5, 2.0)
+                crossfader = -1.0 if time < 3.0 else (1.0 if time < 13.0 and int((time - 3.0) * 2.0) % 2 else -1.0)
+            elif scenario.name == "phasing-flanging":
+                deck_keylock[0] = 0.0
+                deck_keylock[1] = 0.0
+                crossfader = 0.0
+                drift = 0.0015 * math.sin((time - 13.0) * math.pi / 4.0) if 13.0 <= time < 27.0 else 0.0
+                time_ratio[1] = 1.0 + drift
             elif scenario.name == "loop-and-cue":
                 crossfader = -1.0 if time < 26.0 else -1.0 + 2.0 * clamp((time - 26.0) / 4.0, 0.0, 1.0)
             elif scenario.name == "warm2-isolator":
@@ -219,7 +322,8 @@ def render_scenario(
                 color_kind=tuple(color_kind),
                 color_param=tuple(color_param),
                 deck_time_ratio=tuple(time_ratio),
-                deck_keylock=(1.0, 1.0, 0.0, 0.0),
+                deck_pitch=tuple(deck_pitch),
+                deck_keylock=tuple(deck_keylock),
                 beatfx_kind=beatfx_kind,
                 beatfx_beats=beatfx_beats,
                 beatfx_depth=beatfx_depth,
@@ -267,12 +371,13 @@ def write_pair(
         "fixtureID": f"linux-music-{scenario}",
         "scenario": scenario,
         "description": description,
+        "scratchInventory": SCRATCH_INVENTORY.get(scenario, []),
         "audioDuration": len(left) / SAMPLE_RATE,
         "analysisDuration": len(left) / SAMPLE_RATE,
         "sampleRateHz": SAMPLE_RATE,
         "channelCount": 2,
         "sourceTracks": [
-            {"fixtureID": track.fixture_id, "format": "mp3", "path": str(track.path)}
+            {"fixtureID": track.fixture_id, "format": track.source_format, "path": str(track.path)}
             for track in sources
         ],
         "analysis": {
@@ -304,13 +409,24 @@ def render_all(
 
 
 def load_track(path: Path, fixture_id: str, seconds: float, library_path: str | None) -> Track:
+    suffix = path.suffix.lower()
+    if suffix == ".mp3":
+        source = mp3_prefix(path.read_bytes(), seconds)
+        codec = AudioCodec.MP3
+        source_format = "mp3"
+    elif suffix == ".ogg":
+        source = path.read_bytes()
+        codec = AudioCodec.OGG_VORBIS
+        source_format = "oggVorbis"
+    else:
+        raise ValueError(f"unsupported listening source format: {path}")
     with CodecServices(library_path) as audio:
-        decoded = audio.decode(mp3_prefix(path.read_bytes(), seconds), AudioCodec.MP3)
+        decoded = audio.decode(source, codec)
         analysis = audio.analyze(decoded.samples, decoded.sample_rate_hz, decoded.channel_count)
     needed = seconds * decoded.sample_rate_hz / SAMPLE_RATE
     if decoded.frames < needed:
         raise RuntimeError(f"{path} decoded to {decoded.frames} frames; need at least {needed:.0f}")
-    return Track(fixture_id, path.resolve(), decoded.samples, decoded.sample_rate_hz, decoded.channel_count, analysis.bpm)
+    return Track(fixture_id, path.resolve(), source_format, decoded.samples, decoded.sample_rate_hz, decoded.channel_count, analysis.bpm)
 
 
 def main() -> None:
@@ -320,7 +436,7 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=SCENARIO_SECONDS)
     for slot in TRACK_SLOTS:
         argument_slot = slot.replace("-", "_")
-        parser.add_argument(f"--input-mp3-{slot}", type=Path, required=True,
+        parser.add_argument(f"--input-mp3-{slot}", f"--input-audio-{slot}", type=Path, required=True,
                             dest=f"input_mp3_{argument_slot}")
         parser.add_argument(f"--fixture-{slot}", required=True,
                             dest=f"fixture_{argument_slot}")

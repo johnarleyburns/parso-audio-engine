@@ -157,8 +157,31 @@ INSTRUCTIONS = {
         "releases, the repeats should fade into a clean echo tail before the next track starts."
     ),
     "scratch": (
-        "Scratch. Listen for the deck to stop and move forward and backward with the jog gestures. "
-        "Listen for fader cuts, then a clean return to normal playback."
+        "Scratch overview. Listen for record motion, fader cuts, and the deck returning cleanly to normal playback."
+    ),
+    "scratch-foundations": (
+        "Scratch foundations. Listen for baby scratch, scribble, slow drag, forward cut, and backward cut. "
+        "Check the beat-driven disco record for clear record-hand motion and clean cuts."
+    ),
+    "scratch-cuts": (
+        "Fader scratches. Listen for chirp, one-click flare, two-click flare, orbit flare, transform, and crab. "
+        "Count the sharp rhythmic cuts and check for clicks that are intentional rather than glitches."
+    ),
+    "scratch-combos": (
+        "Combination scratches. Listen for tear pauses, twiddle two-clicks, and the rolling boomerang pattern. "
+        "Check that each stutter remains rhythmic and returns cleanly."
+    ),
+    "turntable-manipulation": (
+        "Turntable manipulation. Listen for platter pitch bends, the motor-off slowdown, hydroplane friction, "
+        "and tone play speed steps. Check the pitch movement and the return to stable playback."
+    ),
+    "beat-juggle": (
+        "Beat juggling. This file uses a disco record and a separate hip-hop record on two decks. "
+        "Listen for alternating hot-cue cuts, timing alignment, and clean handoffs between decks."
+    ),
+    "phasing-flanging": (
+        "Phasing and flanging. Two copies of the disco record start together, then drift slightly apart. "
+        "Listen for the moving hollow whoosh and the return to centered playback."
     ),
     "loop-and-cue": (
         "Loop and cue. Listen for tight loop boundaries, cue and hot cue jumps, and beat-aligned "

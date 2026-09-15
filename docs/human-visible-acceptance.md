@@ -56,11 +56,13 @@ as a smoke test, but the human-listening gate uses a different downloaded real M
 fixture for every listening slot:
 
 ```text
-crossfader-sweep: Tests/Fixtures/audio/stringed_disco.mp3 + tea_roots_isrc_usuan1100472.mp3
+crossfader-sweep: Tests/Fixtures/audio/tech_live.mp3 + upbeat_forever.mp3
 smart-fader: Tests/Fixtures/audio/lukas_lucas_impala.mp3 + gostreyshen_world.mp3 (122.5/123 BPM, both house)
 smart-cfx: Tests/Fixtures/audio/porch_blues.mp3
 beatfx-echo-out: Tests/Fixtures/audio/mary_stafford_royal_garden_blues.mp3 + st_louis_blues.mp3
-scratch: Tests/Fixtures/audio/upbeat_forever.mp3
+scratch, scratch-foundations, scratch-cuts, scratch-combos, turntable-manipulation,
+  phasing-flanging: Tests/Fixtures/audio/stringed_disco.mp3 (disco)
+beat-juggle: Tests/Fixtures/audio/stringed_disco.mp3 + Tests/Fixtures/audio/bobby_jimmy_ugly_knuckle_butt.ogg (disco + hip-hop)
 loop-and-cue: Tests/Fixtures/audio/divertimento_k131.mp3 + divertissement_pizzicato.mp3
 warm2-isolator: Tests/Fixtures/audio/in_a_heartbeat.mp3
 ```
@@ -76,9 +78,13 @@ python3 scripts/run-linux-acceptance.py \
 ```
 
 The runner decodes the first 30 seconds of each real MP3 through the portable codec
-path. It keeps the native/Python crossfader render as a parity anchor, then renders
-every engine listening scenario through the native engine behind the Python facade.
-Single-deck scenarios (Smart CFX, scratch, and WARM2) contain one source only.
+path; the second beat-juggle deck intentionally exercises the native Ogg Vorbis path
+with a real hip-hop fixture. It keeps the native/Python crossfader render as a parity
+anchor, then renders every engine listening scenario through the native engine behind
+the Python facade. Single-deck scenarios (Smart CFX, all scratch demonstrations, and
+WARM2) contain one source only. The beat-juggle file uses two distinct records; the
+separate phasing/flanging file uses two copies of the disco record so phase drift is
+audible.
 Echo-out and loop/cue keep the incoming deck silent until the outgoing effect or
 transport operation has completed. Smart Fader uses the close-BPM pair above,
 starts beat-aligned at frame zero, applies the measured tempo ratio, and transitions
@@ -96,7 +102,9 @@ To listen to the separate scenario files:
 ```bash
 for scenario in \
   crossfader-sweep smart-fader smart-cfx beatfx-echo-out \
-  scratch loop-and-cue warm2-isolator; do
+  scratch scratch-foundations scratch-cuts scratch-combos \
+  turntable-manipulation beat-juggle phasing-flanging \
+  loop-and-cue warm2-isolator; do
   pw-play --volume 0.5 \
     "/tmp/parso-linux-music-review/python/python-${scenario}.wav"
 done
@@ -270,7 +278,13 @@ seeing the exact crossfader, EQ, FX, loop, or scratch timeline. Planned scenario
 | `smart-fader` | BPM match, bass duck, level automation, echo/reverb tail | rendered through portable engine controls |
 | `smart-cfx` | one-knob filter/space/dub-echo chains on one track | rendered as wash/filter/sweep preset timeline |
 | `beatfx-echo-out` | tail release before the incoming track starts | rendered through Beat FX release, then delayed deck-B start |
-| `scratch` | vinyl, baby, chirp, scribble, backspin, transformer, and release behavior on one track | rendered through jog gestures/reverse/fader controls |
+| `scratch` | compact scratch overview | rendered through jog gestures/reverse/fader controls |
+| `scratch-foundations` | baby, scribble, drag, forward, and backward scratches | rendered through vinyl jog gestures |
+| `scratch-cuts` | chirp, 1/2-click flare, orbit, transform, and crab | rendered through jog gestures plus timed fader cuts |
+| `scratch-combos` | tear, twiddle, and boomerang | rendered through jog gestures plus timed fader cuts |
+| `turntable-manipulation` | pitch bend, platter drag, motor-off, hydroplane, and tone play | rendered through varispeed, vinyl speed, and jog controls |
+| `beat-juggle` | two-deck alternating cuts using disco plus hip-hop records | rendered through two native decks, hot cues, and crossfader cuts |
+| `phasing-flanging` | two copies of the disco record with controlled speed drift | rendered through two native decks and fractional varispeed |
 | `loop-and-cue` | quantized loop edges, roll, cue and hot-cue jumps before the incoming track starts | rendered through transport commands, then delayed deck-B start |
 | `warm2-isolator` | 300 Hz/4 kHz fourth-order low/mid/high master isolation | rendered with the WARM2 engine profile |
 
