@@ -19,11 +19,15 @@ trap 'rm -rf "$temporary_dir"' EXIT
 
 builder_venv="$temporary_dir/builder-venv"
 consumer_venv="$temporary_dir/consumer-venv"
+build_source="$temporary_dir/source"
 python3 -m venv "$builder_venv"
 "$builder_venv/bin/python" -m pip install --disable-pip-version-check \
     "setuptools>=68" "wheel>=0.42" "build>=1.2"
+mkdir -p "$build_source"
+cp -a "$repo_root/bindings/python/." "$build_source/"
+rm -rf "$build_source/build" "$build_source"/*.egg-info
 "$builder_venv/bin/python" -m build --wheel --sdist --no-isolation \
-    --outdir "$temporary_dir/dist" "$repo_root/bindings/python"
+    --outdir "$temporary_dir/dist" "$build_source"
 test "$(find "$temporary_dir/dist" -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
 test "$(find "$temporary_dir/dist" -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 1
 
