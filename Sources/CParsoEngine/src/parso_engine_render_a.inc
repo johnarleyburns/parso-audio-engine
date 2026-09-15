@@ -40,6 +40,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 dry[deckIndex][frame] = 0.0f;
                 continue;
             }
+            if (scratching && std::fabs(deck.jogVelocity) < 0.0001) {
+                dry[deckIndex][frame] = 0.0f;
+                continue;
+            }
             if (deck.stemsArmed) {
                 float summed = 0.0f;
                 for (int voice = 0; voice < 4; ++voice) {
@@ -87,17 +91,15 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 : (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
             deck.position += positionIncrement;
             if (scratching) {
-                // Move the audio reader continuously toward the latest platter
-                // target. A zero delta is a genuine held-record pause, not
-                // silence, and reversing direction never seeks the reader.
-                if (deck.jogAudioInitialized && deck.jogBlendFrames > 0) {
-                    const double remaining = static_cast<double>(deck.jogBlendFrames);
-                    deck.jogAudioPosition +=
-                        (deck.jogTargetPosition - deck.jogAudioPosition) / remaining;
-                    --deck.jogBlendFrames;
-                    if (deck.jogBlendFrames == 0) {
-                        deck.jogAudioPosition = deck.jogTargetPosition;
-                    }
+                // Keep the platter moving for the duration of a gesture. A
+                // short decay makes each hand stroke audible without turning
+                // the control event itself into a permanent tone.
+                deck.jogAudioPosition += deck.jogVelocity;
+                deck.jogVelocity *= 0.9997;
+                if (std::fabs(deck.jogVelocity) < 0.0001) deck.jogVelocity = 0.0;
+                if (deck.jogAudioPosition < 0.0) deck.jogAudioPosition = 0.0;
+                if (deck.jogAudioPosition > static_cast<double>(deck.frames - 1)) {
+                    deck.jogAudioPosition = static_cast<double>(deck.frames - 1);
                 }
                 continue;
             }

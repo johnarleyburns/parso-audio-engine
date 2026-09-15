@@ -108,9 +108,9 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             // the pre-touch play state in i1 for the matching release command.
             if (command.i0 != 0) {
                 deck.jogTouched = true;
+                deck.jogVelocity = 0.0;
                 deck.jogAudioPosition = deck.position;
                 deck.jogTargetPosition = deck.position;
-                deck.jogBlendFrames = 0;
                 deck.jogAudioInitialized = true;
                 if (deck.playing) {
                     deck.playing = false;
@@ -123,10 +123,10 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_JOG_MOVE:
             if (std::isfinite(command.f0) && deck.frames > 0) {
                 if (deck.jogTouched) {
-                    // Keep the logical playhead responsive for UI, but slew the
-                    // audio reader to the new platter target. Applying the delta
-                    // immediately and then replaying it as velocity caused a
-                    // discontinuity at every scratch direction change.
+                    // Keep the logical playhead responsive for UI while driving
+                    // the audio reader with a short, decaying hand velocity.
+                    // This preserves the musical scratch motion without making
+                    // the reader jump to a new source frame.
                     deck.jogTargetPosition += static_cast<double>(command.f0);
                     if (deck.jogTargetPosition < 0.0) deck.jogTargetPosition = 0.0;
                     if (deck.jogTargetPosition > static_cast<double>(deck.frames - 1)) {
@@ -134,9 +134,8 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                     }
                     deck.position = deck.jogTargetPosition;
                     deck.shadowPosition = deck.position;
-                    // A brief two-millisecond slew removes the seek edge while
-                    // preserving the punch and timing of a hand-driven scratch.
-                    deck.jogBlendFrames = std::max(1, static_cast<int>(deck.sampleRate * 0.002));
+                    deck.jogVelocity = static_cast<double>(command.f0) /
+                        std::max(1.0, deck.sampleRate * 0.060);
                 } else {
                     deck.position += static_cast<double>(command.f0);
                     if (deck.position < 0.0) deck.position = 0.0;
@@ -154,7 +153,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                 deck.shadowPosition = deck.position;
             }
             deck.jogTouched = false;
-            deck.jogBlendFrames = 0;
+            deck.jogVelocity = 0.0;
             deck.jogAudioInitialized = false;
             if (command.i0 != 0 && command.i1 != 0 && deck.position < static_cast<double>(deck.frames)) {
                 deck.playing = true;
