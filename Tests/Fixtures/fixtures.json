@@ -34,8 +34,8 @@
 
     { "id": "banda_dachy_rally_house", "filename": "BANDA_&_DACHY_-_RALLY_HOUSE.ogg",
       "commonsPage": "https://commons.wikimedia.org/wiki/File:BANDA_%26_DACHY_-_RALLY_HOUSE.ogg",
-      "sourceFormat": "oggVorbis", "genre": "house", "beatBased": true,
-      "roles": ["analysis", "decode-ogg"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
+      "sourceFormat": "opus", "genre": "house", "beatBased": true,
+      "roles": ["analysis", "decode-opus"], "license": "SEE_COMMONS_PAGE", "author": "SEE_COMMONS_PAGE",
       "note": "Human reference: Cm / 126.0 BPM. The current v1 estimator reports Dm (7A); strict key assertion remains pending estimator refinement.",
       "expected": { "bpm": 126.0, "bpmTolerance": 2.0, "key": null } },
 
