@@ -119,12 +119,14 @@ The C# `Engine` now serializes render, control, event, record, and disposal entr
 instance. The managed consumer exercises a render/Dispose race; native Windows execution remains
 the release authority.
 
-The CP-PY offline spike now provides `bindings/python`, a dependency-free `ctypes` package with
-capability discovery, the same six native byte-codec selectors, native SRC/loudness wrappers, and
-bounded headless rendering with retained deck-buffer ownership and shared command payloads. Its
-source tests and Vorbis example pass
-against the Linux CMake library. Fresh-venv installation is pending because this session's host has
-no `pip`/`ensurepip`; wheel construction itself passes through setuptools.
+The CP-PY portable binding now provides `bindings/python`, a dependency-free `ctypes` package with
+capability discovery, the native byte-codec selectors, SRC/loudness/analysis wrappers, retained
+deck/stem/sampler buffers, and typed access to the implemented transport, loop, cue, sync,
+jog/scratch, reverse, vinyl, Beat FX, sampler, stem, mixer, mic, cue, booth, and record-tap
+controls. Its 27 source tests, Vorbis example, and 30-second render acceptance pass against the
+Linux CMake library. `scripts/test-python-package.sh` builds a wheel and sdist in a builder venv,
+then installs and exercises the wheel from a separate consumer venv outside the checkout; the
+fresh-venv gate runs in CI and requires local pip/venv tooling when run by hand.
 
 The public event ABI now drains the native render-to-control ring without exposing internal engine
 types. C++, Python, and C# consumers can observe copied transport/playhead/state/peak notifications

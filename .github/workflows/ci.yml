@@ -119,6 +119,8 @@ jobs:
           PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
             /tmp/parso-python-venv/bin/python bindings/python/examples/render_acceptance.py \
             --output-dir /tmp/parso-python-acceptance --seconds 30
+      - name: Build and consume Python wheel and source distribution outside checkout
+        run: bash scripts/test-python-package.sh "$PWD/build-native/libparso.so"
       - name: Build and test Electron Node-API binding
         run: |
           node --version

@@ -212,10 +212,11 @@ its PE build and linkage; endpoint execution, route recovery, latency, and human
 Windows-runner/device gates. Use `--allow-unavailable` only for CI machines without an audio
 endpoint; strict hardware runs omit that flag.
 
-The CP-PY preview in `bindings/python` provides synchronous codec, SRC, loudness, summary/key/
-structure analysis, headless DJ controls, and record-tap services through standard-library
-`ctypes`; see [`docs/python.md`](docs/python.md) for native-library discovery, ownership, and
-local verification. Device IO and fresh installed-wheel execution remain separate release gates.
+The CP-PY binding in `bindings/python` provides synchronous codec, SRC, loudness, summary/key/
+structure analysis, the implemented portable headless DJ command/mixer surface, and record-tap
+services through standard-library `ctypes`; see [`docs/python.md`](docs/python.md) for
+native-library discovery, ownership, and local verification. Device IO, higher-level FLX4 feature
+parity, and fresh installed-wheel execution remain separate release gates.
 
 The JavaScript binding in `bindings/javascript` provides the same current C-ABI service surface
 for Electron through a stable Node-API addon and for React Native through a documented

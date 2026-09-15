@@ -49,13 +49,22 @@ block. `render_monitor` and `render_booth` must follow `render` for the same
 frame count, matching the native callback contract. `play`/`pause` queue the
 portable transport commands. `post_command`
 exposes the versioned command payload (`i0`/`i1`/`i2` and `f0`/`f1`) for the
-shared native transport, with convenience methods for absolute seek, key-lock,
-slip, cues, loops, and hot cues. `poll_events()` drains copied state, playhead,
-peak, and end-of-track notifications from the bounded native event ring.
+shared native transport, with typed convenience methods for absolute seek,
+key-lock, slip, cues, loops, hot cues, beat jumps, sync, jog/scratch, reverse,
+vinyl speed, echo, Beat FX, sampler, and stem controls. `set_mixer_controls`
+covers crossfader curve, channel EQ/Color FX, Beat FX, reverb, deck tempo/key
+lock, mic/talkover, cue/PFL, fader start, headphone, and booth controls.
+`set_stem_buffer` and `set_sampler_slot` copy and retain resident PCM buffers
+until replacement, clearing, or close. These helpers exercise the same native
+command and render graph as the C/C++ facade; unsupported platform/device
+features remain explicit platform gates rather than Python-only behavior.
+`poll_events()` drains copied state, playhead, peak, and end-of-track
+notifications from the bounded native event ring.
 `MixRecorder` drains the record tap and encodes supported output formats; full
-DJ parity, device IO, and human listening remain separate acceptance gates. Engine
-native calls are serialized per instance, so control, event polling, rendering, and
-close may be coordinated safely across Python threads; the render callback itself
+FLX4 feature parity, device IO, and human listening remain separate acceptance
+gates. Engine native calls are serialized per instance, so control, event
+polling, rendering, and close may be coordinated safely across Python threads;
+closing an engine is a cancellation boundary and the render callback itself
 remains native and must not call into Python.
 
 `MixRecorder` is a control-side recording helper: call `append_engine` after
@@ -93,13 +102,16 @@ PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
 PARSO_AUDIO_LIBRARY="$PWD/build-native/libparso.so" \
   PYTHONPATH=bindings/python python3 bindings/python/examples/fixture_acceptance.py \
   --output /tmp/parso-python-acceptance/fixture-analysis.json
+bash scripts/test-python-package.sh "$PWD/build-native/libparso.so"
 ```
 
 The package's `pyproject.toml` builds a pure-Python wheel. Native artifacts
 are intentionally supplied by the platform package rather than embedded in
-that wheel. CI installs that wheel in a fresh virtual environment and runs its
-tests against the CMake-built native library; local installation requires a
-Python distribution that includes `pip` and `venv`.
+that wheel. CI builds both artifacts, installs the wheel into a fresh virtual
+environment outside the checkout, and runs the installed package's tests and
+acceptance examples against the CMake-built native library. The same gate is
+available locally through `scripts/test-python-package.sh`; local installation
+requires a Python distribution that includes `pip` and `venv`.
 
 `render_acceptance.py` is a small offline acceptance seam, not the completed
 FLX4 scenario runner: it renders the native engine for at least 30 seconds,

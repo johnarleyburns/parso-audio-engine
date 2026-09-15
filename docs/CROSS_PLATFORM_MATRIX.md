@@ -27,18 +27,18 @@ this release.
 
 ## Required test layers
 
-### Python 3 / Linux (additional binding; implemented preview with release gates pending)
+### Python 3 / Linux (additional binding; portable controls implemented)
 
 Python shares the public C ABI and native implementations listed above. Its release evidence is independent of the C/C++ consumer results. CP-PY follows the native services work and CP6 includes Python-specific listening acceptance.
 
 | Python surface | Implementation status | Required evidence |
 |---|---|---|
-| Buffers / DSP / headless render | Implemented through stdlib `ctypes`, retained deck storage, and bounded native render | 19 binding tests, host runner, and native/Python crossfader parity report pass |
+| Buffers / DSP / headless render | Implemented through stdlib `ctypes`, retained deck/stem/sampler storage, and bounded native render | 27 binding tests, host runner, and native/Python crossfader parity report pass |
 | File IO / SRC / loudness / analysis | Implemented native codec/SRC/loudness/summary/waveform services | Real Ogg/FLAC integration, capability errors, and acceptance sidecars pass |
-| DJ controls / mixing / recording | Implemented transport/cue/loop/hot-cue/slip/keylock/crossfader, channel/master EQ, Beat FX, reverb, tempo ratio, and record tap surfaces | 21 binding tests plus seven real-MP3 scenario renders pass; full DJ parity pending |
-| Ownership / concurrency | Context managers, explicit close, retained buffers, serialized control/render/close calls, off-thread event polling | Repeated close, invalid input/handle, event, record-ring, and threaded close/render tests pass; cancellation stress pending |
+| DJ controls / mixing / recording | Implemented native command surface includes transport/cue/loop/hot-cue/beat-jump/sync/jog/reverse/vinyl/slip/keylock, stems, sampler, crossfader, channel/master EQ, mic/talkover, cue/PFL, booth, Beat FX, reverb, tempo ratio, and record tap | 27 binding tests plus seven real-MP3 scenario renders pass; remaining gaps are higher-level FLX4 features and device-specific parity |
+| Ownership / concurrency | Context managers, explicit close, retained deck/stem/sampler buffers, serialized control/render/close calls, off-thread event polling | Repeated close/cancellation, invalid input/handle, event, record-ring, and threaded close/render tests pass |
 | Linux playback / capture | Python controls the native Linux backend | Python-driven playback/capture example and device tests; callback runs entirely in native code |
-| Packaging / docs | Pure-Python wheel/source build and documented native-library discovery | Wheel build and ABI/load checks pass; fresh-venv installation remains CI-only pending local pip/venv tooling |
+| Packaging / docs | Pure-Python wheel/source build and documented native-library discovery | CI builds wheel and sdist, installs the wheel outside the checkout in a fresh venv, and runs installed tests/examples; local execution requires pip/venv |
 | Human listening | Three real MP3 fixtures rendered through the native engine behind the Python API | Seven separate 30-second scenario WAVs, index, native/Python A/B, and accepted review manifests pass; maintainer accepted the available desktop artifacts |
 
 The Python minimum version, FFI choice, and wheel compatibility floor are decisions for the packaging spike. Other Python platforms/interpreters remain unadvertised until tested. CP-PY and CP6 in `CROSS_PLATFORM_PLAN.md` define the implementation and listening gates.
