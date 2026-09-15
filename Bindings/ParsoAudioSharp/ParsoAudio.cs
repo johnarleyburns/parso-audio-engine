@@ -1321,6 +1321,21 @@ internal static unsafe partial class NativeMethods
         internal fixed float DeckTimeRatio[4];
         internal fixed float DeckPitch[4];
         internal fixed float DeckKeylock[4];
+        internal float MicEqLow;
+        internal float MicEqHigh;
+        internal float MicTalkoverOn;
+        internal float MicTalkoverDepthDb;
+        internal float MicTalkoverThreshold;
+        internal float MicFxOn;
+        internal float CueMasterMix;
+        internal float MasterCue;
+        internal float HeadphoneLevel;
+        internal fixed float CuePfl[4];
+        internal fixed float FaderStart[4];
+        internal float BoothLevel;
+        internal float BoothEqLow;
+        internal float BoothEqMid;
+        internal float BoothEqHigh;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1409,7 +1424,11 @@ internal static unsafe partial class NativeMethods
             MasterReverbDamp = 0.5f,
             MasterEqLow = 0.0f,
             MasterEqMid = 0.0f,
-            MasterEqHigh = 0.0f
+            MasterEqHigh = 0.0f,
+            MicTalkoverDepthDb = -14.0f,
+            CueMasterMix = 0.5f,
+            HeadphoneLevel = 0.7f,
+            BoothLevel = 0.8f
         };
         for (var index = 0; index < 4; index++)
         {
