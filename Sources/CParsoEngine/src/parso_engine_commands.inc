@@ -134,9 +134,9 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                     }
                     deck.position = deck.jogTargetPosition;
                     deck.shadowPosition = deck.position;
-                    // Twelve milliseconds keeps the control responsive while
-                    // still smoothing large touch deltas into continuous audio.
-                    deck.jogBlendFrames = std::max(1, static_cast<int>(deck.sampleRate * 0.012));
+                    // A brief two-millisecond slew removes the seek edge while
+                    // preserving the punch and timing of a hand-driven scratch.
+                    deck.jogBlendFrames = std::max(1, static_cast<int>(deck.sampleRate * 0.002));
                 } else {
                     deck.position += static_cast<double>(command.f0);
                     if (deck.position < 0.0) deck.position = 0.0;
