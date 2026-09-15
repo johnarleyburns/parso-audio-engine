@@ -79,6 +79,8 @@ public final class DJEngine {
     public let sampler: Sampler
     public let mic: MicInput
     public let monitoring: Monitoring
+    /// Eight reusable, pad-addressable turntablism pattern slots.
+    public let scratchBank: ScratchBank
     private let bridge: EngineBridge
     private let sampleRateValue: Double
     /// Engine sample rate (Phase 6a `WorkspaceEngine.sampleRate`).
@@ -101,6 +103,7 @@ public final class DJEngine {
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
         monitoring = Monitoring(bridge: bridge)
+        scratchBank = ScratchBank()
     }
 
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
@@ -611,6 +614,8 @@ public final class HeadlessDJEngine {
     public let sampler: Sampler
     public let mic: MicInput
     public let monitoring: Monitoring
+    /// Eight reusable, pad-addressable turntablism pattern slots.
+    public let scratchBank: ScratchBank
     private let bridge: EngineBridge
 
     public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
@@ -621,6 +626,7 @@ public final class HeadlessDJEngine {
         sampler = Sampler(bridge: bridge)
         mic = MicInput(bridge: bridge)
         monitoring = Monitoring(bridge: bridge)
+        scratchBank = ScratchBank()
     }
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {

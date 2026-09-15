@@ -26,6 +26,40 @@ struct DJAPITests {
         let modes: [PadMode] = [.hotCue, .keyboard, .padFX1, .padFX2, .beatJump, .beatLoop, .sampler, .keyShift]
         #expect(modes.count == 8)
     }
+
+    @Test @MainActor func scratchBankHasEightEditableSlots() {
+        let engine = HeadlessDJEngine(deckCount: 2)
+        #expect(engine.scratchBank.slots.count == ScratchBank.slotCount)
+        #expect(engine.scratchBank.assign(.baby, to: 0))
+        #expect(engine.scratchBank.pattern(at: 0) == .baby)
+        #expect(engine.scratchBank.cursor(for: 0)?.isFinished == false)
+        #expect(engine.scratchBank.clear(slot: 0))
+        #expect(engine.scratchBank.pattern(at: 0) == nil)
+        #expect(engine.scratchBank.assign(.baby, to: 8) == false)
+    }
+
+    @Test func builtInScratchCatalogHasOrderedAudibleEvents() {
+        #expect(ScratchPattern.catalog.count == 12)
+        #expect(Set(ScratchPattern.catalog.map(\.technique)).count == 12)
+        for pattern in ScratchPattern.catalog {
+            #expect(!pattern.events.isEmpty)
+            #expect(pattern.duration > 0)
+            #expect(pattern.events.allSatisfy { $0.offset.isFinite && $0.deltaSamples.isFinite })
+            #expect(zip(pattern.events, pattern.events.dropFirst()).allSatisfy { $0.0.offset <= $0.1.offset })
+        }
+    }
+
+    @Test func scratchCursorEmitsEachEventOnce() {
+        var cursor = ScratchPatternCursor(pattern: .chirp)
+        #expect(cursor.advance(to: 0.11).count == 1)
+        #expect(cursor.advance(to: 0.20).count == 2)
+        #expect(cursor.advance(to: 0.10).isEmpty)
+        #expect(cursor.isFinished == false)
+        #expect(cursor.advance(to: 1).count == 1)
+        #expect(cursor.isFinished)
+        cursor.reset()
+        #expect(cursor.nextEventIndex == 0)
+    }
 }
 
 // MARK: - Render behavior (docs/SPEC.md §11)
