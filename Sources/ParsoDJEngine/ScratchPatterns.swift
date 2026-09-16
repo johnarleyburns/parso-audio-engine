@@ -14,6 +14,7 @@ public enum ScratchTechnique: String, CaseIterable, Hashable, Sendable {
     case backward
     case chirp
     case flare
+    case orbit
     case transform
     case crab
     case tear
@@ -268,6 +269,9 @@ public struct ScratchPattern: Equatable, Sendable {
         .backward,
         .chirp,
         .flare,
+        .flareOneClick,
+        .flareTwoClick,
+        .orbit,
         .transform,
         .crab,
         .tear,
@@ -316,6 +320,35 @@ public struct ScratchPattern: Equatable, Sendable {
             event(0.00, 1_200, "stroke"), event(0.07, 0, "click 1", open: false),
             event(0.10, 500, "stroke"), event(0.17, 0, "click 2", open: false),
             event(0.20, 500, "finish")
+        ])
+
+    /// A single-click flare, kept separate from the two-click form so a pad
+    /// bank can expose the fader vocabulary directly.
+    public static let flareOneClick = ScratchPattern(
+        name: "Flare (1-click)", technique: .flare,
+        events: [
+            event(0.00, 1_400, "stroke"), event(0.08, 0, "click", open: false),
+            event(0.13, -900, "return")
+        ])
+
+    /// The two-click form is also available by its explicit performance name;
+    /// `flare` remains the compact backwards-compatible catalog entry.
+    public static let flareTwoClick = ScratchPattern(
+        name: "Flare (2-click)", technique: .flare,
+        events: [
+            event(0.00, 1_200, "stroke"), event(0.07, 0, "click 1", open: false),
+            event(0.10, 500, "stroke"), event(0.17, 0, "click 2", open: false),
+            event(0.20, 500, "finish")
+        ])
+
+    /// Orbit: a flare whose clicks continue over the return stroke.
+    public static let orbit = ScratchPattern(
+        name: "Orbit", technique: .orbit,
+        events: [
+            event(0.00, 1_100, "forward"), event(0.07, 0, "click 1", open: false),
+            event(0.12, -700, "return"), event(0.19, 0, "click 2", open: false),
+            event(0.24, -500, "return 2"), event(0.31, 0, "click 3", open: false),
+            event(0.36, 900, "forward finish")
         ])
 
     public static let transform = ScratchPattern(

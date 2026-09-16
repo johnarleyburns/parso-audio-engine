@@ -841,6 +841,7 @@ public final class Deck {
     private var hotCueTimes: [TimeInterval?] = Array(repeating: nil, count: 8)
     private var cueTime: TimeInterval?
     private var joggingWasPlaying = false
+    private var joggingVinylMode = false
     private var loopStartTime: TimeInterval?
     private var loopEndTime: TimeInterval?
     private var loopRollActive = false
@@ -1137,9 +1138,10 @@ public final class Deck {
 
     public func jogTouchBegan(pressure: Double = 1) {
         jogPressure = normalizedJogPressure(pressure)
+        joggingVinylMode = vinylMode
         joggingWasPlaying = isPlaying
-        if vinylMode { isPlaying = false }
-        post(PE_CMD_JOG_TOUCH, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
+        if joggingVinylMode { isPlaying = false }
+        post(PE_CMD_JOG_TOUCH, i0: joggingVinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
     }
     public func jogMoved(deltaSamples: Double) {
         jogMoved(deltaSamples: deltaSamples, pressure: jogPressure)
@@ -1169,9 +1171,10 @@ public final class Deck {
         frameSearch(frames: seconds * buffer.format.sampleRate)
     }
     public func jogTouchEnded() {
-        if vinylMode && joggingWasPlaying { isPlaying = true }
-        post(PE_CMD_JOG_RELEASE, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
+        if joggingVinylMode && joggingWasPlaying { isPlaying = true }
+        post(PE_CMD_JOG_RELEASE, i0: joggingVinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
         joggingWasPlaying = false
+        joggingVinylMode = false
         jogPressure = 1
     }
 

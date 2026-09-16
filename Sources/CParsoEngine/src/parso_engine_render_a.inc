@@ -60,19 +60,24 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                     const int64_t lower = static_cast<int64_t>(pos < 0.0 ? 0.0 : pos);
                     const int64_t upper = lower + 1 < v.frames ? lower + 1 : lower;
                     const float frac = static_cast<float>(pos - static_cast<double>(lower));
-                    auto lerp = [&](int ch) {
-                        return v.channels[ch][lower] + (v.channels[ch][upper] - v.channels[ch][lower]) * frac;
-                    };
-                    summed += 0.5f * (lerp(0) + lerp(rc)) * v.smoothedGain;
+                    const float left = scratching
+                        ? sampleAtScratch(v, 0, pos)
+                        : v.channels[0][lower] + (v.channels[0][upper] - v.channels[0][lower]) * frac;
+                    const float right = scratching
+                        ? sampleAtScratch(v, rc, pos)
+                        : v.channels[rc][lower] + (v.channels[rc][upper] - v.channels[rc][lower]) * frac;
+                    summed += 0.5f * (left + right) * v.smoothedGain;
                 }
                 dry[deckIndex][frame] = summed;
             } else {
                 const int rightChannel = deck.channelCount > 1 ? 1 : 0;
+                const double readerPosition = scratching && deck.jogAudioInitialized
+                    ? deck.jogAudioPosition : deck.position;
                 dry[deckIndex][frame] = 0.5f * (
-                    sampleAt(deck, 0, scratching && deck.jogAudioInitialized
-                        ? deck.jogAudioPosition : deck.position) +
-                    sampleAt(deck, rightChannel, scratching && deck.jogAudioInitialized
-                        ? deck.jogAudioPosition : deck.position)
+                    (scratching ? sampleAtScratch(deck, 0, readerPosition)
+                                : sampleAt(deck, 0, readerPosition)) +
+                    (scratching ? sampleAtScratch(deck, rightChannel, readerPosition)
+                                : sampleAt(deck, rightChannel, readerPosition))
                 );
             }
             // Fade-in cue ramp (CDJ3000 parity C6).

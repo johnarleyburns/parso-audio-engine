@@ -61,6 +61,22 @@ struct DJAPITests {
         #expect(cursor.nextEventIndex == 0)
     }
 
+    @Test func scratchTechniqueRecognizerIdentifiesCoreVocabulary() {
+        let recognizer = ScratchTechniqueRecognizer()
+        let expected: [(ScratchPattern, ScratchTechnique)] = [
+            (.baby, .baby), (.scribble, .scribble), (.drag, .drag),
+            (.forward, .forward), (.backward, .backward), (.chirp, .chirp),
+            (.flare, .flare), (.transform, .transform), (.crab, .crab),
+            (.tear, .tear), (.twiddle, .twiddle), (.boomerang, .boomerang),
+            (.orbit, .orbit)
+        ]
+        for (pattern, technique) in expected {
+            let match = recognizer.recognize(pattern)
+            #expect(match?.technique == technique)
+            #expect((match?.confidence ?? 0) >= 0.6)
+        }
+    }
+
     @Test func mobilePlatterMapperUsesShortestSeamAndVelocity() {
         var mapper = MobilePlatterGestureMapper(samplesPerRevolution: 1_000)
         #expect(mapper.begin(at: 0.95, timestamp: 1) == nil)
@@ -442,6 +458,16 @@ struct CueJogNudgeTests {
 
         #expect(e.deckA.isPlaying)
         #expect(e.deckA.playhead > beforeTouch + 0.102)
+        e.deckA.jogTouchEnded()
+        #expect(e.deckA.isPlaying)
+    }
+
+    @Test func jogReleaseUsesModeCapturedAtTouchBegin() {
+        let e = makeLoadedHeadless()
+        e.deckA.play()
+        _ = e.render(frames: 2_400)
+        e.deckA.jogTouchBegan()
+        e.deckA.vinylMode = false
         e.deckA.jogTouchEnded()
         #expect(e.deckA.isPlaying)
     }

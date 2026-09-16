@@ -28,6 +28,59 @@ static float sampleAt(const DeckState& deck, int channel, double position) {
     return a + (b - a) * fraction;
 }
 
+// Four-point Catmull-Rom/Hermite interpolation for varispeed and vinyl
+// scratching. The endpoint clamps keep the reader allocation-free and avoid
+// the edge overshoot that a wrapped table lookup would introduce at a cue or
+// track boundary. Normal transport keeps the cheaper linear reader below.
+static float sampleAtScratch(const DeckState& deck, int channel, double position) {
+    if (deck.frames <= 0 || channel < 0 || channel >= deck.channelCount || !deck.channels[channel]) {
+        return 0.0f;
+    }
+    if (position <= 0.0) return deck.channels[channel][0];
+    const int64_t last = deck.frames - 1;
+    if (position >= static_cast<double>(last)) return deck.channels[channel][last];
+
+    const int64_t center = static_cast<int64_t>(position);
+    const int64_t p0 = center > 0 ? center - 1 : 0;
+    const int64_t p1 = center;
+    const int64_t p2 = center + 1 < last ? center + 1 : last;
+    const int64_t p3 = center + 2 < last ? center + 2 : last;
+    const float a = deck.channels[channel][p0];
+    const float b = deck.channels[channel][p1];
+    const float c = deck.channels[channel][p2];
+    const float d = deck.channels[channel][p3];
+    const float t = static_cast<float>(position - static_cast<double>(center));
+    const float c0 = -0.5f * a + 1.5f * b - 1.5f * c + 0.5f * d;
+    const float c1 = a - 2.5f * b + 2.0f * c - 0.5f * d;
+    const float c2 = -0.5f * a + 0.5f * c;
+    return ((c0 * t + c1) * t + c2) * t + b;
+}
+
+static float sampleAtScratch(const StemVoice& voice, int channel, double position) {
+    if (!voice.present || voice.frames <= 0 || channel < 0 || channel >= voice.channelCount ||
+        !voice.channels[channel]) {
+        return 0.0f;
+    }
+    if (position <= 0.0) return voice.channels[channel][0];
+    const int64_t last = voice.frames - 1;
+    if (position >= static_cast<double>(last)) return voice.channels[channel][last];
+
+    const int64_t center = static_cast<int64_t>(position);
+    const int64_t p0 = center > 0 ? center - 1 : 0;
+    const int64_t p1 = center;
+    const int64_t p2 = center + 1 < last ? center + 1 : last;
+    const int64_t p3 = center + 2 < last ? center + 2 : last;
+    const float a = voice.channels[channel][p0];
+    const float b = voice.channels[channel][p1];
+    const float c = voice.channels[channel][p2];
+    const float d = voice.channels[channel][p3];
+    const float t = static_cast<float>(position - static_cast<double>(center));
+    const float c0 = -0.5f * a + 1.5f * b - 1.5f * c + 0.5f * d;
+    const float c1 = a - 2.5f * b + 2.0f * c - 0.5f * d;
+    const float c2 = -0.5f * a + 0.5f * c;
+    return ((c0 * t + c1) * t + c2) * t + b;
+}
+
 // Channel faders are continuous controls. Smoothing them on the render thread
 // keeps scratch clicks musically percussive instead of turning a control jump
 // into a full-scale sample discontinuity. The first render adopts the current
