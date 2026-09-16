@@ -414,6 +414,15 @@ deck.jogMoved(deltaSamples: 240)   // feed motion (samples of travel)
 deck.jogTouchEnded()           // release → resume
 ```
 
+The control-side Scratch Bank provides reusable Baby, Scribble, Drag, Forward,
+Backward, Chirp, Flare (1/2-click), Orbit, Transform, Crab, Tear, Twiddle, and
+Boomerang patterns. `ScratchPatternRecorder` captures timestamped platter,
+pressure, and fader events; `ScratchTechniqueRecognizer` supplies a deterministic
+initial label while preserving the take for editing. `ScratchPatternPlayer` and
+`ScratchBank` apply those events through the same jog/fader controls as a human
+gesture. Use `slipReversePress()` / `slipReverseRelease()` for momentary backspin,
+and two decks with hot cues and crossfader cuts for beat juggling or phasing.
+
 ### Loops: manual in/out, reloop/exit, auto beat loop, halve/double, move
 
 ```swift
