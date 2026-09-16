@@ -57,11 +57,11 @@ public struct ScratchTechniqueRecognizer: Sendable {
             if motion.count >= 4 && directionChanges == 1 && closedClicks >= 2 {
                 return result(.boomerang, 0.89)
             }
-            if motion.count == 1 && closedClicks >= 2 && zeroMotion >= 3 {
-                return result(.crab, 0.88)
-            }
             if zeroMotion >= 5 {
                 return result(.transform, 0.92)
+            }
+            if motion.count == 1 && closedClicks >= 2 && zeroMotion >= 3 {
+                return result(.crab, 0.88)
             }
             if motion.count == 2 && closedClicks == 1 {
                 // Chirp opens the fader for the return stroke; twiddle inserts
