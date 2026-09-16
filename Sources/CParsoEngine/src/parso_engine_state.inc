@@ -31,7 +31,8 @@ struct DeckState {
     bool slip = false;
     bool reverse = false;   // CDJ3000 parity C2 — REV / Slip Reverse
     bool jogTouched = false;
-    double jogVelocity = 0.0;  // source frames per output frame while scratching
+    bool jogVinylMode = false;
+    double jogVelocity = 0.0;  // scratch velocity or transient pitch-bend ratio
     double jogPressure = 1.0;  // normalized platter contact pressure
     double jogAudioPosition = 0.0;
     double jogTargetPosition = 0.0;

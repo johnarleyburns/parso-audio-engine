@@ -106,19 +106,20 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
         case PE_CMD_JOG_TOUCH:
             // i0 is vinyl mode. A vinyl touch pauses transport while preserving
             // the pre-touch play state in i1 for the matching release command.
-            if (command.i0 != 0) {
-                deck.jogTouched = true;
-                deck.jogVelocity = 0.0;
-                deck.jogPressure = 1.0;
-                deck.jogAudioPosition = deck.position;
-                deck.jogTargetPosition = deck.position;
-                deck.jogAudioInitialized = true;
-                if (deck.playing) {
-                    deck.playing = false;
-                    deck.motorTarget = 0.0f;   // brake to a stop (Vinyl Speed Adjust)
-                    if (deck.brakeSeconds <= 0.0001f) deck.motorLevel = 0.0f;
-                    pushStateEvent(engine, command.deck);
-                }
+            // In non-vinyl mode the same touch is a pitch-bend gesture: the
+            // transport keeps running and movement changes its transient rate.
+            deck.jogTouched = true;
+            deck.jogVinylMode = command.i0 != 0;
+            deck.jogVelocity = 0.0;
+            deck.jogPressure = 1.0;
+            deck.jogAudioPosition = deck.position;
+            deck.jogTargetPosition = deck.position;
+            deck.jogAudioInitialized = deck.jogVinylMode;
+            if (deck.jogVinylMode && deck.playing) {
+                deck.playing = false;
+                deck.motorTarget = 0.0f;   // brake to a stop (Vinyl Speed Adjust)
+                if (deck.brakeSeconds <= 0.0001f) deck.motorLevel = 0.0f;
+                pushStateEvent(engine, command.deck);
             }
             break;
         case PE_CMD_JOG_MOVE:
@@ -130,7 +131,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                     ? std::min(1.0, static_cast<double>(command.f1)) : 1.0;
                 deck.jogPressure = pressure;
                 const double movement = static_cast<double>(command.f0) * pressure;
-                if (deck.jogTouched) {
+                if (deck.jogTouched && deck.jogVinylMode) {
                     // Keep the logical playhead responsive for UI while driving
                     // the audio reader with a short, decaying hand velocity.
                     // This preserves the musical scratch motion without making
@@ -144,6 +145,13 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
                     deck.shadowPosition = deck.position;
                     deck.jogVelocity = movement /
                         std::max(1.0, deck.sampleRate * 0.060);
+                } else if (deck.jogTouched) {
+                    // Non-vinyl jog is pitch bend, not a hidden seek. Keep a
+                    // bounded transient rate offset so the next render block
+                    // advances from the current playhead at the bent speed.
+                    const double bend = movement /
+                        std::max(1.0, deck.sampleRate * 0.060);
+                    deck.jogVelocity = std::max(-0.08, std::min(0.08, bend));
                 } else {
                     deck.position += movement;
                     if (deck.position < 0.0) deck.position = 0.0;
@@ -156,11 +164,12 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             }
             break;
         case PE_CMD_JOG_RELEASE:
-            if (deck.jogTouched && deck.jogAudioInitialized) {
+            if (deck.jogTouched && deck.jogVinylMode && deck.jogAudioInitialized) {
                 deck.position = deck.jogAudioPosition;
                 deck.shadowPosition = deck.position;
             }
             deck.jogTouched = false;
+            deck.jogVinylMode = false;
             deck.jogVelocity = 0.0;
             deck.jogPressure = 1.0;
             deck.jogAudioInitialized = false;

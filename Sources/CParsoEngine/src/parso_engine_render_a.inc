@@ -35,7 +35,8 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                 deck.motorLevel = std::max(deck.motorTarget, deck.motorLevel - brakeRate);
             }
             const bool coasting = !deck.playing && deck.motorLevel > 0.0001f;
-            const bool scratching = deck.jogTouched;
+            const bool scratching = deck.jogTouched && deck.jogVinylMode;
+            const bool jogBending = deck.jogTouched && !deck.jogVinylMode;
             if ((!deck.playing && !coasting && !scratching) || deck.frames <= 0 || deck.sampleRate <= 0.0) {
                 dry[deckIndex][frame] = 0.0f;
                 continue;
@@ -86,9 +87,10 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             // "where you would be if you hadn't scratched / reversed / braked" playhead.
             if (deck.slip) deck.shadowPosition += forwardIncrement;
             const double motor = static_cast<double>(deck.motorLevel);
+            const double bendRatio = jogBending ? 1.0 + deck.jogVelocity : 1.0;
             const double positionIncrement = scratching
                 ? 0.0
-                : (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
+                : (deck.reverse ? -forwardIncrement : forwardIncrement) * motor * bendRatio;
             deck.position += positionIncrement;
             if (scratching) {
                 // Keep the platter moving for the duration of a gesture. A
@@ -102,6 +104,12 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                     deck.jogAudioPosition = static_cast<double>(deck.frames - 1);
                 }
                 continue;
+            }
+            if (jogBending) {
+                // Let the pitch bend return smoothly to neutral between touch
+                // updates, matching a physical jog wheel's spring response.
+                deck.jogVelocity *= 0.9997;
+                if (std::fabs(deck.jogVelocity) < 0.0001) deck.jogVelocity = 0.0;
             }
             const double loopLength = deck.loopEnd - deck.loopStart;
             if (deck.loopActive && loopLength > 0.0 && deck.position >= deck.loopEnd) {

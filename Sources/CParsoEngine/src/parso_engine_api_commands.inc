@@ -43,6 +43,7 @@ void pe_deck_set_buffer(
     state.slip = false;
     state.reverse = false;
     state.jogTouched = false;
+    state.jogVinylMode = false;
     state.jogVelocity = 0.0;
     state.jogPressure = 1.0;
     state.jogAudioPosition = 0.0;

@@ -427,6 +427,24 @@ struct CueJogNudgeTests {
         #expect(e.deckA.playhead > 0.53)
         e.deckA.nudge(0)
     }
+
+    @Test func nonVinylJogBendsRateWithoutSeeking() {
+        let e = makeLoadedHeadless()
+        e.deckA.vinylMode = false
+        e.deckA.play()
+        _ = e.render(frames: 24_000)
+        let beforeTouch = e.deckA.playhead
+
+        e.deckA.jogTouchBegan()
+        #expect(abs(e.deckA.playhead - beforeTouch) < 0.001)
+        e.deckA.jogMoved(deltaSamples: 240)
+        _ = e.render(frames: 4_800)
+
+        #expect(e.deckA.isPlaying)
+        #expect(e.deckA.playhead > beforeTouch + 0.102)
+        e.deckA.jogTouchEnded()
+        #expect(e.deckA.isPlaying)
+    }
 }
 
 @Suite("DJ engine lifecycle")
