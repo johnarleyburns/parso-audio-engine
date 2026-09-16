@@ -423,6 +423,9 @@ initial label while preserving the take for editing. `ScratchPatternPlayer` and
 gesture. Use `slipReversePress()` / `slipReverseRelease()` for momentary backspin,
 and two decks with hot cues and crossfader cuts for beat juggling or phasing.
 
+For a complete per-technique mapping and mobile gesture recipes, see
+[`docs/turntablism-api.md`](docs/turntablism-api.md).
+
 ### Loops: manual in/out, reloop/exit, auto beat loop, halve/double, move
 
 ```swift
