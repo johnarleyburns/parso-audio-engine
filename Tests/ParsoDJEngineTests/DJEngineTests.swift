@@ -39,8 +39,10 @@ struct DJAPITests {
     }
 
     @Test func builtInScratchCatalogHasOrderedAudibleEvents() {
-        #expect(ScratchPattern.catalog.count == 12)
-        #expect(Set(ScratchPattern.catalog.map(\.technique)).count == 12)
+        #expect(ScratchPattern.catalog.count == 15)
+        // The explicit 1-click and 2-click flare forms share the same
+        // underlying technique while remaining separate pad-bank entries.
+        #expect(Set(ScratchPattern.catalog.map(\.technique)).count == 13)
         for pattern in ScratchPattern.catalog {
             #expect(!pattern.events.isEmpty)
             #expect(pattern.duration > 0)
