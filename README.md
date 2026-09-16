@@ -342,6 +342,30 @@ in two consuming apps and the Linux native path on the desktop used for review. 
 acceptance and Android device listening/route validation are unavailable in this release because the
 required hardware is not available; both remain explicitly outside the shipping support claim.
 
+To generate the real-music human-listening WAVs on Linux:
+
+```bash
+./scripts/download-fixtures.sh
+cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+python3 scripts/run-linux-acceptance.py \
+  --build-dir build-native \
+  --output-dir /tmp/parso-linux-music-review
+```
+
+Play the resulting files with `pw-play --volume 0.5` from
+`/tmp/parso-linux-music-review/python/python-*.wav`. For a spoken cue before
+each track, use the optional Linux-only TTS review generator:
+
+```bash
+./scripts/generate-linux-tts-review.sh \
+  --input-dir /tmp/parso-linux-music-review/python \
+  --output-dir /tmp/parso-linux-music-review/pocket-tts-preview
+```
+
+TTS copies are derived review aids only; they are not product dependencies or
+CI inputs. The detailed scenario checklist and recorded human-review status are
+in [`docs/human-visible-acceptance.md`](docs/human-visible-acceptance.md).
+
 ---
 
 # Cookbook — one sample per FLX4 feature

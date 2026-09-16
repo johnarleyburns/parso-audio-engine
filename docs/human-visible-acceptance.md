@@ -113,6 +113,19 @@ done
 The individual files are the authoritative listening artifacts; the loop is
 intentionally sequential but each scenario can also be launched on its own.
 
+## Recorded human review
+
+On 2026-09-16, the maintainer listened to every source WAV in the
+`/tmp/parso-linux-turntablism-review-07748d0` bundle and every optional Pocket
+TTS-guided copy. All reviewed scenarios were accepted as **PASS** with no
+audible defects reported, including the scratch, combination-scratch,
+turntable-manipulation, beat-juggle, and phasing/flanging scenarios. The
+reviewed bundle's automated summary also reports `passed: true`.
+
+This is the human sign-off for the available Linux desktop artifact. Windows
+native-device and Android physical-device listening/route tests remain
+unavailable and explicitly out of scope.
+
 ### Optional Linux spoken listening guide
 
 If the effect cues are difficult to follow, Linux reviewers can generate derived WAV copies with
