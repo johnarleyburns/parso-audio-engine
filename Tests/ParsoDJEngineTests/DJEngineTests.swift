@@ -85,10 +85,12 @@ struct DJAPITests {
         #expect(recorder.recognition == nil)
         #expect(recorder.record(at: 0, deltaSamples: 1_000))
         #expect(recorder.record(at: 0.1, deltaSamples: -1_000))
+        #expect(recorder.record(at: 0.2, deltaSamples: 1_000))
+        #expect(recorder.record(at: 0.3, deltaSamples: -1_000))
         #expect(recorder.recognition?.technique == .baby)
         let pattern = recorder.finishRecognized()
         #expect(pattern?.technique == .baby)
-        #expect(pattern?.events.count == 2)
+        #expect(pattern?.events.count == 4)
     }
 
     @Test func mobilePlatterMapperUsesShortestSeamAndVelocity() {
