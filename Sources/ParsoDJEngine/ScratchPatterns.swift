@@ -57,6 +57,8 @@ public struct MobilePlatterGestureMapper: Sendable {
     private var lastPosition: Double?
     private var lastTimestamp: TimeInterval?
 
+    public var isTracking: Bool { lastPosition != nil }
+
     public init(samplesPerRevolution: Double, sensitivity: Double = 1) {
         precondition(samplesPerRevolution.isFinite && samplesPerRevolution > 0,
                      "Platter samples-per-revolution must be positive")
@@ -120,6 +122,75 @@ public struct MobilePlatterGestureMapper: Sendable {
 
     private func normalizedPressure(_ pressure: Double) -> Double? {
         guard pressure.isFinite else { return nil }
+        return max(0, min(1, pressure))
+    }
+}
+
+/// Main-actor bridge between a mobile platter gesture and one deck.
+///
+/// The session owns begin/update/end ordering. Updates received before begin
+/// or after end are ignored, and ending the session always releases the deck's
+/// vinyl touch. This keeps UIKit/SwiftUI gesture cancellation from leaving a
+/// deck stuck in scratch mode or applying a stale sample to a later touch.
+@MainActor
+public final class MobilePlatterGestureSession {
+    public private(set) var isActive = false
+    public private(set) var lastSample: MobilePlatterGestureSample?
+
+    private let deck: Deck
+    private var mapper: MobilePlatterGestureMapper
+
+    public init(deck: Deck, samplesPerRevolution: Double, sensitivity: Double = 1) {
+        self.deck = deck
+        mapper = MobilePlatterGestureMapper(
+            samplesPerRevolution: samplesPerRevolution,
+            sensitivity: sensitivity
+        )
+    }
+
+    @discardableResult
+    public func begin(
+        at position: Double,
+        timestamp: TimeInterval,
+        pressure: Double = 1
+    ) -> Bool {
+        guard !isActive else { return false }
+        mapper.begin(at: position, timestamp: timestamp, pressure: pressure)
+        guard mapper.isTracking else { return false }
+        isActive = true
+        lastSample = nil
+        deck.jogTouchBegan(pressure: normalizedPressure(pressure))
+        return true
+    }
+
+    @discardableResult
+    public func update(
+        to position: Double,
+        timestamp: TimeInterval,
+        pressure: Double = 1
+    ) -> MobilePlatterGestureSample? {
+        guard isActive, let sample = mapper.update(
+            to: position, timestamp: timestamp, pressure: pressure
+        ) else { return nil }
+        lastSample = sample
+        deck.jogMoved(sample)
+        return sample
+    }
+
+    public func end() {
+        guard isActive else { return }
+        mapper.end()
+        deck.jogTouchEnded()
+        isActive = false
+        lastSample = nil
+    }
+
+    public func cancel() {
+        end()
+    }
+
+    private func normalizedPressure(_ pressure: Double) -> Double {
+        guard pressure.isFinite else { return 0 }
         return max(0, min(1, pressure))
     }
 }

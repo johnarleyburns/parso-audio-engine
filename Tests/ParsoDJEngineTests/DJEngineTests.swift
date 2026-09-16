@@ -76,6 +76,29 @@ struct DJAPITests {
         #expect(mapper.update(to: 0.5, timestamp: 1.3) == nil)
     }
 
+    @Test @MainActor func mobilePlatterSessionOwnsTouchLifecycle() {
+        let engine = makeLoadedHeadless()
+        let session = MobilePlatterGestureSession(
+            deck: engine.deckA, samplesPerRevolution: 48_000
+        )
+        #expect(session.update(to: 0.1, timestamp: 0.1) == nil)
+        #expect(session.begin(at: 0.5, timestamp: 0, pressure: 0.8))
+        #expect(!session.begin(at: 0.5, timestamp: 0.01))
+
+        let sample = session.update(to: 0.6, timestamp: 0.1, pressure: 0.4)
+        #expect(sample != nil)
+        #expect(abs((sample?.deltaSamples ?? 0) - 4_800) < 0.001)
+        #expect(engine.deckA.jogPressure == 0.4)
+        #expect(session.lastSample == sample)
+
+        session.cancel()
+        #expect(!session.isActive)
+        #expect(session.lastSample == nil)
+        #expect(engine.deckA.jogPressure == 1)
+        #expect(session.update(to: 0.7, timestamp: 0.2) == nil)
+        session.end()
+    }
+
     @Test @MainActor func scratchBankTriggerDrivesDeckAndRestoresFader() {
         let engine = makeLoadedHeadless()
         engine.deckA.play()
