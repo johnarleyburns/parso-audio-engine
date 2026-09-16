@@ -156,6 +156,17 @@ def render_scenario(
                        event(13.0, "motor-off-start"), event(18.0, "motor-off-release"),
                        event(20.0, "hydroplane-start"), event(24.0, "hydroplane-end"),
                        event(25.0, "tone-play-start"), event(29.0, "tone-play-end")))
+        add(3.0, "pitch-bend-platters-start",
+            lambda engine: engine.jog_touch(0, vinyl_mode=False, was_playing=True))
+        pitch_bend_deltas = (240.0, -240.0, 360.0, -360.0, 480.0, -480.0,
+                             360.0, -360.0, 240.0, -240.0)
+        for index, delta in enumerate(pitch_bend_deltas):
+            time = 3.15 + index * 0.36
+            direction = "up" if delta > 0 else "down"
+            events.append(event(time, f"pitch-bend-{direction}"))
+            add(time, "pitch-bend-jog", lambda engine, delta=delta: engine.jog_move(0, delta))
+        add(7.0, "pitch-bend-platters-end",
+            lambda engine: engine.jog_release(0, vinyl_mode=False, was_playing=True))
         add(13.0, "motor-off-start", lambda engine: (engine.set_vinyl_speed(0, 3.0, 1.0), engine.pause(0)))
         add(18.0, "motor-off-release", lambda engine: engine.play(0))
         jog_sequence(20.0, "hydroplane", (240.0,) * 16, 0.20)
@@ -281,10 +292,7 @@ def render_scenario(
             elif scenario.name == "turntable-manipulation":
                 crossfader = -1.0
                 deck_keylock[0] = 0.0
-                if 3.0 <= time < 7.0:
-                    phase = (time - 3.0) / 4.0
-                    time_ratio[0] = 0.90 + 0.20 * (0.5 - 0.5 * math.cos(2.0 * math.pi * phase))
-                elif 25.0 <= time:
+                if 25.0 <= time:
                     tone_step = min(4, int((time - 25.0) / 0.8))
                     time_ratio[0] = (0.50, 0.75, 1.00, 1.25, 1.50)[tone_step]
             elif scenario.name == "beat-juggle":
