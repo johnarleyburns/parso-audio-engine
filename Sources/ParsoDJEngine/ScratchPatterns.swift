@@ -504,6 +504,12 @@ public final class ScratchPatternRecorder {
     public private(set) var elapsed: TimeInterval = 0
     public private(set) var events: [ScratchPatternEvent] = []
 
+    /// Best-effort live label for the current take. The original event stream
+    /// remains authoritative and can always be corrected in the editor.
+    public var recognition: ScratchTechniqueRecognition? {
+        ScratchTechniqueRecognizer().recognize(events: events)
+    }
+
     public init(name: String, technique: ScratchTechnique) {
         precondition(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                      "Scratch recording name cannot be empty")
@@ -570,6 +576,17 @@ public final class ScratchPatternRecorder {
         isRecording = false
         guard !events.isEmpty else { return nil }
         return ScratchPattern(name: name, technique: technique, events: events)
+    }
+
+    /// Finishes the take using the deterministic control-topology recognizer.
+    /// This is a convenience for a UI that wants an initial label; it does not
+    /// alter the captured timing, pressure, or fader events.
+    public func finishRecognized() -> ScratchPattern? {
+        guard isRecording else { return nil }
+        isRecording = false
+        guard !events.isEmpty else { return nil }
+        let detected = recognition?.technique ?? technique
+        return ScratchPattern(name: name, technique: detected, events: events)
     }
 
     public func cancel() {

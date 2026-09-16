@@ -60,13 +60,13 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
                     const int64_t lower = static_cast<int64_t>(pos < 0.0 ? 0.0 : pos);
                     const int64_t upper = lower + 1 < v.frames ? lower + 1 : lower;
                     const float frac = static_cast<float>(pos - static_cast<double>(lower));
-                    const float left = scratching
+                    const float voiceLeft = scratching
                         ? sampleAtScratch(v, 0, pos)
                         : v.channels[0][lower] + (v.channels[0][upper] - v.channels[0][lower]) * frac;
-                    const float right = scratching
+                    const float voiceRight = scratching
                         ? sampleAtScratch(v, rc, pos)
                         : v.channels[rc][lower] + (v.channels[rc][upper] - v.channels[rc][lower]) * frac;
-                    summed += 0.5f * (left + right) * v.smoothedGain;
+                    summed += 0.5f * (voiceLeft + voiceRight) * v.smoothedGain;
                 }
                 dry[deckIndex][frame] = summed;
             } else {

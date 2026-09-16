@@ -96,7 +96,11 @@ static float smoothedChannelFader(pe_engine* engine, int deckIndex) {
         return target;
     }
     const float sampleRate = static_cast<float>(engine->sampleRate);
-    const float smoothing = 1.0f - std::exp(-1.0f / (sampleRate * 0.010f));
+    // Human channel moves get a musical 10 ms glide. During a vinyl scratch,
+    // fader clicks are part of the technique, so use a much shorter cut ramp
+    // while still avoiding a discontinuous full-scale multiplication step.
+    const float smoothingSeconds = deck.jogTouched && deck.jogVinylMode ? 0.002f : 0.010f;
+    const float smoothing = 1.0f - std::exp(-1.0f / (sampleRate * smoothingSeconds));
     deck.smoothedFader += smoothing * (target - deck.smoothedFader);
     return deck.smoothedFader;
 }

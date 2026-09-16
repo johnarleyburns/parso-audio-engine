@@ -77,6 +77,18 @@ struct DJAPITests {
         }
     }
 
+    @Test @MainActor func scratchRecorderOffersLiveAndFinishedRecognition() {
+        let recorder = ScratchPatternRecorder(name: "take", technique: .drag)
+        recorder.start()
+        #expect(recorder.recognition == nil)
+        #expect(recorder.record(at: 0, deltaSamples: 1_000))
+        #expect(recorder.record(at: 0.1, deltaSamples: -1_000))
+        #expect(recorder.recognition?.technique == .baby)
+        let pattern = recorder.finishRecognized()
+        #expect(pattern?.technique == .baby)
+        #expect(pattern?.events.count == 2)
+    }
+
     @Test func mobilePlatterMapperUsesShortestSeamAndVelocity() {
         var mapper = MobilePlatterGestureMapper(samplesPerRevolution: 1_000)
         #expect(mapper.begin(at: 0.95, timestamp: 1) == nil)
