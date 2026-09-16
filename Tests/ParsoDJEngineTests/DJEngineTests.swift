@@ -61,6 +61,21 @@ struct DJAPITests {
         #expect(cursor.nextEventIndex == 0)
     }
 
+    @Test func mobilePlatterMapperUsesShortestSeamAndVelocity() {
+        var mapper = MobilePlatterGestureMapper(samplesPerRevolution: 1_000)
+        #expect(mapper.begin(at: 0.95, timestamp: 1) == nil)
+        let acrossSeam = mapper.update(to: 0.05, timestamp: 1.1, pressure: 0.5)
+        #expect(acrossSeam?.deltaSamples == 100)
+        #expect(acrossSeam?.pressure == 0.5)
+        #expect(abs((acrossSeam?.velocitySamplesPerSecond ?? 0) - 1_000) < 0.001)
+
+        let reverse = mapper.update(to: 0.95, timestamp: 1.2, pressure: 0)
+        #expect(reverse?.deltaSamples == -100)
+        #expect(reverse?.pressure == 0)
+        mapper.end()
+        #expect(mapper.update(to: 0.5, timestamp: 1.3) == nil)
+    }
+
     @Test @MainActor func scratchBankTriggerDrivesDeckAndRestoresFader() {
         let engine = makeLoadedHeadless()
         engine.deckA.play()
@@ -142,6 +157,7 @@ struct DJAPITests {
         #expect(pattern?.name == "Recorded Crab")
         #expect(pattern?.technique == .crab)
         #expect(pattern?.events.map(\.label) == ["stroke", "click"])
+        #expect(pattern?.events[1].pressure == 1)
         #expect(pattern?.duration == 0.08)
         #expect(!recorder.isRecording)
         #expect(recorder.finish() == nil)
@@ -150,7 +166,11 @@ struct DJAPITests {
         #expect(recorder.advance(to: 0.5))
         #expect(recorder.finish() == nil)
         recorder.start()
-        #expect(recorder.record(at: 0.1, deltaSamples: 10))
+        let sample = MobilePlatterGestureSample(
+            deltaSamples: 10, pressure: 0.35, velocitySamplesPerSecond: 100
+        )
+        #expect(recorder.record(sample, at: 0.1))
+        #expect(recorder.events[0].pressure == 0.35)
         recorder.cancel()
         #expect(recorder.events.isEmpty)
         #expect(!recorder.isRecording)

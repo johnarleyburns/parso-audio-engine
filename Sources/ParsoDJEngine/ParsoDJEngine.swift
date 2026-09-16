@@ -1154,6 +1154,11 @@ public final class Deck {
         guard normalizedPressure > 0 else { return }
         post(PE_CMD_JOG_MOVE, f0: Float(deltaSamples), f1: Float(normalizedPressure))
     }
+    /// Applies a normalized mobile-platter sample produced by
+    /// `MobilePlatterGestureMapper`.
+    public func jogMoved(_ sample: MobilePlatterGestureSample) {
+        jogMoved(deltaSamples: sample.deltaSamples, pressure: sample.pressure)
+    }
     /// Searches by an exact number of source frames without changing transport state.
     public func frameSearch(frames: Double) {
         jogMoved(deltaSamples: frames)
