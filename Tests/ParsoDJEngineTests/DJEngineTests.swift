@@ -100,6 +100,55 @@ struct DJAPITests {
         #expect(engine.triggerScratch(slot: 0, on: engine.deckA))
         #expect(engine.scratchBank.isPlaying(on: engine.deckA))
     }
+
+    @Test @MainActor func scratchPatternEditorCommitsOrderedEdits() {
+        var editor = ScratchPatternEditor(pattern: .chirp)
+        #expect(editor.rename("My Chirp"))
+        #expect(!editor.rename("   "))
+        editor.setTechnique(.flare)
+
+        let inserted = ScratchPatternEvent(offset: 0.16, deltaSamples: 300, label: "accent")
+        #expect(editor.insert(inserted, at: 2))
+        #expect(editor.insert(inserted, at: 0) == false)
+        #expect(editor.updateEvent(
+            at: 2,
+            with: ScratchPatternEvent(offset: 0.17, deltaSamples: 350, label: "edited accent")
+        ))
+        #expect(editor.removeEvent(at: 2))
+        #expect(editor.pattern.name == "My Chirp")
+        #expect(editor.pattern.technique == .flare)
+        #expect(editor.pattern.events == ScratchPattern.catalog[5].events)
+
+        let bank = ScratchBank()
+        #expect(bank.assign(editor, to: 0))
+        #expect(bank.editor(for: 0)?.pattern == editor.pattern)
+    }
+
+    @Test @MainActor func scratchPatternRecorderCapturesMonotonicGestureEvents() {
+        let recorder = ScratchPatternRecorder(name: "Recorded Crab", technique: .crab)
+        recorder.start()
+        #expect(recorder.record(at: 0, deltaSamples: 1_000, label: "stroke"))
+        #expect(recorder.advance(to: 0.08))
+        #expect(recorder.record(at: 0.08, deltaSamples: 0, faderOpen: false, label: "click"))
+        #expect(recorder.record(at: 0.04, deltaSamples: -250) == false)
+
+        let pattern = recorder.finish()
+        #expect(pattern?.name == "Recorded Crab")
+        #expect(pattern?.technique == .crab)
+        #expect(pattern?.events.map(\.label) == ["stroke", "click"])
+        #expect(pattern?.duration == 0.08)
+        #expect(!recorder.isRecording)
+        #expect(recorder.finish() == nil)
+
+        recorder.start()
+        #expect(recorder.advance(to: 0.5))
+        #expect(recorder.finish() == nil)
+        recorder.start()
+        #expect(recorder.record(at: 0.1, deltaSamples: 10))
+        recorder.cancel()
+        #expect(recorder.events.isEmpty)
+        #expect(!recorder.isRecording)
+    }
 }
 
 // MARK: - Render behavior (docs/SPEC.md §11)

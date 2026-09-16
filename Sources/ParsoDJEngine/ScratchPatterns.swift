@@ -193,6 +193,160 @@ public struct ScratchPattern: Equatable, Sendable {
     }
 }
 
+/// Mutable control-side draft for a Scratch Bank pattern.
+///
+/// The editor keeps events ordered by offset and only commits valid changes.
+/// It is intentionally a value type so a phone/iPad editor can update a draft
+/// off to the side and assign the finished `pattern` to a bank slot atomically.
+public struct ScratchPatternEditor: Equatable, Sendable {
+    public private(set) var name: String
+    public private(set) var technique: ScratchTechnique
+    public private(set) var events: [ScratchPatternEvent]
+
+    public init(pattern: ScratchPattern) {
+        name = pattern.name
+        technique = pattern.technique
+        events = pattern.events
+    }
+
+    public init(
+        name: String,
+        technique: ScratchTechnique,
+        events: [ScratchPatternEvent] = []
+    ) {
+        precondition(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                     "Scratch pattern name cannot be empty")
+        precondition(zip(events, events.dropFirst()).allSatisfy { $0.0.offset <= $0.1.offset },
+                     "Scratch pattern events must be in offset order")
+        self.name = name
+        self.technique = technique
+        self.events = events
+    }
+
+    /// The immutable value suitable for `ScratchBank.assign`.
+    public var pattern: ScratchPattern {
+        ScratchPattern(name: name, technique: technique, events: events)
+    }
+
+    @discardableResult
+    public mutating func rename(_ name: String) -> Bool {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        self.name = name
+        return true
+    }
+
+    public mutating func setTechnique(_ technique: ScratchTechnique) {
+        self.technique = technique
+    }
+
+    /// Inserts an event at the requested index when it preserves timeline order.
+    @discardableResult
+    public mutating func insert(_ event: ScratchPatternEvent, at index: Int) -> Bool {
+        guard events.indices.contains(index) || index == events.endIndex else { return false }
+        if index > events.startIndex, events[index - 1].offset > event.offset { return false }
+        if index < events.endIndex, event.offset > events[index].offset { return false }
+        events.insert(event, at: index)
+        return true
+    }
+
+    @discardableResult
+    public mutating func append(_ event: ScratchPatternEvent) -> Bool {
+        insert(event, at: events.endIndex)
+    }
+
+    /// Replaces an event when the replacement remains ordered with its neighbors.
+    @discardableResult
+    public mutating func updateEvent(at index: Int, with event: ScratchPatternEvent) -> Bool {
+        guard events.indices.contains(index) else { return false }
+        if index > events.startIndex, events[index - 1].offset > event.offset { return false }
+        if index + 1 < events.endIndex, event.offset > events[index + 1].offset { return false }
+        events[index] = event
+        return true
+    }
+
+    @discardableResult
+    public mutating func removeEvent(at index: Int) -> Bool {
+        guard events.indices.contains(index) else { return false }
+        events.remove(at: index)
+        return true
+    }
+
+    public mutating func removeAllEvents() {
+        events.removeAll(keepingCapacity: true)
+    }
+}
+
+/// Main-actor recorder that converts timestamped live gestures into a pattern.
+///
+/// A display-link or gesture coordinator supplies monotonic elapsed time. The
+/// recorder stores only control events and never runs on, or synchronizes with,
+/// the real-time audio thread. Calling `finish()` returns `nil` for an empty
+/// recording; callers can edit the returned pattern before assigning it to a
+/// Scratch Bank slot.
+@MainActor
+public final class ScratchPatternRecorder {
+    public let name: String
+    public let technique: ScratchTechnique
+    public private(set) var isRecording = false
+    public private(set) var elapsed: TimeInterval = 0
+    public private(set) var events: [ScratchPatternEvent] = []
+
+    public init(name: String, technique: ScratchTechnique) {
+        precondition(!name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                     "Scratch recording name cannot be empty")
+        self.name = name
+        self.technique = technique
+    }
+
+    public func start() {
+        events.removeAll(keepingCapacity: true)
+        elapsed = 0
+        isRecording = true
+    }
+
+    /// Advances the recording clock without adding an event.
+    @discardableResult
+    public func advance(to elapsed: TimeInterval) -> Bool {
+        guard isRecording, elapsed.isFinite, elapsed >= self.elapsed else { return false }
+        self.elapsed = elapsed
+        return true
+    }
+
+    /// Records one jog/fader sample at a monotonic host-clock timestamp.
+    @discardableResult
+    public func record(
+        at elapsed: TimeInterval,
+        deltaSamples: Double,
+        faderOpen: Bool = true,
+        label: String = ""
+    ) -> Bool {
+        guard isRecording, elapsed.isFinite, elapsed >= self.elapsed else { return false }
+        let event = ScratchPatternEvent(
+            offset: elapsed,
+            deltaSamples: deltaSamples,
+            faderOpen: faderOpen,
+            label: label
+        )
+        events.append(event)
+        self.elapsed = elapsed
+        return true
+    }
+
+    /// Ends the recording and returns an immutable pattern, if it captured an event.
+    public func finish() -> ScratchPattern? {
+        guard isRecording else { return nil }
+        isRecording = false
+        guard !events.isEmpty else { return nil }
+        return ScratchPattern(name: name, technique: technique, events: events)
+    }
+
+    public func cancel() {
+        isRecording = false
+        elapsed = 0
+        events.removeAll(keepingCapacity: true)
+    }
+}
+
 /// Main-actor-owned eight-pad Scratch Bank.
 ///
 /// The bank stores patterns but does not run a timer. A UI/display-link layer
@@ -223,6 +377,16 @@ public final class ScratchBank {
     public func pattern(at slot: Int) -> ScratchPattern? {
         guard slots.indices.contains(slot) else { return nil }
         return slots[slot]
+    }
+
+    public func editor(for slot: Int) -> ScratchPatternEditor? {
+        guard let pattern = pattern(at: slot) else { return nil }
+        return ScratchPatternEditor(pattern: pattern)
+    }
+
+    @discardableResult
+    public func assign(_ editor: ScratchPatternEditor, to slot: Int) -> Bool {
+        assign(editor.pattern, to: slot)
     }
 
     @discardableResult
