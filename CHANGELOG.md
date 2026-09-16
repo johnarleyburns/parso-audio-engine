@@ -2,12 +2,33 @@
 
 All notable changes are documented here. Format: Keep a Changelog; scheme: SemVer.
 The public API reached **1.0.0** after validation by the first real integrations
-(see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current post-tag maintenance
-release candidate is `1.1.1`.
+(see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current maintenance
+release is `1.1.1`.
 
 ## [Unreleased]
 
-## [1.1.1] - 2026-09-12
+## [1.1.1] - 2026-09-16
+### Added
+- Complete portable turntablism control coverage for baby, scribble, drag, forward/backward,
+  chirp, flare, orbit, transform, crab, tear, twiddle, boomerang, platter pitch bend,
+  motor-off, hydroplane, tone-play, beat-juggling, and phasing/flanging scenarios.
+- Reusable `ScratchBank` patterns with editing, recording, playback, technique recognition,
+  mobile platter-touch lifecycle, and four-point Hermite scratch interpolation.
+- Real-music turntablism acceptance artifacts using hip-hop/disco material, with an optional
+  Linux Pocket TTS guide generator for human review.
+
+### Changed
+- Refined scratch motion, fader-cut ramps, explicit one-/two-click flare patterns, Orbit
+  topology, and captured touch modes to keep the scratch sound continuous and musical.
+- Added per-technique API recipes and mobile gesture guidance in `docs/turntablism-api.md`,
+  linked from the README.
+
+### Accepted
+- Maintainer human listening review passed for all source and optional TTS-guided Linux
+  turntablism scenarios on 2026-09-16, including scratch combinations, beat juggling, and
+  phasing/flanging. Windows and Android physical-device tests remain out of scope because the
+  required hardware is unavailable; DVS/timecode is a documented non-goal.
+
 ### Fixed
 - Resolve Swift analysis pitches between FFT bins and preserve full-register chord evidence,
   correcting bass-bin and chord-inversion key errors. Bound the tempo preference and refine
