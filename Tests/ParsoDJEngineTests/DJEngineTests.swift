@@ -103,18 +103,24 @@ struct DJAPITests {
 
     @Test @MainActor func scratchPatternEditorCommitsOrderedEdits() {
         var editor = ScratchPatternEditor(pattern: .chirp)
-        #expect(editor.rename("My Chirp"))
-        #expect(!editor.rename("   "))
+        let renamed = editor.rename("My Chirp")
+        #expect(renamed)
+        let rejectedRename = editor.rename("   ")
+        #expect(!rejectedRename)
         editor.setTechnique(.flare)
 
         let inserted = ScratchPatternEvent(offset: 0.16, deltaSamples: 300, label: "accent")
-        #expect(editor.insert(inserted, at: 2))
-        #expect(editor.insert(inserted, at: 0) == false)
-        #expect(editor.updateEvent(
+        let insertedInOrder = editor.insert(inserted, at: 2)
+        #expect(insertedInOrder)
+        let rejectedInsert = editor.insert(inserted, at: 0)
+        #expect(!rejectedInsert)
+        let updatedInOrder = editor.updateEvent(
             at: 2,
             with: ScratchPatternEvent(offset: 0.17, deltaSamples: 350, label: "edited accent")
-        ))
-        #expect(editor.removeEvent(at: 2))
+        )
+        #expect(updatedInOrder)
+        let removed = editor.removeEvent(at: 2)
+        #expect(removed)
         #expect(editor.pattern.name == "My Chirp")
         #expect(editor.pattern.technique == .flare)
         #expect(editor.pattern.events == ScratchPattern.catalog[5].events)
