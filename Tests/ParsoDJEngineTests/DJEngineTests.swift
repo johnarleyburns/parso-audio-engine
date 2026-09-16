@@ -60,6 +60,46 @@ struct DJAPITests {
         cursor.reset()
         #expect(cursor.nextEventIndex == 0)
     }
+
+    @Test @MainActor func scratchBankTriggerDrivesDeckAndRestoresFader() {
+        let engine = makeLoadedHeadless()
+        engine.deckA.play()
+        engine.mixer.channelA.fader = 0.65
+        #expect(engine.scratchBank.assign(.chirp, to: 0))
+        #expect(engine.triggerScratch(slot: 0, on: engine.deckA))
+        #expect(engine.scratchBank.isPlaying(on: engine.deckA))
+        #expect(engine.deckA.isPlaying == false)
+
+        // The close-fader event is at 120 ms; a render block crossing it must
+        // reach the real Channel control, not just advance a data cursor.
+        _ = engine.render(frames: 7_200)
+        #expect(engine.mixer.channelA.fader == 0)
+
+        // Completion releases the vinyl touch, resumes the deck, and restores
+        // the fader value that was present before the routine was triggered.
+        _ = engine.render(frames: 12_000)
+        #expect(engine.scratchBank.isPlaying(on: engine.deckA) == false)
+        #expect(engine.deckA.isPlaying)
+        #expect(abs(engine.mixer.channelA.fader - 0.65) < 0.0001)
+    }
+
+    @Test @MainActor func scratchBankLoopCanBeCancelledAndRetriggered() {
+        let engine = makeLoadedHeadless()
+        engine.deckA.play()
+        engine.mixer.channelA.fader = 0.4
+        #expect(engine.scratchBank.assign(.baby, to: 0))
+        #expect(engine.triggerScratch(slot: 0, on: engine.deckA, looping: true))
+        _ = engine.render(frames: 48_000)
+        #expect(engine.scratchBank.isPlaying(on: engine.deckA))
+
+        engine.stopScratch(on: engine.deckA)
+        #expect(engine.scratchBank.isPlaying(on: engine.deckA) == false)
+        #expect(abs(engine.mixer.channelA.fader - 0.4) < 0.0001)
+        #expect(engine.deckA.isPlaying)
+
+        #expect(engine.triggerScratch(slot: 0, on: engine.deckA))
+        #expect(engine.scratchBank.isPlaying(on: engine.deckA))
+    }
 }
 
 // MARK: - Render behavior (docs/SPEC.md §11)

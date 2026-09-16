@@ -205,6 +205,7 @@ public final class ScratchBank {
     public static let slotCount = 8
 
     public private(set) var slots: [ScratchPattern?]
+    private var players: [ObjectIdentifier: ScratchPatternPlayer] = [:]
 
     public init() {
         slots = Array(repeating: nil, count: Self.slotCount)
@@ -234,6 +235,133 @@ public final class ScratchBank {
     public func cursor(for slot: Int) -> ScratchPatternCursor? {
         guard let pattern = pattern(at: slot) else { return nil }
         return ScratchPatternCursor(pattern: pattern)
+    }
+
+    /// Starts a stored pattern on a deck and its corresponding channel.
+    ///
+    /// The first event is applied immediately. Subsequent events are advanced
+    /// by `DJEngine.tickAutomation(elapsed:)` or by `HeadlessDJEngine.render`.
+    /// Triggering an occupied deck cancels its previous routine first.
+    @discardableResult
+    public func trigger(
+        _ slot: Int,
+        on deck: Deck,
+        channel: Channel,
+        looping: Bool = false
+    ) -> Bool {
+        guard let pattern = pattern(at: slot), !pattern.events.isEmpty else { return false }
+        stop(on: deck)
+        let player = ScratchPatternPlayer(deck: deck, channel: channel)
+        players[ObjectIdentifier(deck)] = player
+        player.start(pattern: pattern, looping: looping)
+        if !player.isActive { players[ObjectIdentifier(deck)] = nil }
+        return player.isActive
+    }
+
+    /// Stops the active routine on a deck and restores its pre-pattern fader.
+    public func stop(on deck: Deck) {
+        let id = ObjectIdentifier(deck)
+        players.removeValue(forKey: id)?.stop()
+    }
+
+    /// Stops every active routine and restores all affected channel faders.
+    public func stopAll() {
+        let activePlayers = Array(players.values)
+        players.removeAll(keepingCapacity: true)
+        activePlayers.forEach { $0.stop() }
+    }
+
+    public func isPlaying(on deck: Deck) -> Bool {
+        players[ObjectIdentifier(deck)]?.isActive == true
+    }
+
+    /// Advances all active routines from the host/control clock.
+    internal func advance(elapsed: TimeInterval) {
+        guard elapsed.isFinite, elapsed >= 0 else { return }
+        var finishedIDs: [ObjectIdentifier] = []
+        for (id, player) in players {
+            player.advance(elapsed: elapsed)
+            if !player.isActive { finishedIDs.append(id) }
+        }
+        for id in finishedIDs { players[id] = nil }
+    }
+}
+
+/// Control-side Scratch Bank playback for one deck/channel pair.
+///
+/// This object only posts the same `Deck` jog commands and `Channel` fader
+/// controls used by a human gesture. It never renders audio, sleeps, or owns
+/// a timer. That keeps pattern playback deterministic in tests and lets a
+/// phone/iPad display link provide the clock without affecting the audio
+/// callback.
+@MainActor
+public final class ScratchPatternPlayer {
+    public private(set) var isActive = false
+    public private(set) var elapsed: TimeInterval = 0
+    public private(set) var pattern: ScratchPattern?
+    public private(set) var looping = false
+
+    private let deck: Deck
+    private let channel: Channel
+    private var cursor: ScratchPatternCursor?
+    private var originalFader: Double = 1
+    private var ownsJogTouch = false
+
+    fileprivate init(deck: Deck, channel: Channel) {
+        self.deck = deck
+        self.channel = channel
+    }
+
+    fileprivate func start(pattern: ScratchPattern, looping: Bool) {
+        stop()
+        guard !pattern.events.isEmpty else { return }
+        self.pattern = pattern
+        self.cursor = ScratchPatternCursor(pattern: pattern)
+        self.looping = looping
+        self.elapsed = 0
+        self.originalFader = channel.fader
+        deck.jogTouchBegan()
+        ownsJogTouch = true
+        isActive = true
+        advance(elapsed: 0)
+    }
+
+    /// Applies every event that became due during `elapsed` seconds.
+    fileprivate func advance(elapsed delta: TimeInterval) {
+        guard isActive, delta.isFinite, delta >= 0, var cursor, let pattern else { return }
+        let duration = max(pattern.duration, 0.001)
+        self.elapsed += delta
+
+        while isActive {
+            for event in cursor.advance(to: self.elapsed) {
+                channel.fader = event.faderOpen ? 1 : 0
+                deck.jogMoved(deltaSamples: event.deltaSamples)
+            }
+            if !cursor.isFinished { break }
+            guard looping else {
+                self.cursor = cursor
+                finish()
+                return
+            }
+            self.elapsed -= duration
+            cursor.reset()
+        }
+        self.cursor = cursor
+    }
+
+    fileprivate func stop() {
+        guard isActive else { return }
+        finish()
+    }
+
+    private func finish() {
+        if ownsJogTouch {
+            deck.jogTouchEnded()
+            ownsJogTouch = false
+        }
+        channel.fader = originalFader
+        isActive = false
+        looping = false
     }
 }
 

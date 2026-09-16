@@ -190,6 +190,7 @@ public final class DJEngine {
     }
 
     public func stop() {
+        scratchBank.stopAll()
         audioEngine?.stop()
         audioEngine = nil
         isRunning = false
@@ -222,7 +223,22 @@ public final class DJEngine {
 
     /// Advance time-based mixer automation (the Smart Fader transition). Call
     /// each frame from a display link with the real elapsed seconds.
-    public func tickAutomation(elapsed: TimeInterval) { mixer.advanceAutomation(elapsed: elapsed) }
+    public func tickAutomation(elapsed: TimeInterval) {
+        mixer.advanceAutomation(elapsed: elapsed)
+        scratchBank.advance(elapsed: elapsed)
+    }
+
+    /// Triggers a reusable Scratch Bank routine on a deck. Pattern playback is
+    /// advanced by the same display-link tick used for mixer automation.
+    @discardableResult
+    public func triggerScratch(slot: Int, on deck: Deck, looping: Bool = false) -> Bool {
+        guard let index = decks.firstIndex(where: { $0 === deck }), mixer.channels.indices.contains(index) else {
+            return false
+        }
+        return scratchBank.trigger(slot, on: deck, channel: mixer.channels[index], looping: looping)
+    }
+
+    public func stopScratch(on deck: Deck) { scratchBank.stop(on: deck) }
 
     /// Load a real impulse response for the master `.convolution` reverb mode
     /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
@@ -631,7 +647,11 @@ public final class HeadlessDJEngine {
     /// Advance `frames` and return non-interleaved stereo master output.
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
         let count = max(0, frames)
-        if count > 0 { mixer.advanceAutomation(elapsed: Double(count) / bridge.engineSampleRate) }
+        if count > 0 {
+            let elapsed = Double(count) / bridge.engineSampleRate
+            mixer.advanceAutomation(elapsed: elapsed)
+            scratchBank.advance(elapsed: elapsed)
+        }
         var left = [Float](repeating: 0, count: count)
         var right = [Float](repeating: 0, count: count)
         left.withUnsafeMutableBufferPointer { leftPointer in
@@ -695,7 +715,22 @@ public final class HeadlessDJEngine {
 
     /// Advance time-based mixer automation (the Smart Fader transition). Call
     /// each frame from a display link with the real elapsed seconds.
-    public func tickAutomation(elapsed: TimeInterval) { mixer.advanceAutomation(elapsed: elapsed) }
+    public func tickAutomation(elapsed: TimeInterval) {
+        mixer.advanceAutomation(elapsed: elapsed)
+        scratchBank.advance(elapsed: elapsed)
+    }
+
+    /// Triggers a reusable Scratch Bank routine on a deck in the synchronous
+    /// test/headless engine.
+    @discardableResult
+    public func triggerScratch(slot: Int, on deck: Deck, looping: Bool = false) -> Bool {
+        guard let index = decks.firstIndex(where: { $0 === deck }), mixer.channels.indices.contains(index) else {
+            return false
+        }
+        return scratchBank.trigger(slot, on: deck, channel: mixer.channels[index], looping: looping)
+    }
+
+    public func stopScratch(on deck: Deck) { scratchBank.stop(on: deck) }
 
     /// Load a real impulse response for the master `.convolution` reverb mode
     /// (CDJ3000 parity C7c — an OpenAIR / EchoThief space). Channel 0 is used;
