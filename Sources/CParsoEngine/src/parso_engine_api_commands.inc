@@ -44,6 +44,7 @@ void pe_deck_set_buffer(
     state.reverse = false;
     state.jogTouched = false;
     state.jogVelocity = 0.0;
+    state.jogPressure = 1.0;
     state.jogAudioPosition = 0.0;
     state.jogTargetPosition = 0.0;
     state.jogAudioInitialized = false;

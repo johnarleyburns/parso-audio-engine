@@ -1131,14 +1131,28 @@ public final class Deck {
 
     // Jog / scratch (engages varispeed transiently)
     public var vinylMode: Bool = true
-    public func jogTouchBegan() {
+    /// Most recent normalized mobile-platter contact pressure (0…1).
+    /// Zero pressure leaves the touch active but does not move the record.
+    public private(set) var jogPressure: Double = 1
+
+    public func jogTouchBegan(pressure: Double = 1) {
+        jogPressure = normalizedJogPressure(pressure)
         joggingWasPlaying = isPlaying
         if vinylMode { isPlaying = false }
         post(PE_CMD_JOG_TOUCH, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
     }
     public func jogMoved(deltaSamples: Double) {
+        jogMoved(deltaSamples: deltaSamples, pressure: jogPressure)
+    }
+    /// Applies a mobile platter movement with normalized contact pressure.
+    /// Pressure scales the source-frame movement and the native scratch
+    /// velocity; zero is a useful touch-contact gate for capacitive surfaces.
+    public func jogMoved(deltaSamples: Double, pressure: Double) {
         guard deltaSamples.isFinite else { return }
-        post(PE_CMD_JOG_MOVE, f0: Float(deltaSamples))
+        let normalizedPressure = normalizedJogPressure(pressure)
+        jogPressure = normalizedPressure
+        guard normalizedPressure > 0 else { return }
+        post(PE_CMD_JOG_MOVE, f0: Float(deltaSamples), f1: Float(normalizedPressure))
     }
     /// Searches by an exact number of source frames without changing transport state.
     public func frameSearch(frames: Double) {
@@ -1153,6 +1167,12 @@ public final class Deck {
         if vinylMode && joggingWasPlaying { isPlaying = true }
         post(PE_CMD_JOG_RELEASE, i0: vinylMode ? 1 : 0, i1: joggingWasPlaying ? 1 : 0)
         joggingWasPlaying = false
+        jogPressure = 1
+    }
+
+    private func normalizedJogPressure(_ pressure: Double) -> Double {
+        guard pressure.isFinite else { return 0 }
+        return max(0, min(1, pressure))
     }
     public func nudge(_ amount: Double) {
         let bend = max(-1.0, min(1.0, amount.isFinite ? amount : 0))

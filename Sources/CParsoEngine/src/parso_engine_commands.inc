@@ -109,6 +109,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             if (command.i0 != 0) {
                 deck.jogTouched = true;
                 deck.jogVelocity = 0.0;
+                deck.jogPressure = 1.0;
                 deck.jogAudioPosition = deck.position;
                 deck.jogTargetPosition = deck.position;
                 deck.jogAudioInitialized = true;
@@ -122,22 +123,29 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             break;
         case PE_CMD_JOG_MOVE:
             if (std::isfinite(command.f0) && deck.frames > 0) {
+                // Older callers leave f1 at zero. Preserve their full-contact
+                // behavior while allowing the Swift mobile facade to provide
+                // a normalized pressure in (0, 1].
+                const double pressure = std::isfinite(command.f1) && command.f1 > 0.0f
+                    ? std::min(1.0, static_cast<double>(command.f1)) : 1.0;
+                deck.jogPressure = pressure;
+                const double movement = static_cast<double>(command.f0) * pressure;
                 if (deck.jogTouched) {
                     // Keep the logical playhead responsive for UI while driving
                     // the audio reader with a short, decaying hand velocity.
                     // This preserves the musical scratch motion without making
                     // the reader jump to a new source frame.
-                    deck.jogTargetPosition += static_cast<double>(command.f0);
+                    deck.jogTargetPosition += movement;
                     if (deck.jogTargetPosition < 0.0) deck.jogTargetPosition = 0.0;
                     if (deck.jogTargetPosition > static_cast<double>(deck.frames - 1)) {
                         deck.jogTargetPosition = static_cast<double>(deck.frames - 1);
                     }
                     deck.position = deck.jogTargetPosition;
                     deck.shadowPosition = deck.position;
-                    deck.jogVelocity = static_cast<double>(command.f0) /
+                    deck.jogVelocity = movement /
                         std::max(1.0, deck.sampleRate * 0.060);
                 } else {
-                    deck.position += static_cast<double>(command.f0);
+                    deck.position += movement;
                     if (deck.position < 0.0) deck.position = 0.0;
                     if (deck.position > static_cast<double>(deck.frames)) {
                         deck.position = static_cast<double>(deck.frames);
@@ -154,6 +162,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             }
             deck.jogTouched = false;
             deck.jogVelocity = 0.0;
+            deck.jogPressure = 1.0;
             deck.jogAudioInitialized = false;
             if (command.i0 != 0 && command.i1 != 0 && deck.position < static_cast<double>(deck.frames)) {
                 deck.playing = true;

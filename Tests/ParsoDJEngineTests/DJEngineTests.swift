@@ -357,6 +357,25 @@ struct CueJogNudgeTests {
         #expect(maxJump < 0.3, "sample-to-sample jump \(maxJump) suggests a discontinuous scratch reader")
     }
 
+    @Test func mobilePlatterPressureScalesScratchMovement() {
+        let e = makeLoadedHeadless()
+        e.deckA.jogTouchBegan(pressure: 0.25)
+        e.deckA.jogMoved(deltaSamples: 4_800, pressure: 0.25)
+        _ = e.render(frames: 1)
+        #expect(abs(e.deckA.playhead - 0.025) < 0.01)
+        #expect(e.deckA.jogPressure == 0.25)
+
+        e.deckA.jogMoved(deltaSamples: 4_800, pressure: 0)
+        _ = e.render(frames: 1)
+        #expect(abs(e.deckA.playhead - 0.025) < 0.01)
+
+        e.deckA.jogMoved(deltaSamples: 4_800, pressure: 1)
+        _ = e.render(frames: 1)
+        #expect(abs(e.deckA.playhead - 0.125) < 0.01)
+        e.deckA.jogTouchEnded()
+        #expect(e.deckA.jogPressure == 1)
+    }
+
     @Test func nudgeTemporarilyChangesPlaybackRate() {
         let e = makeLoadedHeadless()
         e.deckA.nudge(1)
