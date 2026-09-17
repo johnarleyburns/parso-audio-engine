@@ -2409,7 +2409,7 @@ public final class SmartFader {
     /// Existing convenience API. It now creates a frame-bound recipe while
     /// retaining the old seconds-based call shape.
     public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) {
-        guard seconds > 0, from !== to, let mixer,
+        guard isEnabled, seconds > 0, from !== to, let mixer,
               mixer.channels.indices.contains(from.channelIndex),
               mixer.channels.indices.contains(to.channelIndex) else { return }
         let bpm = max(1, from.effectiveBPM)
