@@ -97,7 +97,7 @@ publishing {
         register<MavenPublication>("release") {
             groupId = "com.parsoaudio"
             artifactId = "parso-audio-android"
-            version = "1.1.1"
+            version = "1.2.0"
             afterEvaluate {
                 from(components["release"])
             }

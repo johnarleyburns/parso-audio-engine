@@ -18,6 +18,16 @@ public enum AudioEngineError: Error, Sendable {
     case invalidOutputFormat
 }
 
+public enum DJEngineProfile: String, Codable, Sendable {
+    case full
+    case transitionLab
+}
+
+public enum DJEngineHostMode: String, Codable, Sendable {
+    case ownedEngine
+    case externalEngine
+}
+
 /// Render-side telemetry snapshot (Phase 6b item 2). The Tonearm adapter maps
 /// this onto its app-facing `EngineTelemetry` value type.
 public struct EngineStats: Sendable {
@@ -83,6 +93,7 @@ public final class DJEngine {
     public let scratchBank: ScratchBank
     private let bridge: EngineBridge
     private let sampleRateValue: Double
+    public let profile: DJEngineProfile
     /// Engine sample rate (Phase 6a `WorkspaceEngine.sampleRate`).
     public var sampleRate: Double { sampleRateValue }
     private let maxFramesPerRender: Int
@@ -90,14 +101,20 @@ public final class DJEngine {
     public var bufferPeriodMillis: Double { Double(maxFramesPerRender) / sampleRateValue * 1000 }
     public private(set) var isRunning: Bool = false
     private var audioEngine: AVAudioEngine?
+    private var sourceNode: AVAudioSourceNode?
+    private weak var externalHostEngine: AVAudioEngine?
+    public private(set) var hostMode: DJEngineHostMode = .ownedEngine
     private var configChangeObserver: NSObjectProtocol?
     private var configChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
-        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender, deckCount: deckCount)
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512,
+                deckCount: Int = 4, profile: DJEngineProfile = .full) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender,
+                                  deckCount: deckCount, profile: profile)
         self.bridge = bridge
         self.sampleRateValue = sampleRate
         self.maxFramesPerRender = maxFramesPerRender
+        self.profile = profile
         decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
@@ -110,6 +127,21 @@ public final class DJEngine {
     public func start() throws {
         guard !isRunning else { return }
         try buildGraph()
+        hostMode = .ownedEngine
+        isRunning = true
+        installConfigurationObserver()
+    }
+
+    /// Attaches PAE's source node to an audio engine owned by the host app. PAE
+    /// starts the supplied host engine only when it is not already running and
+    /// never stops or deactivates it during `stop()`.
+    public func start(using hostEngine: AVAudioEngine,
+                      destination: AVAudioNode? = nil) throws {
+        guard !isRunning else { return }
+        try buildGraph(using: hostEngine, destination: destination)
+        if !hostEngine.isRunning { try hostEngine.start() }
+        hostMode = .externalEngine
+        externalHostEngine = hostEngine
         isRunning = true
         installConfigurationObserver()
     }
@@ -118,9 +150,15 @@ public final class DJEngine {
     /// dropping `pe_engine` state — deck buffers, playheads, loops and control
     /// all survive (Phase 6b item 9 / `WorkspaceEngine.recoverGraph()`).
     public func recoverGraph() throws {
-        audioEngine?.stop()
-        audioEngine = nil
-        try buildGraph()
+        if hostMode == .externalEngine, let host = externalHostEngine {
+            detachSourceNode(from: host)
+            try buildGraph(using: host, destination: nil)
+        } else {
+            audioEngine?.stop()
+            audioEngine = nil
+            sourceNode = nil
+            try buildGraph()
+        }
         isRunning = true
     }
 
@@ -149,6 +187,13 @@ public final class DJEngine {
 
     private func buildGraph() throws {
         let audioEngine = AVAudioEngine()
+        try buildGraph(using: audioEngine, destination: audioEngine.mainMixerNode)
+        try audioEngine.start()
+        self.audioEngine = audioEngine
+    }
+
+    private func buildGraph(using audioEngine: AVAudioEngine,
+                            destination: AVAudioNode?) throws {
         let outputFormat = audioEngine.outputNode.inputFormat(forBus: 0)
         guard let sourceFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -162,9 +207,17 @@ public final class DJEngine {
         let sourceNode = AVAudioSourceNode(format: sourceFormat,
                                           renderBlock: Self.makeRenderBlock(handle: bridge.handle))
         audioEngine.attach(sourceNode)
-        audioEngine.connect(sourceNode, to: audioEngine.mainMixerNode, format: sourceFormat)
-        try audioEngine.start()
+        audioEngine.connect(sourceNode, to: destination ?? audioEngine.mainMixerNode, format: sourceFormat)
         self.audioEngine = audioEngine
+        self.sourceNode = sourceNode
+    }
+
+    private func detachSourceNode(from host: AVAudioEngine) {
+        if let sourceNode {
+            host.disconnectNodeOutput(sourceNode)
+            host.detach(sourceNode)
+            self.sourceNode = nil
+        }
     }
 
     /// Builds the `AVAudioSourceNode` render callback in a `nonisolated`
@@ -191,8 +244,15 @@ public final class DJEngine {
 
     public func stop() {
         scratchBank.stopAll()
-        audioEngine?.stop()
+        if hostMode == .ownedEngine {
+            audioEngine?.stop()
+        } else if let host = externalHostEngine {
+            detachSourceNode(from: host)
+        }
         audioEngine = nil
+        externalHostEngine = nil
+        sourceNode = nil
+        hostMode = .ownedEngine
         isRunning = false
         if let configChangeObserver {
             NotificationCenter.default.removeObserver(configChangeObserver)
@@ -220,6 +280,24 @@ public final class DJEngine {
     }
     /// Stop using the external clock (revert to a master deck / none).
     public func clearExternalClock() { bridge.clearExternalClock() }
+
+    public func preparationSnapshot() -> DJPreparationSnapshot {
+        DJPreparationSnapshot(decks: decks.map { $0.makePreparationSnapshot() },
+                              crossfader: mixer.crossfader)
+    }
+
+    public func restorePreparationSnapshot(_ snapshot: DJPreparationSnapshot) throws {
+        guard snapshot.schemaVersion == DJPreparationSnapshot.currentSchemaVersion else {
+            throw PreparationSnapshotError.unsupportedSchema(snapshot.schemaVersion)
+        }
+        guard snapshot.decks.count == decks.count else {
+            throw PreparationSnapshotError.incompatibleDeckCount
+        }
+        for (deck, value) in zip(decks, snapshot.decks) {
+            try deck.restorePreparationSnapshot(value)
+        }
+        mixer.crossfader = max(-1, min(1, snapshot.crossfader))
+    }
 
     /// Advance time-based mixer automation (the Smart Fader transition). Call
     /// each frame from a display link with the real elapsed seconds.
@@ -278,7 +356,7 @@ public final class DJEngine {
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
         HeadlessDJEngine(sampleRate: sampleRate, maxFramesPerRender: maxFramesPerRender,
-                         deckCount: decks.count)
+                         deckCount: decks.count, profile: profile)
     }
 }
 
@@ -352,9 +430,11 @@ fileprivate final class EngineBridge {
         OpaquePointer(bitPattern: handleBits)!
     }
 
-    init(sampleRate: Double, maxFrames: Int, deckCount: Int) {
-        let clampedDecks = min(max(deckCount, 2), kPEMaxDecks)
-        guard let handle = pe_create(sampleRate, Int32(maxFrames), Int32(clampedDecks)) else {
+    init(sampleRate: Double, maxFrames: Int, deckCount: Int, profile: DJEngineProfile = .full) {
+        let requestedDecks = profile == .transitionLab ? min(deckCount, 2) : deckCount
+        let clampedDecks = min(max(requestedDecks, 2), kPEMaxDecks)
+        guard let handle = pe_create_with_isolator_profile(
+            sampleRate, Int32(maxFrames), Int32(clampedDecks), PE_ISOLATOR_PROFILE_GENERIC) else {
             fatalError("CParsoEngine could not be created")
         }
         self.handleBits = UInt(bitPattern: handle)
@@ -468,6 +548,16 @@ fileprivate final class EngineBridge {
         externalClock = nil
         pe_set_master_clock(handle, -1, 0, 0)
     }
+
+    func scheduleTransition(outgoing: Int, incoming: Int, outgoingAnchor: Int64,
+                            incomingAnchor: Int64, start: Int64, end: Int64,
+                            technique: Int, tail: Int) {
+        pe_schedule_transition(handle, Int32(outgoing), Int32(incoming),
+                               outgoingAnchor, incomingAnchor, start, end,
+                               Int32(technique), Int32(tail))
+    }
+
+    func cancelTransition() { pe_cancel_transition(handle) }
 
     // MARK: Convolution reverb IR (CDJ3000 parity C7c)
 
@@ -633,10 +723,14 @@ public final class HeadlessDJEngine {
     /// Eight reusable, pad-addressable turntablism pattern slots.
     public let scratchBank: ScratchBank
     private let bridge: EngineBridge
+    public let profile: DJEngineProfile
 
-    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512, deckCount: Int = 4) {
-        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender, deckCount: deckCount)
+    public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512,
+                deckCount: Int = 4, profile: DJEngineProfile = .full) {
+        let bridge = EngineBridge(sampleRate: sampleRate, maxFrames: maxFramesPerRender,
+                                  deckCount: deckCount, profile: profile)
         self.bridge = bridge
+        self.profile = profile
         decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
@@ -648,9 +742,9 @@ public final class HeadlessDJEngine {
     public func render(frames: Int) -> (left: [Float], right: [Float]) {
         let count = max(0, frames)
         if count > 0 {
-            let elapsed = Double(count) / bridge.engineSampleRate
-            mixer.advanceAutomation(elapsed: elapsed)
-            scratchBank.advance(elapsed: elapsed)
+            // ScratchBank remains host-ticked for compatibility. SmartFader
+            // is advanced below from the native master frame after the block.
+            scratchBank.advance(elapsed: Double(count) / bridge.engineSampleRate)
         }
         var left = [Float](repeating: 0, count: count)
         var right = [Float](repeating: 0, count: count)
@@ -658,6 +752,9 @@ public final class HeadlessDJEngine {
             right.withUnsafeMutableBufferPointer { rightPointer in
                 pe_step(bridge.handle, leftPointer.baseAddress, rightPointer.baseAddress, Int32(count))
             }
+        }
+        if count > 0 {
+            mixer.advanceAutomation(masterFrame: bridge.engineStats().masterSample)
         }
         drainEvents()
         bridge.drainRecordTap()
@@ -712,6 +809,24 @@ public final class HeadlessDJEngine {
     }
     /// Stop using the external clock (revert to a master deck / none).
     public func clearExternalClock() { bridge.clearExternalClock() }
+
+    public func preparationSnapshot() -> DJPreparationSnapshot {
+        DJPreparationSnapshot(decks: decks.map { $0.makePreparationSnapshot() },
+                              crossfader: mixer.crossfader)
+    }
+
+    public func restorePreparationSnapshot(_ snapshot: DJPreparationSnapshot) throws {
+        guard snapshot.schemaVersion == DJPreparationSnapshot.currentSchemaVersion else {
+            throw PreparationSnapshotError.unsupportedSchema(snapshot.schemaVersion)
+        }
+        guard snapshot.decks.count == decks.count else {
+            throw PreparationSnapshotError.incompatibleDeckCount
+        }
+        for (deck, value) in zip(decks, snapshot.decks) {
+            try deck.restorePreparationSnapshot(value)
+        }
+        mixer.crossfader = max(-1, min(1, snapshot.crossfader))
+    }
 
     /// Advance time-based mixer automation (the Smart Fader transition). Call
     /// each frame from a display link with the real elapsed seconds.
@@ -862,6 +977,7 @@ public final class Deck {
     }
 
     fileprivate var channelIndex: Int { index }
+    fileprivate var loadedFrameCount: Int64 { Int64(buffer?.frameCount ?? 0) }
 
     // Loading / transport
     public func load(_ analysis: TrackAnalysis, buffer: PCMBuffer) {
@@ -1747,6 +1863,66 @@ public final class Deck {
         post(PE_CMD_BEATJUMP, i2: q.i2, f0: Float(seconds), f1: q.f1)
     }
 
+    fileprivate func makePreparationSnapshot() -> DeckPreparationSnapshot {
+        let cues = hotCueTimes.enumerated().compactMap { slot, time -> HotCueSnapshot? in
+            guard let time, time.isFinite else { return nil }
+            return HotCueSnapshot(slot: slot, sample: Int64(max(0, (time * sampleRate).rounded())))
+        }
+        let loop = loopStartTime.flatMap { start -> LoopSnapshot? in
+            guard let end = loopEndTime, end > start, trackBPM > 0 else { return nil }
+            return LoopSnapshot(startSample: Int64(max(0, (start * sampleRate).rounded())),
+                               lengthBeats: max(1, Int(((end - start) * trackBPM / 60).rounded())),
+                               isActive: isLoopActive)
+        }
+        return DeckPreparationSnapshot(
+            playheadSample: Int64(max(0, (currentPlayhead * sampleRate).rounded())),
+            tempoPercent: tempoPercent, keyLockEnabled: keyLock,
+            keyShiftSemitones: Int(pitchSemitones.rounded()), hotCues: cues, loop: loop)
+    }
+
+    fileprivate func restorePreparationSnapshot(_ snapshot: DeckPreparationSnapshot) throws {
+        guard let buffer else { throw PreparationSnapshotError.invalidDeckState }
+        guard snapshot.playheadSample >= 0, snapshot.tempoPercent.isFinite else {
+            throw PreparationSnapshotError.invalidDeckState
+        }
+        for cue in snapshot.hotCues {
+            guard hotCueTimes.indices.contains(cue.slot), cue.sample >= 0 else {
+                throw PreparationSnapshotError.invalidCueSlot(cue.slot)
+            }
+        }
+        let durationSamples = Int64(buffer.frameCount)
+        guard snapshot.playheadSample <= durationSamples else {
+            throw PreparationSnapshotError.invalidDeckState
+        }
+        keyLock = snapshot.keyLockEnabled
+        tempoPercent = snapshot.tempoPercent
+        pitchSemitones = Double(snapshot.keyShiftSemitones)
+        seek(toSample: snapshot.playheadSample, quantized: false)
+        hotCueTimes = Array(repeating: nil, count: 8)
+        for slot in 0..<8 { post(PE_CMD_HOTCUE_DELETE, i0: slot) }
+        for cue in snapshot.hotCues {
+            hotCueTimes[cue.slot] = Double(cue.sample) / sampleRate
+            post(PE_CMD_HOTCUE_SET, i0: cue.slot, i1: Int(cue.sample), i2: 1)
+        }
+        if let loop = snapshot.loop {
+            guard loop.lengthBeats > 0 else { throw PreparationSnapshotError.invalidDeckState }
+            let start = max(0, min(durationSamples, loop.startSample))
+            let length = Int64((Double(loop.lengthBeats) * 60 / max(trackBPM, 1) * sampleRate).rounded())
+            let end = min(durationSamples, start + max(1, length))
+            guard end > start else { throw PreparationSnapshotError.invalidDeckState }
+            loopStartTime = Double(start) / sampleRate
+            loopEndTime = Double(end) / sampleRate
+            isLoopActive = loop.isActive
+            post(PE_CMD_SET_LOOP, i0: loop.isActive ? 1 : 0,
+                 i1: Int(start), i2: Int(end), f0: -1)
+        } else {
+            loopStartTime = nil
+            loopEndTime = nil
+            isLoopActive = false
+            post(PE_CMD_SET_LOOP_ACTIVE, f0: 0)
+        }
+    }
+
 }
 
 // MARK: - Mixer / channels / FX
@@ -1789,8 +1965,27 @@ public final class Mixer {
     /// `HeadlessDJEngine.render` calls this itself; a `DJEngine` app calls it from
     /// its display link with the real elapsed time.
     public func advanceAutomation(elapsed: TimeInterval) {
-        smartFader.tick(elapsed: elapsed)
+        smartFader.tickLegacy(elapsed: elapsed)
     }
+
+    /// Advances SmartFader from the native sample clock. This is the path used
+    /// by `HeadlessDJEngine.render` and is independent of display-link cadence.
+    public func advanceAutomation(masterFrame: Int64) {
+        smartFader.tick(masterFrame: masterFrame)
+    }
+
+    fileprivate var bridgeMasterFrame: Int64 { bridge.engineStats().masterSample }
+    fileprivate var bridgeSampleRate: Double { bridge.engineSampleRate }
+
+    fileprivate func scheduleTransition(outgoing: Int, incoming: Int,
+                                        outgoingAnchor: Int64, incomingAnchor: Int64,
+                                        start: Int64, end: Int64, technique: Int, tail: Int) {
+        bridge.scheduleTransition(outgoing: outgoing, incoming: incoming,
+                                  outgoingAnchor: outgoingAnchor, incomingAnchor: incomingAnchor,
+                                  start: start, end: end, technique: technique, tail: tail)
+    }
+
+    fileprivate func cancelTransition() { bridge.cancelTransition() }
 
     private func publishControl() {
         bridge.control.crossfader = Float(max(-1, min(1, crossfader)))
@@ -2051,7 +2246,62 @@ public final class MasterOut {
 
 @MainActor
 public final class SmartFader {
-    public enum Tail: Sendable { case echo, reverb, none }
+    public enum Tail: String, Codable, Sendable, Equatable { case echo, reverb, none }
+
+    public enum AutomationState: String, Codable, Sendable {
+        case idle, armed, running, tail, completed, cancelled
+    }
+
+    public typealias SmartFaderAutomationState = AutomationState
+
+    public struct Snapshot: Sendable, Equatable {
+        public var state: AutomationState
+        public var startMasterFrame: Int64?
+        public var endMasterFrame: Int64?
+        public var progress: Double
+        public var technique: TransitionTechnique?
+
+        public init(state: AutomationState, startMasterFrame: Int64?,
+                    endMasterFrame: Int64?, progress: Double,
+                    technique: TransitionTechnique?) {
+            self.state = state
+            self.startMasterFrame = startMasterFrame
+            self.endMasterFrame = endMasterFrame
+            self.progress = progress
+            self.technique = technique
+        }
+    }
+
+    public typealias SmartFaderAutomationSnapshot = Snapshot
+
+    public struct SmartTransitionRequest: Sendable, Equatable {
+        public var outgoingDeckIndex: Int
+        public var incomingDeckIndex: Int
+        public var outgoingAnchorSample: Int64
+        public var incomingAnchorSample: Int64
+        public var startMasterFrame: Int64
+        public var bars: Int
+        public var technique: TransitionTechnique
+        public var tail: Tail
+        public var keySync: Bool
+
+        public init(outgoingDeckIndex: Int, incomingDeckIndex: Int,
+                    outgoingAnchorSample: Int64, incomingAnchorSample: Int64,
+                    startMasterFrame: Int64, bars: Int,
+                    technique: TransitionTechnique, tail: Tail = .none,
+                    keySync: Bool = false) {
+            self.outgoingDeckIndex = outgoingDeckIndex
+            self.incomingDeckIndex = incomingDeckIndex
+            self.outgoingAnchorSample = outgoingAnchorSample
+            self.incomingAnchorSample = incomingAnchorSample
+            self.startMasterFrame = startMasterFrame
+            self.bars = bars
+            self.technique = technique
+            self.tail = tail
+            self.keySync = keySync
+        }
+    }
+
     private weak var mixer: Mixer?
     public var isEnabled: Bool = false
     public var tail: Tail = .echo
@@ -2066,57 +2316,157 @@ public final class SmartFader {
     private var startXF = 0.0
     private var endXF = 0.0
     private var tailEngaged = false
+    private var state: AutomationState = .idle
+    private var startMasterFrame: Int64?
+    private var endMasterFrame: Int64?
+    private var scheduledTechnique: TransitionTechnique?
+    private var scheduledTail: Tail = .none
+    private var scheduledDurationFrames: Int64 = 0
+    private var lastMasterFrame: Int64 = 0
 
     fileprivate func attach(to mixer: Mixer) { self.mixer = mixer }
 
-    /// Start an assisted transition: BPM-match `to` to `from`, then over
-    /// `seconds` automate the crossfader (cosine sweep), the incoming/outgoing
-    /// EQ lows (kill incoming bass, fade it in, then cut outgoing bass), and a
-    /// tail effect on the outgoing channel near the end. The app advances it by
-    /// calling `DJEngine.tickAutomation(elapsed:)` each frame; `HeadlessDJEngine`
-    /// advances it automatically inside `render`.
-    public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) {
-        guard isEnabled, seconds > 0, from !== to, let mixer,
+    public var automationSnapshot: Snapshot {
+        Snapshot(state: state, startMasterFrame: startMasterFrame,
+                 endMasterFrame: endMasterFrame, progress: progress ?? 0,
+                 technique: scheduledTechnique)
+    }
+
+    public var snapshot: Snapshot { automationSnapshot }
+
+    /// Arms an explicit, phrase-anchored transition. All scheduling data is
+    /// scalar and is copied to the control-side engine before rendering.
+    public func arm(from: Deck, to: Deck, proposal: AudioTransitionProposal,
+                    startAtMasterFrame: Int64? = nil, tail: Tail = .none) throws {
+        guard let mixer, from !== to,
               mixer.channels.indices.contains(from.channelIndex),
-              mixer.channels.indices.contains(to.channelIndex) else { return }
+              mixer.channels.indices.contains(to.channelIndex) else {
+            throw TransitionSchedulingError.invalidDeck
+        }
+        guard from.loadedFrameCount > 0, to.loadedFrameCount > 0 else {
+            throw TransitionSchedulingError.trackNotLoaded
+        }
+        guard proposal.bars > 0, proposal.outSample >= 0, proposal.inSample >= 0,
+              proposal.outSample < from.loadedFrameCount,
+              proposal.inSample < to.loadedFrameCount,
+              proposal.incomingTempoRatio.isFinite, proposal.incomingTempoRatio > 0 else {
+            throw TransitionSchedulingError.invalidAnchor
+        }
+        let currentFrame = mixer.bridgeMasterFrame
+        let start = startAtMasterFrame ?? max(currentFrame, 0)
+        guard start >= currentFrame else { throw TransitionSchedulingError.scheduleInPast }
+        let bpm = max(1, from.effectiveBPM)
+        let frames = Int64(max(1, (Double(proposal.bars * 4) * 60 / bpm * mixer.bridgeSampleRate).rounded()))
+        let request = SmartTransitionRequest(
+            outgoingDeckIndex: from.channelIndex, incomingDeckIndex: to.channelIndex,
+            outgoingAnchorSample: proposal.outSample, incomingAnchorSample: proposal.inSample,
+            startMasterFrame: start, bars: proposal.bars, technique: proposal.technique,
+            tail: tail, keySync: proposal.keySyncRecommended)
+        try arm(request: request, durationFrames: frames, from: from, to: to)
+    }
+
+    private func arm(request: SmartTransitionRequest, durationFrames: Int64,
+                     from: Deck, to: Deck) throws {
+        guard let mixer, mixer.channels.indices.contains(request.outgoingDeckIndex),
+              mixer.channels.indices.contains(request.incomingDeckIndex) else {
+            throw TransitionSchedulingError.invalidDeck
+        }
+        guard request.bars > 0, request.outgoingAnchorSample >= 0,
+              request.incomingAnchorSample >= 0, durationFrames > 0 else {
+            throw TransitionSchedulingError.invalidAnchor
+        }
         from.setAsMaster()
-        to.sync()
+        from.seek(toSample: request.outgoingAnchorSample, quantized: false)
+        to.seek(toSample: request.incomingAnchorSample, quantized: false)
+        if request.keySync { _ = to.keySync(to: from) }
+        to.tempoPercent = (from.effectiveBPM / max(1, to.effectiveBPM) - 1) * 100
         if !to.isPlaying { to.play() }
-        fromChannel = from.channelIndex
-        toChannel = to.channelIndex
-        duration = seconds
-        elapsed = 0
+        fromChannel = request.outgoingDeckIndex
+        toChannel = request.incomingDeckIndex
+        scheduledTechnique = request.technique
+        scheduledTail = request.tail
+        scheduledDurationFrames = durationFrames
+        startMasterFrame = request.startMasterFrame
+        endMasterFrame = request.startMasterFrame + durationFrames
+        state = .armed
         progress = 0
+        elapsed = 0
         tailEngaged = false
         startXF = fromChannel <= toChannel ? -1 : 1
         endXF = -startXF
         mixer.crossfader = startXF
-        mixer.channels[toChannel].eqLow = -.infinity      // incoming bass killed
+        mixer.channels[toChannel].eqLow = request.technique == .bassSwap ? -.infinity : -24
         mixer.channels[fromChannel].eqLow = 0
+        lastMasterFrame = request.startMasterFrame
+        mixer.scheduleTransition(
+            outgoing: request.outgoingDeckIndex, incoming: request.incomingDeckIndex,
+            outgoingAnchor: request.outgoingAnchorSample, incomingAnchor: request.incomingAnchorSample,
+            start: request.startMasterFrame, end: request.startMasterFrame + durationFrames,
+            technique: TransitionTechnique.allCases.firstIndex(of: request.technique) ?? 0,
+            tail: request.tail == .none ? 0 : (request.tail == .echo ? 1 : 2))
     }
 
-    fileprivate func tick(elapsed dt: TimeInterval) {
-        guard let mixer, progress != nil, dt > 0, duration > 0 else { return }
-        elapsed += dt
-        let p = min(1, elapsed / duration)
+    /// Existing convenience API. It now creates a frame-bound recipe while
+    /// retaining the old seconds-based call shape.
+    public func performTransition(from: Deck, to: Deck, over seconds: TimeInterval) {
+        guard seconds > 0, from !== to, let mixer,
+              mixer.channels.indices.contains(from.channelIndex),
+              mixer.channels.indices.contains(to.channelIndex) else { return }
+        let bpm = max(1, from.effectiveBPM)
+        let bars = max(1, Int((seconds * bpm / 60 / 4).rounded()))
+        let proposal = AudioTransitionProposal(
+            id: "compat-\(from.channelIndex)-\(to.channelIndex)",
+            outSample: Int64(max(0, from.playhead * mixer.bridgeSampleRate)),
+            inSample: Int64(max(0, to.playhead * mixer.bridgeSampleRate)),
+            outPhraseIndex: 0, inPhraseIndex: 0, bars: bars,
+            technique: .longBlend, incomingTempoRatio: 1,
+            keySyncRecommended: false, keyShiftSemitones: nil, score: 0,
+            confidence: 0, clashes: TransitionClashMetrics(
+                bassCollision: 0.5, harmonicTension: 0.5,
+                spectralDensityOverlap: 0.5, transientCompetition: 0.5),
+            breakdown: TransitionScoreBreakdown(tempoFit: 1, keyFit: 0.5,
+                phraseFit: 0.5, energyFit: 0.5, clashFit: 0.5,
+                anchorConfidence: 0.5, finalScore: 0))
+        do {
+            try arm(from: from, to: to, proposal: proposal,
+                    startAtMasterFrame: mixer.bridgeMasterFrame, tail: tail)
+            duration = seconds
+        } catch { return }
+    }
+
+    fileprivate func tickLegacy(elapsed dt: TimeInterval) {
+        guard dt > 0 else { return }
+        lastMasterFrame += Int64((dt * (mixer?.bridgeSampleRate ?? 48_000)).rounded())
+        tick(masterFrame: lastMasterFrame)
+    }
+
+    fileprivate func tick(masterFrame: Int64) {
+        guard let mixer, let start = startMasterFrame, let end = endMasterFrame,
+              state == .armed || state == .running || state == .tail else { return }
+        lastMasterFrame = max(lastMasterFrame, masterFrame)
+        guard masterFrame >= start else { return }
+        if state == .armed { state = .running }
+        let p = min(1, max(0, Double(masterFrame - start) / Double(max(1, end - start))))
         progress = p
 
         let s = 0.5 - 0.5 * cos(Double.pi * p)             // eased 0…1
         mixer.crossfader = startXF + (endXF - startXF) * s
 
-        let inGain = min(1, p / 0.6)                       // incoming bass in over first 60%
+        let technique = scheduledTechnique ?? .longBlend
+        let inGain = min(1, p / (technique == .quickCut ? 0.35 : 0.6))
         mixer.channels[toChannel].eqLow = inGain >= 1 ? 0 : -24 * (1 - inGain)
         let outCut = p > 0.6 ? (p - 0.6) / 0.4 : 0         // outgoing bass out over last 40%
         mixer.channels[fromChannel].eqLow = -24 * outCut
 
-        if !tailEngaged, p >= 0.7, tail != .none {
+        if !tailEngaged, p >= 0.7, scheduledTail != .none {
             let fx = mixer.beatFX
-            fx.kind = tail == .echo ? .echo : .reverb
+            fx.kind = scheduledTail == .echo ? .echo : .reverb
             fx.assign = fromChannel == 0 ? .chA : (fromChannel == 1 ? .chB : .master)
             fx.beats = 0.5
             fx.depth = 0.6
             fx.isOn = true
             tailEngaged = true
+            state = .tail
         }
 
         if p >= 1 {
@@ -2124,11 +2474,24 @@ public final class SmartFader {
             mixer.channels[fromChannel].eqLow = 0
             if tailEngaged { mixer.beatFX.releaseFX() }
             progress = nil
+            state = .completed
         }
+    }
+
+    public func cancel() {
+        guard state == .armed || state == .running || state == .tail else { return }
+        if tailEngaged { mixer?.beatFX.releaseFX() }
+        mixer?.cancelTransition()
+        progress = nil
+        state = .cancelled
     }
 
     internal init() {}
 }
+
+public typealias SmartFaderAutomationState = SmartFader.AutomationState
+public typealias SmartFaderAutomationSnapshot = SmartFader.Snapshot
+public typealias SmartTransitionRequest = SmartFader.SmartTransitionRequest
 
 @MainActor
 public final class SmartCFX {

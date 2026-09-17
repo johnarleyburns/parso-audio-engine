@@ -137,6 +137,13 @@ void pe_set_master_clock(pe_engine*, int32_t master_deck /*-1 none*/, double mas
                          double downbeat_phase);
 /* Publish a per-deck effective BPM + sync-engage state for telemetry. */
 void pe_set_deck_sync(pe_engine*, int deck, int synced, double effective_bpm, double beat_phase);
+/* Sample-clock transition recipe. All values are copied as scalar atomics;
+ * the render thread owns the curve evaluation and never calls Swift. */
+void pe_schedule_transition(pe_engine*, int outgoing_deck, int incoming_deck,
+                            int64_t outgoing_anchor, int64_t incoming_anchor,
+                            int64_t start_master_frame, int64_t end_master_frame,
+                            int technique, int tail);
+void pe_cancel_transition(pe_engine*);
 
 /* deck_count is clamped to 2..PE_MAX_DECKS. */
 pe_engine* pe_create(double sample_rate, int max_frames, int deck_count);

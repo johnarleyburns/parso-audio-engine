@@ -1,3 +1,47 @@
+static void applyScheduledTransition(pe_engine* engine) {
+    if (engine->transitionActive.load(std::memory_order_acquire) == 0) return;
+    const int64_t start = engine->transitionStart.load(std::memory_order_relaxed);
+    const int64_t end = engine->transitionEnd.load(std::memory_order_relaxed);
+    const int64_t frame = engine->masterFrame.load(std::memory_order_relaxed);
+    if (end <= start || frame < start) return;
+    const int out = engine->transitionOutgoing.load(std::memory_order_relaxed);
+    const int in = engine->transitionIncoming.load(std::memory_order_relaxed);
+    if (!validDeck(engine, out) || !validDeck(engine, in) || out == in) {
+        engine->transitionActive.store(0, std::memory_order_release);
+        return;
+    }
+    const double p = std::max(0.0, std::min(1.0,
+        static_cast<double>(frame - start) / static_cast<double>(end - start)));
+    const double eased = 0.5 - 0.5 * std::cos(kPi * p);
+    const float startX = out <= in ? -1.0f : 1.0f;
+    const float endX = -startX;
+    engine->control.crossfader.store(
+        static_cast<float>(startX + (endX - startX) * eased), std::memory_order_relaxed);
+    const int technique = std::max(0, std::min(4,
+        engine->transitionTechnique.load(std::memory_order_relaxed)));
+    const double incomingWindow = technique == 4 ? 0.35 : 0.60;
+    const double incoming = std::min(1.0, p / incomingWindow);
+    const double outgoing = p > 0.60 ? (p - 0.60) / 0.40 : 0.0;
+    engine->control.eqLow[in].store(static_cast<float>(incoming >= 1.0 ? 0.0 : -24.0 * (1.0 - incoming)),
+                                    std::memory_order_relaxed);
+    engine->control.eqLow[out].store(static_cast<float>(-24.0 * outgoing),
+                                     std::memory_order_relaxed);
+    if (p >= 0.70 && engine->transitionTail.load(std::memory_order_relaxed) != 0) {
+        engine->control.beatFXKind.store(
+            engine->transitionTail.load(std::memory_order_relaxed) == 1 ? 0.0f : 2.0f,
+            std::memory_order_relaxed);
+        engine->control.beatFXAssign.store(out == 0 ? 0.0f : (out == 1 ? 1.0f : 3.0f),
+                                           std::memory_order_relaxed);
+        engine->control.beatFXDepth.store(0.6f, std::memory_order_relaxed);
+        engine->control.beatFXOn.store(1.0f, std::memory_order_relaxed);
+    }
+    if (p >= 1.0) {
+        engine->control.eqLow[in].store(0.0f, std::memory_order_relaxed);
+        engine->control.eqLow[out].store(0.0f, std::memory_order_relaxed);
+        engine->transitionActive.store(0, std::memory_order_release);
+    }
+}
+
 static void render(pe_engine* engine, float* left, float* right, int frames) {
     if (!engine || frames <= 0) {
         clearOutput(left, right, frames);
@@ -7,6 +51,7 @@ static void render(pe_engine* engine, float* left, float* right, int frames) {
     const auto renderStart = std::chrono::steady_clock::now();
     clearOutput(left, right, frames);
     drainCommands(engine);
+    applyScheduledTransition(engine);
 
     const float rawBeatKind = engine->control.beatFXKind.load(std::memory_order_relaxed);
     if (std::isfinite(rawBeatKind)) {

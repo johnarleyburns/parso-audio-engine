@@ -714,6 +714,32 @@ AAC and MP3 export/recording default to 320 kbps through
 
 ---
 
+## Transition Intelligence / Platterhead
+
+The 1.2.0 APIs cover a focused Transition Lab workflow: cache a versioned
+`PortableAnalysisV1`, rank phrase/downbeat-aligned proposals, preview them
+offline, then practice the same recipe on a two-deck engine.
+
+```swift
+let a = try FullAnalysis.run(url: urlA)
+let b = try FullAnalysis.run(url: urlB)
+let best = TransitionPlanner.proposals(from: a, to: b)[0]
+let preview = try TransitionPreviewRenderer.render(
+    from: TransitionPreviewSource(pcm: pcmA, analysis: a),
+    to: TransitionPreviewSource(pcm: pcmB, analysis: b),
+    proposal: best
+)
+
+let engine = DJEngine(deckCount: 2, profile: .transitionLab)
+try engine.start()
+try engine.mixer.smartFader.arm(from: engine.deckA, to: engine.deckB, proposal: best)
+```
+
+SmartFader automation is driven by the engine/sample clock; sound does not
+depend on a display-link tick. Semantic similarity is optional and remains a
+caller-supplied value from the existing `SemanticModel` seam; no model weights
+are bundled.
+
 ## Standalone analysis (no engine needed)
 
 ```swift
@@ -946,8 +972,8 @@ Phased implementation plan in `docs/SPEC.md §19`. The current workstream is the
 audio unification in `docs/UNIFICATION_PLAN.md`, tracked in `current_status.md`.
 If you're handing this to a coding agent, start it
 at **`AGENTS.md`** — it defines the implement → enable-tests → commit → update-`current_status.md` loop
-and the exact phase order. The current release candidate is **1.1.1**; changes after that release are
-tracked under `CHANGELOG.md`'s **Unreleased** section.
+and the exact phase order. The current release is **1.2.0**; changes after that release are tracked
+under `CHANGELOG.md`'s **Unreleased** section.
 
 ## License & attribution
 

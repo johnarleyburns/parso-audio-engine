@@ -233,11 +233,35 @@ Phase 4) — completed their migration onto this package as their sole audio sub
 **1.0.0** (2026-09-07). The current release candidate includes the post-`1.1.0` native
 translation-unit refactor and package metadata alignment.
 
-## 18. Non-goals
+## 18. 1.2 transition intelligence
+
+`PortableAnalysisV1` is the stable scalar Codable cache format. It is identified
+by schema version `1` and algorithm ID `pae-full-analysis-1.2`; unknown versions
+and algorithm IDs fail rather than silently defaulting. `FullAnalysis.analyze`
+uses the same decode/STFT/tempo/key/energy/structure/waveform work as the
+synchronous pipeline, publishes stage events, and checks cancellation between
+those boundaries.
+
+Phrases may carry bounded local descriptors (energy, bass share, brightness,
+transient density, harmonic stability/key, and spectral density). The
+`TransitionPlanner` in `ParsoDJEngine` combines these with canonical Camelot
+compatibility, tempo ratio, phrase topology, energy direction, and optional
+caller-supplied semantic/vocal evidence. Results are deterministic; ties sort
+by score, clash, confidence, outgoing sample, incoming sample, then technique.
+
+SmartFader recipes contain only deck indices, sample anchors, bars, technique,
+tail, and a master-frame start. The native render path evaluates the automation
+from its monotonic master sample counter; the headless path uses the same frame
+boundaries. State is `idle → armed → running → tail → completed` (or
+`cancelled`). Host-owned `AVAudioEngine` attachment never stops the host, and
+`DJPreparationSnapshot` stores only engine preparation state, not application
+track identity.
+
+## 19. Non-goals
 Streaming-service integration, library/browser UI, DVS timecode, external-MIDI/controller mapping
 (incl. mapping a real FLX4 — future), video.
 
-## 19. Phased plan
+## 20. Phased plan
 1. Skeleton + CI green (**done** in scaffold). 2. Vendor Cflac/Cvorbis/Copus/Cebur128/Csrc; decode+encode+loudness+SRC tests pass. 3. `CParsoDSP` kernels + Signalsmith; Core DSP tests pass. 4. `ParsoAudioCore` IO/encode/SRC/loudness green. 5. `ParsoAudioAnalysis` tempo→key→structure→waveform; synthetic + real-fixture green. 6. `CParsoEngine` RT graph + plumbing + headless. 7. `ParsoDJEngine` decks/mixer/pads/FX/sampler/mic/monitoring/sync, then Smart Fader/CFX. 8. `MixRecorder`. 9. Acceptance pass over §15.
 
 **Definition of done:** Apple products build for iOS + macOS and `swift test` is green (all suites

@@ -309,8 +309,8 @@ jobs:
           done
           python3 scripts/check-elf-page-size.py "${page_args[@]}"
           unzip -p "$aar" AndroidManifest.xml | grep -F 'android.permission.RECORD_AUDIO'
-          test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/1.1.1/parso-audio-android-1.1.1.pom'
-          test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/1.1.1/parso-audio-android-1.1.1.aar'
+          test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/1.2.0/parso-audio-android-1.2.0.pom'
+          test -f 'Bindings/ParsoAudioAndroid/build/maven-repository/com/parsoaudio/parso-audio-android/1.2.0/parso-audio-android-1.2.0.aar'
       - name: Build external Android AAR consumer
         run: |
           gradle --project-dir Bindings/ParsoAudioAndroidConsumer --refresh-dependencies assembleDebug

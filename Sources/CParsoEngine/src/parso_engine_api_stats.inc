@@ -33,6 +33,28 @@ void pe_set_deck_sync(pe_engine* engine, int deck, int synced, double effective_
     d.echoBpm = d.effectiveBpm > 0 ? d.effectiveBpm : d.echoBpm;
 }
 
+void pe_schedule_transition(pe_engine* engine, int outgoing_deck, int incoming_deck,
+                            int64_t outgoing_anchor, int64_t incoming_anchor,
+                            int64_t start_master_frame, int64_t end_master_frame,
+                            int technique, int tail) {
+    if (!engine || !validDeck(engine, outgoing_deck) || !validDeck(engine, incoming_deck) ||
+        outgoing_deck == incoming_deck || end_master_frame <= start_master_frame) return;
+    engine->transitionOutgoing.store(outgoing_deck, std::memory_order_relaxed);
+    engine->transitionIncoming.store(incoming_deck, std::memory_order_relaxed);
+    engine->transitionOutgoingAnchor.store(outgoing_anchor, std::memory_order_relaxed);
+    engine->transitionIncomingAnchor.store(incoming_anchor, std::memory_order_relaxed);
+    engine->transitionTechnique.store(std::max(0, std::min(4, technique)), std::memory_order_relaxed);
+    engine->transitionTail.store(std::max(0, std::min(2, tail)), std::memory_order_relaxed);
+    engine->transitionStart.store(start_master_frame, std::memory_order_relaxed);
+    engine->transitionEnd.store(end_master_frame, std::memory_order_relaxed);
+    engine->transitionActive.store(1, std::memory_order_release);
+}
+
+void pe_cancel_transition(pe_engine* engine) {
+    if (!engine) return;
+    engine->transitionActive.store(0, std::memory_order_release);
+}
+
 void pe_record_set_active(pe_engine* engine, int active) {
     if (!engine) return;
     engine->recordActive.store(active != 0 ? 1 : 0, std::memory_order_relaxed);

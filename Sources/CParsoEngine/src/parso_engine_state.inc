@@ -188,6 +188,17 @@ struct pe_engine {
     pe_detail::SamplerSlot sampler[16];
     pe_detail::MicState mic;
     pe_detail::ControlState control;
+    // Sample-clock SmartFader recipe. The render thread reads these POD
+    // atomics and updates existing smoothed mixer controls in place.
+    std::atomic<int32_t> transitionActive{0};
+    std::atomic<int32_t> transitionOutgoing{-1};
+    std::atomic<int32_t> transitionIncoming{-1};
+    std::atomic<int32_t> transitionTechnique{0};
+    std::atomic<int32_t> transitionTail{0};
+    std::atomic<int64_t> transitionStart{0};
+    std::atomic<int64_t> transitionEnd{0};
+    std::atomic<int64_t> transitionOutgoingAnchor{0};
+    std::atomic<int64_t> transitionIncomingAnchor{0};
     pe_detail::CommandQueue queue;
     pe_detail::EventQueue events;
     float previousCrossfader = 0.0f;

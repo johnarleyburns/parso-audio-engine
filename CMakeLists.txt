@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(parso_audio_engine
-    VERSION 1.1.1
+    VERSION 1.2.0
     LANGUAGES C CXX
     DESCRIPTION "Portable native DSP and headless render core for parso-audio-engine"
 )

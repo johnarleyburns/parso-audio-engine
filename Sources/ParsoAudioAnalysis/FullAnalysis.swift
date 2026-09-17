@@ -54,6 +54,30 @@ public struct FullAnalysisResult: Sendable {
     }
 }
 
+public enum FullAnalysisStage: String, Codable, Sendable {
+    case decoding, loudness, spectral, tempo, beatGrid, key, energy, structure, waveform, complete
+}
+
+public struct FullAnalysisProgress: Sendable {
+    public var stage: FullAnalysisStage
+    public var fraction: Double
+
+    public init(stage: FullAnalysisStage, fraction: Double) {
+        self.stage = stage
+        self.fraction = max(0, min(1, fraction))
+    }
+}
+
+public enum FullAnalysisEvent: Sendable {
+    case progress(FullAnalysisProgress)
+    case waveform(WaveformPyramid)
+    case tempo(Double?)
+    case beatGrid(BeatGrid?, downbeats: [Int])
+    case key(KeyEstimate?)
+    case phrases([Phrase])
+    case complete(FullAnalysisResult)
+}
+
 /// Pure pipeline: decode → run every stage → assemble `FullAnalysisResult`.
 /// Deterministic for a fixed input (NFR-DET-3).
 public enum FullAnalysis {
@@ -66,8 +90,71 @@ public enum FullAnalysis {
         try run(AnalysisDecoder.decode(url))
     }
 
+    /// Runs the same pipeline as `run(url:)` on a detached task. Cancellation
+    /// is checked between the real decode, feature, tempo, key, energy,
+    /// structure, and waveform boundaries; no completion event is published
+    /// after cancellation.
+    public static func analyze(url: URL) -> AsyncThrowingStream<FullAnalysisEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task.detached(priority: nil) {
+                do {
+                    try Task.checkCancellation()
+                    continuation.yield(.progress(FullAnalysisProgress(stage: .decoding,
+                                                                       fraction: 0)))
+                    let pcm = try AnalysisDecoder.decode(url)
+                    try Task.checkCancellation()
+                    continuation.yield(.progress(FullAnalysisProgress(stage: .decoding,
+                                                                       fraction: 1)))
+                    let result = try runInternal(
+                        pcm,
+                        shouldCancel: { Task.isCancelled },
+                        emit: { event in
+                            if !Task.isCancelled { continuation.yield(event) }
+                        })
+                    try Task.checkCancellation()
+                    continuation.yield(.progress(FullAnalysisProgress(stage: .complete,
+                                                                       fraction: 1)))
+                    continuation.yield(.complete(result))
+                    continuation.finish()
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     public static func run(_ pcm: AnalysisAudio) -> FullAnalysisResult {
+        do {
+            return try runInternal(pcm, shouldCancel: { false }, emit: nil)
+        } catch {
+            preconditionFailure("synchronous full analysis was cancelled")
+        }
+    }
+
+    /// Staged implementation shared by the synchronous and cancellable APIs.
+    /// The callback is invoked immediately after the work represented by each
+    /// stage, rather than from a later progress-only replay pass.
+    private static func runInternal(
+        _ pcm: AnalysisAudio,
+        shouldCancel: @Sendable () -> Bool,
+        emit: (@Sendable (FullAnalysisEvent) -> Void)?
+    ) throws -> FullAnalysisResult {
+        func checkpoint() throws {
+            if shouldCancel() { throw CancellationError() }
+        }
+        func progress(_ stage: FullAnalysisStage, _ fraction: Double) throws {
+            try checkpoint()
+            emit?(.progress(FullAnalysisProgress(stage: stage, fraction: fraction)))
+        }
+
+        try checkpoint()
         let loudness = measureLoudness(pcm)
+        try progress(.loudness, 0.12)
 
         // STFT → features → onset envelope.
         let stft = STFTConfig()
@@ -90,6 +177,7 @@ public enum FullAnalysis {
                 frames.append(SpectralFeatures.frame(spec, prevPower: prev, frameSamples: slice))
             }
         }
+        try progress(.spectral, 0.30)
 
         let envelope = OnsetDetector.envelope(spectra: spectra)
         let onsets = hopSeconds > 0
@@ -124,6 +212,10 @@ public enum FullAnalysis {
                 }
             }
         }
+        try progress(.tempo, 0.46)
+        emit?(.tempo(bpm))
+        emit?(.beatGrid(beatGrid, downbeats: downbeatIndices))
+        try progress(.beatGrid, 0.52)
 
         // Key from per-frame chroma.
         var key: KeyEstimate?
@@ -131,6 +223,8 @@ public enum FullAnalysis {
             let chromaFrames = spectra.map { KeyDetector.fusedChroma($0) }
             key = KeyDetector.estimate(chromaFrames)
         }
+        try progress(.key, 0.58)
+        emit?(.key(key))
 
         // Energy curve + scalar (§19.4 `energy_curve` — carried, not discarded).
         var energy: EnergyResult?
@@ -141,6 +235,7 @@ public enum FullAnalysis {
             energy = EnergyResult(scalar: EnergyAnalyzer.scalar(curve),
                                   curve: curve, hopSeconds: hopSeconds)
         }
+        try progress(.energy, 0.69)
 
         // Phrases.
         var phrases: [Phrase] = []
@@ -150,14 +245,77 @@ public enum FullAnalysis {
                                               downbeats: downbeatIndices,
                                               sampleRate: stft.sampleRate)
         }
+        phrases = addLocalDescriptors(to: phrases, frames: frames,
+                                      keyFrames: spectra.map { KeyDetector.fusedChroma($0) },
+                                      sampleRate: stft.sampleRate, hopSeconds: hopSeconds)
+        try progress(.structure, 0.83)
+        emit?(.phrases(phrases))
 
         // Waveform pyramid.
         let waveform = WaveformPyramidBuilder.build(pcm.mono, sampleRate: stft.sampleRate)
+        try progress(.waveform, 0.95)
+        emit?(.waveform(waveform))
 
         return FullAnalysisResult(loudness: loudness, bpm: bpm, key: key,
                                   beatGrid: beatGrid, downbeats: downbeatIndices,
                                   phrases: phrases, energy: energy,
                                   waveform: waveform, hopSeconds: hopSeconds)
+    }
+
+    private static func addLocalDescriptors(
+        to phrases: [Phrase], frames: [SpectralFrame],
+        keyFrames: [HPCP], sampleRate: Double, hopSeconds: Double
+    ) -> [Phrase] {
+        guard !phrases.isEmpty, !frames.isEmpty, hopSeconds > 0 else { return phrases }
+        let maxRMS = max(Double(frames.map { $0.rms }.max() ?? 0), 1e-9)
+        let maxFlux = max(Double(frames.map { $0.flux }.max() ?? 0), 1e-9)
+        return phrases.map { phrase in
+            let first = max(0, Int((Double(phrase.startSample) / sampleRate / hopSeconds).rounded(.down)))
+            let last = min(frames.count, max(first + 1,
+                Int((Double(phrase.endSample) / sampleRate / hopSeconds).rounded(.up)) + 1))
+            guard first < last else { return phrase }
+            let local = Array(frames[first..<last])
+            let rms = local.reduce(0.0) { $0 + Double($1.rms) } / Double(local.count)
+            let brightness = local.reduce(0.0) { $0 + Double($1.centroid) } /
+                Double(local.count) / max(1, sampleRate * 0.5)
+            let flux = local.reduce(0.0) { $0 + Double($1.flux) } /
+                Double(local.count) / maxFlux
+            let totalBands = local.reduce(0.0) { partial, frame in
+                partial + (0..<8).reduce(0.0) { $0 + Double(frame.bandEnergy[$1]) }
+            }
+            let bassBands = local.reduce(0.0) { partial, frame in
+                partial + (0..<3).reduce(0.0) { $0 + Double(frame.bandEnergy[$1]) }
+            }
+            let density = local.reduce(0.0) { partial, frame in
+                let occupied = (0..<8).filter { frame.bandEnergy[$0] > 1e-8 }.count
+                return partial + Double(occupied) / 8
+            } / Double(local.count)
+            let keyStart = min(first, keyFrames.count)
+            let keyEnd = max(keyStart, min(last, keyFrames.count))
+            let chroma = Array(keyFrames[keyStart..<keyEnd])
+            let localKey = KeyDetector.estimate(chroma).map {
+                PortableKey(tonic: $0.tonic, mode: $0.isMinor ? .minor : .major,
+                            camelot: $0.camelot.code, confidence: $0.confidence)
+            }
+            var stability = 0.0
+            if !chroma.isEmpty {
+                let mean = KeyDetector.aggregate(chroma)
+                stability = chroma.reduce(0.0) { partial, value in
+                    let dot = zip(mean.values, value.values).reduce(0.0) { $0 + Double($1.0 * $1.1) }
+                    let a = sqrt(mean.values.reduce(0.0) { $0 + Double($1 * $1) })
+                    let b = sqrt(value.values.reduce(0.0) { $0 + Double($1 * $1) })
+                    return partial + (a > 0 && b > 0 ? dot / (a * b) : 0)
+                } / Double(chroma.count)
+            }
+            var result = phrase
+            result.descriptors = PhraseLocalDescriptors(
+                energy: min(10, max(0, rms / maxRMS * 10)),
+                bassEnergy: totalBands > 0 ? bassBands / totalBands : 0,
+                brightness: brightness, transientDensity: flux,
+                harmonicStability: stability, localKey: localKey,
+                spectralDensity: density)
+            return result
+        }
     }
 
     /// Bridge the analysis buffer into `ParsoAudioCore.PCMBuffer` and run the

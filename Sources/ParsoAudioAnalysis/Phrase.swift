@@ -45,10 +45,14 @@ public struct Phrase: Equatable, Sendable {
     public var energy: Float
     /// 0...1 boundary-confidence.
     public var confidence: Double
+    /// Beat-local material used by transition planning. `nil` is retained for
+    /// callers that construct legacy phrases themselves.
+    public var descriptors: PhraseLocalDescriptors?
 
     public init(startSample: Int64, endSample: Int64,
                 startBeat: Int, lengthBeats: Int, type: PhraseType,
-                energy: Float, confidence: Double) {
+                energy: Float, confidence: Double,
+                descriptors: PhraseLocalDescriptors? = nil) {
         self.startSample = startSample
         self.endSample = endSample
         self.startBeat = startBeat
@@ -56,6 +60,43 @@ public struct Phrase: Equatable, Sendable {
         self.type = type
         self.energy = energy
         self.confidence = confidence
+        self.descriptors = descriptors
+    }
+}
+
+/// Local, bounded descriptors for one phrase. These values are deliberately
+/// analysis-layer primitives; transition techniques live in ParsoDJEngine.
+public struct PhraseLocalDescriptors: Codable, Sendable, Equatable {
+    /// Local energy on the same 0...10 scale as `Phrase.energy`.
+    public var energy: Double
+    /// Weighted share of energy below the bass crossover, 0...1.
+    public var bassEnergy: Double
+    /// Normalized spectral centroid/brightness, 0...1.
+    public var brightness: Double
+    /// Local onset/transient density, 0...1.
+    public var transientDensity: Double
+    /// Stability of local chroma evidence, 0...1.
+    public var harmonicStability: Double
+    /// Strongest local key when the phrase contains useful evidence.
+    public var localKey: PortableKey?
+    /// Broad occupied spectral energy, 0...1.
+    public var spectralDensity: Double
+
+    public init(energy: Double, bassEnergy: Double, brightness: Double,
+                transientDensity: Double, harmonicStability: Double,
+                localKey: PortableKey? = nil, spectralDensity: Double) {
+        self.energy = Self.clamp(energy, 0, 10)
+        self.bassEnergy = Self.clamp(bassEnergy, 0, 1)
+        self.brightness = Self.clamp(brightness, 0, 1)
+        self.transientDensity = Self.clamp(transientDensity, 0, 1)
+        self.harmonicStability = Self.clamp(harmonicStability, 0, 1)
+        self.localKey = localKey
+        self.spectralDensity = Self.clamp(spectralDensity, 0, 1)
+    }
+
+    private static func clamp(_ value: Double, _ low: Double, _ high: Double) -> Double {
+        guard value.isFinite else { return low }
+        return Swift.max(low, Swift.min(high, value))
     }
 }
 
