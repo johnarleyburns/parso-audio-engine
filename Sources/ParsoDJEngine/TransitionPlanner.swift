@@ -188,7 +188,7 @@ public enum TransitionPlanner {
                 let shift = keyShift(from: to.key, to: from.key)
                 let keySync = intent.allowKeySync && shift.map({ abs($0) <= 6 }) == true &&
                     baseClash.harmonicTension > 0.30
-                let keyFit = harmonicFit(from: outPhrase, to: inPhrase,
+                let keyFit = harmonicFit(out: outPhrase, to: inPhrase,
                                          fromKey: from.key, toKey: to.key,
                                          keySync: keySync)
                 for bar in bars {

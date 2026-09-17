@@ -60,8 +60,8 @@ public enum TransitionPreviewRenderer {
         let inFormat = AudioFormat(sampleRate: incoming.pcm.format.sampleRate, channelCount: 2)
         engine.deckA.load(outgoing.analysis.trackAnalysis(format: outFormat), buffer: outgoing.pcm)
         engine.deckB.load(incoming.analysis.trackAnalysis(format: inFormat), buffer: incoming.pcm)
-        engine.deckA.fader = 1
-        engine.deckB.fader = 1
+        engine.mixer.channelA.fader = 1
+        engine.mixer.channelB.fader = 1
         engine.mixer.smartFader.isEnabled = true
 
         let bpm = max(1, outgoing.analysis.bpm ?? outgoing.analysis.beatGrid?.bpm ?? 120)
