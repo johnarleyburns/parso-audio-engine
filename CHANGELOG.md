@@ -16,6 +16,14 @@ The public API reached **1.0.0** after validation by the first real integrations
 ### Changed
 - Existing 1.1.1 SmartFader entry points now delegate to the frame-clock scheduler; no model weights ship.
 
+### Accepted
+- Maintainer human listening review passed for the Platterhead transition preview pack,
+  including gradual crossfader, SmartFader, drop-bass, and beatmatching previews on
+  2026-09-16.
+- Native CMake/CTest passed 21/21, Python binding tests passed 27/27, and JavaScript
+  binding tests passed 5/5 on Linux. Apple Swift, iOS, watchOS, Android, Windows, and
+  C# gates remain covered by the release CI matrix.
+
 ## [1.1.1] - 2026-09-16
 ### Added
 - Complete portable turntablism control coverage for baby, scribble, drag, forward/backward,
