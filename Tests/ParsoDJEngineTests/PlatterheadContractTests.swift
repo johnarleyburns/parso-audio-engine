@@ -76,7 +76,7 @@ struct PlatterheadContractTests {
         #expect(preview.pcm.format.channelCount == 2)
         #expect(preview.pcm.frameCount > 0)
         #expect(preview.transitionEndFrame > preview.transitionStartFrame)
-        #expect(preview.pcm.channel(0).allSatisfy(\.isFinite))
+        #expect(preview.pcm.channel(0).allSatisfy { $0.isFinite })
 
         let engine = HeadlessDJEngine(deckCount: 2, profile: .transitionLab)
         engine.deckA.load(analysisA.trackAnalysis(format: pcmA.format), buffer: pcmA)
