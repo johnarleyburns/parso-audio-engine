@@ -972,7 +972,7 @@ Phased implementation plan in `docs/SPEC.md §19`. The current workstream is the
 audio unification in `docs/UNIFICATION_PLAN.md`, tracked in `current_status.md`.
 If you're handing this to a coding agent, start it
 at **`AGENTS.md`** — it defines the implement → enable-tests → commit → update-`current_status.md` loop
-and the exact phase order. The current release is **1.2.0**; changes after that release are tracked
+and the exact phase order. The current release is **1.2.1**; changes after that release are tracked
 under `CHANGELOG.md`'s **Unreleased** section.
 
 ## License & attribution

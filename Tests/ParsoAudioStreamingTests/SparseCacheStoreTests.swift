@@ -152,6 +152,30 @@ struct SparseCacheStoreTests {
         #expect(await reopened.totalBytes(for: "d") == 200)
     }
 
+    @Test("tier accounting and clearing preserve the other tier")
+    func tierAccountingAndClearing() async {
+        let roots = makeRoots()
+        let store = SparseCacheStore(evictableRoot: roots.evictable, durableRoot: roots.durable)
+
+        await store.adoptCompleteFile(byteCount: 10, for: "stream", kind: "audio")
+        await store.adoptCompleteFile(byteCount: 20, for: "offline", kind: "audio", durable: true)
+
+        #expect(await store.totalCachedBytes() == 10)
+        #expect(await store.totalDurableBytes() == 20)
+        #expect(await store.completeEntryCount(durable: false) == 1)
+        #expect(await store.completeEntryCount(durable: true) == 1)
+
+        await store.clearEvictable()
+        #expect(await store.totalCachedBytes() == 0)
+        #expect(await store.totalDurableBytes() == 20)
+        #expect(await store.contains("stream") == false)
+        #expect(await store.contains("offline") == true)
+
+        await store.clearDurable()
+        #expect(await store.totalStoredBytes() == 0)
+        #expect(await store.contains("offline") == false)
+    }
+
     @Test("legacy metadata without kind/durable decodes as evictable audio")
     func legacyMetaDecodes() async {
         let roots = makeRoots()

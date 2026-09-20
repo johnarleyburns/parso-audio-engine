@@ -2,9 +2,19 @@
 
 All notable changes are documented here. Format: Keep a Changelog; scheme: SemVer.
 The public API reached **1.0.0** after validation by the first real integrations
-(see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current release is `1.2.0`.
+(see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current release is `1.2.1`.
 
 ## [Unreleased]
+
+## [1.2.1] - 2026-09-20
+### Added
+- Tier-aware sparse-cache accounting for separately reporting evictable streaming
+  bytes and durable/offline bytes.
+- Explicit APIs to clear only evictable entries or only durable entries.
+
+### Fixed
+- Downstream consumers can safely remove cache tiers without reaching into the
+  store's private removal implementation.
 
 ## [1.2.0] - 2026-09-16
 ### Added

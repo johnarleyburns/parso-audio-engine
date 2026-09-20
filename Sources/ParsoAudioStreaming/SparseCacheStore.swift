@@ -297,7 +297,7 @@ public actor SparseCacheStore {
 
     // MARK: - Internals
 
-    private func remove(_ key: String) {
+    func remove(_ key: String) {
         let fm = FileManager.default
         for root in [evictable, durable] {
             try? fm.removeItem(at: root.blobURL(key))
