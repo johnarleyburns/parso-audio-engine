@@ -54,6 +54,43 @@ public final class EQTapRegistry {
 
 #if !os(watchOS)
 @preconcurrency import AVFoundation
+import CoreAudioTypes
+
+/// Minimal, universal replacement for Apple's `UnsafeMutableAudioBufferListPointer`
+/// (AVFAudio) — confirmed by direct repro that Mac Catalyst's iOSSupport SDK
+/// slice does not expose that convenience type at all (fails to typecheck
+/// under `arm64-apple-ios17.0-macabi` even with `import AVFAudio` added; the
+/// identical snippet compiles cleanly targeting native macOS). `AudioBufferList`/
+/// `AudioBuffer` themselves are plain CoreAudioTypes C structs, universally
+/// available including under Catalyst, so indexing into the variable-length
+/// `mBuffers` C array by hand avoids depending on the missing overlay type
+/// entirely — same code path on every platform, not a Catalyst-only special
+/// case to maintain separately.
+public struct AudioBufferListPointer: RandomAccessCollection {
+    private let raw: UnsafeMutablePointer<AudioBufferList>
+
+    public init(_ pointer: UnsafeMutablePointer<AudioBufferList>) {
+        self.raw = pointer
+    }
+
+    public var startIndex: Int { 0 }
+    public var endIndex: Int { Int(raw.pointee.mNumberBuffers) }
+
+    public subscript(index: Int) -> AudioBuffer {
+        get {
+            precondition(index >= 0 && index < endIndex, "AudioBufferListPointer index out of range")
+            return withUnsafeMutablePointer(to: &raw.pointee.mBuffers) { base in
+                UnsafeMutableRawPointer(base).assumingMemoryBound(to: AudioBuffer.self)[index]
+            }
+        }
+        nonmutating set {
+            precondition(index >= 0 && index < endIndex, "AudioBufferListPointer index out of range")
+            withUnsafeMutablePointer(to: &raw.pointee.mBuffers) { base in
+                UnsafeMutableRawPointer(base).assumingMemoryBound(to: AudioBuffer.self)[index] = newValue
+            }
+        }
+    }
+}
 
 /// A realtime audio processor driven by an `EQTapInstaller` tap. All three
 /// callbacks run on the realtime audio thread: do NO allocation, NO locking that
@@ -66,7 +103,7 @@ public protocol RealtimeAudioProcessor: AnyObject {
     /// Called per render cycle with the source audio already fetched into `bufferList`.
     /// `channelCount` is per-buffer; a non-interleaved float mix delivers one
     /// buffer per channel.
-    func processRealtime(_ bufferList: UnsafeMutableAudioBufferListPointer, frameCount: Int)
+    func processRealtime(_ bufferList: AudioBufferListPointer, frameCount: Int)
 }
 
 /// Installs `MTAudioProcessingTap`s on `AVPlayerItem`s, one per item, and keeps
@@ -178,7 +215,7 @@ public final class EQTapInstaller: @unchecked Sendable {
                                                                flagsOut, nil, numberFramesOut)
                 guard status == noErr else { return }
                 let e = Unmanaged<Entry>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
-                let abl = UnsafeMutableAudioBufferListPointer(bufferListInOut)
+                let abl = AudioBufferListPointer(bufferListInOut)
                 e.processor.processRealtime(abl, frameCount: Int(numberFrames))
             })
 
