@@ -118,7 +118,13 @@ static void renderChunk(pe_engine* engine, float* left, float* right, int frames
             }
             const double loopLength = deck.loopEnd - deck.loopStart;
             if (deck.loopActive && loopLength > 0.0 && deck.position >= deck.loopEnd) {
-                while (deck.position >= deck.loopEnd) deck.position -= loopLength;
+                if (deck.loopExitAtEnd) {
+                    deck.loopExitAtEnd = false;
+                    deck.loopActive = false;
+                    pushStateEvent(engine, deckIndex);
+                } else {
+                    while (deck.position >= deck.loopEnd) deck.position -= loopLength;
+                }
             } else if (deck.loopActive && loopLength > 0.0 && deck.position < deck.loopStart) {
                 while (deck.position < deck.loopStart) deck.position += loopLength;   // reverse loop wrap
             } else if (deck.position >= static_cast<double>(deck.frames)) {

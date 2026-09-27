@@ -202,7 +202,7 @@ static void pushStateEvent(pe_engine* engine, int deckIndex) {
         deckIndex,
         static_cast<int64_t>(deck.position),
         deck.playing ? 1.0f : 0.0f,
-        0.0f
+        deck.loopActive ? 1.0f : 0.0f
     });
 }
 

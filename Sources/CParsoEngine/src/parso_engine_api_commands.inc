@@ -78,6 +78,7 @@ void pe_deck_set_buffer(
     state.loopInSet = false;
     state.loopAvailable = false;
     state.loopActive = false;
+    state.loopExitAtEnd = false;
 }
 
 void pe_sampler_set_slot(

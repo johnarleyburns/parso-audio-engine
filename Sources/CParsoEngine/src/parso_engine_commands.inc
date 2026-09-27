@@ -295,6 +295,7 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             }
             break;
         case PE_CMD_RELOOP_EXIT:
+            deck.loopExitAtEnd = false;
             if (deck.loopActive) {
                 deck.loopActive = false;
                 if (deck.slip) {
@@ -308,6 +309,12 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
             } else if (deck.loopAvailable) {
                 deck.loopActive = true;
             }
+            break;
+        case PE_CMD_LOOP_EXIT_AT_END:
+            if (deck.loopActive && deck.loopAvailable) deck.loopExitAtEnd = true;
+            break;
+        case PE_CMD_LOOP_CANCEL_EXIT:
+            deck.loopExitAtEnd = false;
             break;
         case PE_CMD_BEATLOOP:
             if (command.f0 > 0.0f) {

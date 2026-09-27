@@ -115,6 +115,67 @@ struct PerDeckEchoTests {
         #expect(early > 0.001)          // tail is audible right after disable
         #expect(late < early)           // and it decays
     }
+
+    @Test func echoOutStopsTheDeckAndReleasesAnAudibleTail() {
+        let e = loadedDeckA(bpm: 120)
+        e.deckA.armEchoOut()
+        e.deckA.play()
+        _ = e.render(frames: 48_000)
+        e.deckA.echoOutStop()
+        #expect(!e.deckA.isPlaying)
+        let tail = e.render(frames: 24_000).left
+        let rms = sqrt(tail.reduce(0) { $0 + Double($1 * $1) } / Double(tail.count))
+        #expect(rms > 0.006)
+        _ = e.render(frames: 168_000)
+        let quiet = e.render(frames: 8_192).left.map(abs).max() ?? 0
+        #expect(quiet < 0.01)
+    }
+
+    @Test func armingEchoOutDoesNotColourTheDrySignal() {
+        func render(_ armed: Bool) -> [Float] {
+            let e = loadedDeckA(bpm: 120)
+            if armed { e.deckA.armEchoOut() }
+            e.deckA.play()
+            return e.render(frames: 24_000).left
+        }
+        #expect(render(true) == render(false))
+    }
+
+    @Test func echoOutWithoutArmingIsAPlainPause() {
+        let e = loadedDeckA()
+        e.deckA.play()
+        _ = e.render(frames: 4_096)
+        e.deckA.echoOutStop()
+        _ = e.render(frames: 8_192)
+        #expect(!e.deckA.isPlaying)
+    }
+}
+
+@Suite("Phase 6b — loop exit")
+@MainActor
+struct LoopExitAtEndTests {
+    @Test func exitLoopAtEndFinishesTheCurrentPass() {
+        let e = loadedDeckA(bpm: 120)
+        e.deckA.setLoop(startSample: 0, endSample: 24_000)
+        e.deckA.play()
+        _ = e.render(frames: 12_000)
+        e.deckA.exitLoopAtEnd()
+        _ = e.render(frames: 18_000)
+        #expect(!e.deckA.isLoopActive)
+        #expect(e.deckA.playhead > 0.5)
+    }
+
+    @Test func cancelLoopExitKeepsTheLoopActive() {
+        let e = loadedDeckA(bpm: 120)
+        e.deckA.setLoop(startSample: 0, endSample: 24_000)
+        e.deckA.play()
+        _ = e.render(frames: 12_000)
+        e.deckA.exitLoopAtEnd()
+        e.deckA.cancelLoopExit()
+        _ = e.render(frames: 18_000)
+        #expect(e.deckA.isLoopActive)
+        #expect(e.deckA.playhead < 0.5)
+    }
 }
 
 // MARK: - Item 6 — integer-sample transport

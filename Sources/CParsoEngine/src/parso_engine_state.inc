@@ -80,6 +80,7 @@ struct DeckState {
     bool loopInSet = false;
     bool loopAvailable = false;
     bool loopActive = false;
+    bool loopExitAtEnd = false;
     float eqLowGain = 1.0f;
     float eqMidGain = 1.0f;
     float eqHighGain = 1.0f;

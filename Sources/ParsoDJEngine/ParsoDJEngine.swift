@@ -124,6 +124,12 @@ public final class DJEngine {
     }
 
     /// Installs the AVAudioSourceNode render block that calls `pe_render`.
+    ///
+    /// A live host must call `pollEvents()` from its main/display actor at
+    /// display cadence. The audio render thread only publishes playhead,
+    /// state, peak, and end-of-track events; `Deck.playhead`, `isPlaying`,
+    /// and peak values are updated when those events are polled off the audio
+    /// thread.
     public func start() throws {
         guard !isRunning else { return }
         try buildGraph()
@@ -134,7 +140,8 @@ public final class DJEngine {
 
     /// Attaches PAE's source node to an audio engine owned by the host app. PAE
     /// starts the supplied host engine only when it is not already running and
-    /// never stops or deactivates it during `stop()`.
+    /// never stops or deactivates it during `stop()`. The host must call
+    /// `pollEvents()` from its main/display actor at display cadence.
     public func start(using hostEngine: AVAudioEngine,
                       destination: AVAudioNode? = nil) throws {
         guard !isRunning else { return }
@@ -144,6 +151,15 @@ public final class DJEngine {
         externalHostEngine = hostEngine
         isRunning = true
         installConfigurationObserver()
+    }
+
+    /// Applies events published by the realtime render thread.
+    ///
+    /// Call this from the host's main actor or display-link callback, never
+    /// from an audio render callback. `HeadlessDJEngine.render` calls it
+    /// automatically after each offline render block.
+    public func pollEvents() {
+        drainEvents()
     }
 
     /// Tears the `AVAudioEngine` graph down and rebuilds it in place without
@@ -352,6 +368,32 @@ public final class DJEngine {
         try bridge.stopRecording()
     }
     public var droppedRecordFrames: Int64 { bridge.droppedRecordFrames }
+
+    private func drainEvents() {
+        var events = [pe_event](repeating: pe_event(type: PE_EVT_PLAYHEAD, deck: -1, frame: 0, f0: 0, f1: 0), count: 64)
+        while true {
+            let count = events.withUnsafeMutableBufferPointer { pointer in
+                pe_poll_events(bridge.handle, pointer.baseAddress, Int32(pointer.count))
+            }
+            if count == 0 { return }
+            for event in events.prefix(Int(count)) {
+                switch event.type {
+                case PE_EVT_PLAYHEAD, PE_EVT_STATE:
+                    let d = Int(event.deck)
+                    if decks.indices.contains(d) { decks[d].apply(event) }
+                case PE_EVT_PEAK:
+                    let d = Int(event.deck)
+                    if d == -1 { mixer.master.updatePeak(event.f0) }
+                    else if mixer.channels.indices.contains(d) { mixer.channels[d].updatePeak(event.f0) }
+                case PE_EVT_END_OF_TRACK:
+                    let d = Int(event.deck)
+                    if decks.indices.contains(d) { decks[d].applyEndOfTrack(event) }
+                default:
+                    break
+                }
+            }
+        }
+    }
 
     /// A device-free, synchronous engine for deterministic tests (calls `pe_step`).
     public func makeHeadless() -> HeadlessDJEngine {
@@ -1051,6 +1093,7 @@ public final class Deck {
         }
         if event.type == PE_EVT_STATE {
             isPlaying = event.f0 > 0.5
+            isLoopActive = event.f1 > 0.5
         }
     }
 
@@ -1460,6 +1503,22 @@ public final class Deck {
         }
         post(PE_CMD_RELOOP_EXIT)
     }
+
+    /// Lets the current loop pass finish, then continues playback beyond the
+    /// out-point instead of wrapping. The native render thread owns the exact
+    /// boundary, so this remains click-free even when the out-point falls in
+    /// the middle of an audio block. The loop becomes inactive when the pass
+    /// reaches its end and the change is reported through `pollEvents()`.
+    public func exitLoopAtEnd() {
+        guard isLoopActive else { return }
+        post(PE_CMD_LOOP_EXIT_AT_END)
+    }
+
+    /// Cancels a pending `exitLoopAtEnd()` request while the current pass is
+    /// still running.
+    public func cancelLoopExit() {
+        post(PE_CMD_LOOP_CANCEL_EXIT)
+    }
     public func autoBeatLoop(beats: Double) {
         guard beats > 0, trackBPM > 0 else { return }
         let length = beats * 60 / trackBPM
@@ -1841,16 +1900,52 @@ public final class Deck {
     // MARK: Per-deck beat echo (Phase 6b item 3)
 
     private var echoEnabled = false
+    private var echoOutArmed = false
     /// Configures / toggles this deck's beat echo. The delay period tracks the
     /// deck's (synced) effective BPM. Disabling with a live tail lets the
     /// repeats decay rather than cutting them.
     public func setEcho(enabled: Bool, beats: Double = 1, depth: Double = 0.5, feedback: Double = 0.4) {
+        echoOutArmed = false
         echoEnabled = enabled
         let fb = Int(max(0, min(0.95, feedback)) * 1000)
         post(PE_CMD_ECHO_SET, i0: enabled ? 1 : 0, i1: fb, i2: 1,
              f0: Float(beats > 0 ? beats : 1), f1: Float(max(0, min(1, depth))))
     }
     public func setEchoEnabled(_ on: Bool) { setEcho(enabled: on) }
+
+    /// Arms a one-beat (or custom beat-length) echo-out buffer without adding
+    /// wet signal while the deck plays. The delay period follows the deck's
+    /// effective BPM, just like `setEcho`.
+    public func armEchoOut(beats: Double = 1) {
+        echoOutArmed = true
+        echoEnabled = true
+        post(PE_CMD_ECHO_SET, i0: 1, i2: 0,
+             f0: Float(beats > 0 ? beats : 1), f1: 0)
+    }
+
+    /// Disarms echo-out and clears the delay line's recording path without
+    /// producing a tail.
+    public func disarmEchoOut() {
+        echoOutArmed = false
+        echoEnabled = false
+        post(PE_CMD_ECHO_SET, i0: 0, i2: 0)
+    }
+
+    /// Pauses immediately and releases the armed delay line into an audible
+    /// tail. Without an armed echo-out this is a plain pause.
+    public func echoOutStop(depth: Double = 0.6, feedback: Double = 0.45) {
+        guard echoOutArmed else {
+            pause()
+            return
+        }
+        echoOutArmed = false
+        echoEnabled = false
+        let fb = Int(max(0, min(0.95, feedback)) * 1000)
+        post(PE_CMD_PAUSE)
+        post(PE_CMD_ECHO_SET, i0: 0, i1: fb, i2: 1,
+             f0: 1, f1: Float(max(0, min(1, depth))))
+        isPlaying = false
+    }
 
     /// Jumps by musical beats and snaps the destination when quantize is on.
     public func beatJump(beats: Double) {
