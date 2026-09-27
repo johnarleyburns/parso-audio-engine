@@ -1061,6 +1061,31 @@ public final class Deck {
         if autoCue { applyAutoCue() }
     }
 
+    /// Replace the live beat grid without decoding the track again. This is
+    /// used by the host's GRID preparation tool when a DJ corrects BPM or the
+    /// first beat while a deck is already loaded.
+    public func setBeatGrid(bpm: Double, firstBeat: TimeInterval) {
+        guard bpm.isFinite, bpm > 0, firstBeat.isFinite else { return }
+        let period = 60 / bpm
+        guard period.isFinite, period > 0 else { return }
+        let duration = trackDuration
+        let first = max(0, min(duration, firstBeat))
+        let beats = stride(from: first, through: duration, by: period).map { $0 }
+        guard !beats.isEmpty else { return }
+        trackBPM = bpm
+        beatPositions = beats
+        beatGrid = beats
+        if var analysis = trackAnalysis {
+            let downbeats = stride(from: first, through: duration, by: period * 4).map { $0 }
+            analysis.tempo.bpm = bpm
+            analysis.tempo.beatPositions = beats
+            analysis.tempo.downbeatPositions = downbeats
+            trackAnalysis = analysis
+        }
+        bridge.setTrackBPM(trackBPM, index: index)
+        updatePlaybackRate()
+    }
+
     public func play() {
         post(PE_CMD_PLAY)
         isPlaying = true

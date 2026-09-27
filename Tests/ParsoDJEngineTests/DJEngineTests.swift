@@ -1070,6 +1070,13 @@ struct DeckAcceptanceControlTests {
         #expect(e.deckA.waveform != nil)
         #expect(e.deckA.beatPhase == 0)
     }
+
+    @Test func liveBeatGridOverrideUpdatesLoadedDeckWithoutReloading() {
+        let e = makeLoadedHeadless(bpmA: 120)
+        e.deckA.setBeatGrid(bpm: 100, firstBeat: 0.2)
+        #expect(e.deckA.beatGrid.first == 0.2)
+        #expect(e.deckA.beatGrid[1] == 0.8)
+    }
 }
 
 // MARK: - CDJ-3000 parity C1: N-deck render graph (docs/CDJ3000-parity-research.md)
