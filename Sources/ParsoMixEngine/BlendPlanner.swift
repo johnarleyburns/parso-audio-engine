@@ -12,7 +12,12 @@
 //     half), bass exit (breakdown or outro), the latest phrase lines.
 //  5. Placement by the groove (ParsoAudioAnalysis.Groove): the outgoing over the 128
 //     beats before the blend, the incoming over the 128 after it; a candidate is
-//     used only when 3 of 4 bands agree. None agrees: a phrase cut.
+//     used only when 3 of 4 bands agree.
+//  6. None agrees (techno rumble, deep house's loud off-beat hats): the same reading
+//     on the drum stems only (PercussiveSeparation), accepted when its 32-, 64- and
+//     128-beat readings agree within 5 ms. Validated against the four approved
+//     placements (within 4 ms) and by ear on techno and deep house (2026-10-09).
+//     Still nothing: a phrase cut.
 //
 
 import Foundation
@@ -22,7 +27,11 @@ import ParsoAudioAnalysis
 public struct BlendPlan: Sendable, Equatable {
     public enum Style: String, Sendable { case doubleDrop = "double-drop", bassSwap = "bass-swap", phraseCut = "phrase-cut" }
 
+    public enum Placement: String, Sendable { case fullMix = "full-mix groove", drums = "drum-stem groove", none }
+
     public var style: Style
+    /// What placed the incoming beat (see BlendPlanner step 5).
+    public var placement: Placement = .fullMix
     /// Outgoing beat period (s); the incoming plays at this tempo too.
     public var period: Double
     /// Incoming source seconds per output second (its keylocked tempo factor).
@@ -49,6 +58,11 @@ public struct BlendPlan: Sendable, Equatable {
 public enum BlendPlanner {
     public static let overlapBeats = 64
     public static let grooveBeats = 128
+    /// Drum-stem readings over these windows must agree within `drumAgreement`:
+    /// a groove that can be read half a beat either way (deep house's off-beat
+    /// hats) flips between windows, and the 32-beat one is the first to flip.
+    static let drumWindows = [32, 64, 128]
+    static let drumAgreement = 0.005
     static var half: Int { overlapBeats / 2 }
 
     /// A track's structure on its beat grid, in the time base of `scale`
@@ -167,6 +181,38 @@ public enum BlendPlanner {
             }
         }
         if !plans.isEmpty { return plans.sorted { $0.style == .doubleDrop && $1.style != .doubleDrop } }
+
+        // 6. The drum stems only.
+        let drumsA = PercussiveSeparation.percussive(outgoingAudio)
+        let drumsB = PercussiveSeparation.percussive(stretched)
+        for (sa, style) in outgoingPoints(A) {
+            let kind: BlendPlan.Style = style == "double drop" ? .doubleDrop : .bassSwap
+            for (sb, why) in incomingPoints(B, silenceBeat: silenceBeat) {
+                let startA = A.beats[sa - half]
+                let startB = B.beats[sb] - Double(half) * pa
+                let lags: [Double?] = drumWindows.map { nb in
+                    guard let ga = Groove.profile(drumsA, start: startA - Double(nb) * pa, beats: nb, period: pa),
+                          let gb = Groove.profile(drumsB, start: B.beats[sb] + Double(half) * pa, beats: nb, period: pa)
+                    else { return nil }
+                    return Groove.offset(outgoing: ga, incoming: gb, period: pa).lagBeats * pa
+                }
+                let read = lags.compactMap { $0 }
+                guard read.count == drumWindows.count, (read.max()! - read.min()!) <= drumAgreement else {
+                    log?("drums: \(style) \(mmss(A.beats[sa])) x \(mmss(B.sourceBeats[sb])): "
+                         + lags.map { $0.map { String(format: "%+.1f", $0 * 1000) } ?? "off" }.joined(separator: " / ") + " ms")
+                    continue
+                }
+                let lag = read.reduce(0, +) / Double(read.count)
+                var plan = BlendPlan(style: kind, period: pa, tempo: tempo, incomingGain: gain,
+                                     blendStart: startA, incomingOffset: startA - startB - lag, overlapBeats: overlapBeats,
+                                     grooveLag: lag, bandOnsetLags: [], rivalPeak: 0,
+                                     reason: "swap on the outgoing's \(style) at \(mmss(A.beats[sa])) and the "
+                                         + "incoming's \(why) at \(mmss(B.sourceBeats[sb])) of its own track; placed by "
+                                         + "the drum stems (32/64/128 beats " + read.map { String(format: "%+.1f", $0 * 1000) }.joined(separator: " / ") + " ms)")
+                plan.placement = .drums
+                return [plan]
+            }
+        }
         return [phraseCut(A: A, B: B, pa: pa, tempo: tempo, gain: gain, silenceBeat: silenceBeat)]
     }
 
@@ -210,10 +256,12 @@ public enum BlendPlanner {
         let exit = exits.last ?? max(0, A.n - 1)
         let entry = stride(from: B.phrase, to: B.n, by: 32).first { $0 >= silenceBeat } ?? 0
         let cut = A.beats[exit]
-        return BlendPlan(style: .phraseCut, period: pa, tempo: tempo, incomingGain: gain, blendStart: cut,
+        var plan = BlendPlan(style: .phraseCut, period: pa, tempo: tempo, incomingGain: gain, blendStart: cut,
                          incomingOffset: cut - B.beats[entry], overlapBeats: 0, grooveLag: 0, bandOnsetLags: [], rivalPeak: 0,
                          reason: "no point where the groove reading is trustworthy: phrase cut at \(mmss(cut)) "
                              + "into the incoming's phrase line at \(mmss(B.sourceBeats[entry]))")
+        plan.placement = .none
+        return plan
     }
 
     static func median(_ x: [Double]) -> Double {

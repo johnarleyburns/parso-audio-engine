@@ -24,6 +24,19 @@ func run() throws {
         print(buffer.format.sampleRate, buffer.frameCount)
         return
     }
+    if args.first == "--percussive", args.count == 3 {
+        // Debug: the percussive part (mono) as raw float32.
+        let buffer = try AudioFileReader(url: URL(fileURLWithPath: args[1])).readAll()
+        let t = ContinuousClock().now
+        let p = PercussiveSeparation.percussive(buffer)
+        let elapsed = ContinuousClock().now - t
+        var data = Data(capacity: p.frameCount * 4)
+        let ch = p.channel(0)
+        for i in 0..<p.frameCount { var v = ch[i]; data.append(Data(bytes: &v, count: 4)) }
+        try data.write(to: URL(fileURLWithPath: args[2]))
+        print("separated \(p.frameCount) frames in \(elapsed)")
+        return
+    }
     if args.first == "--profile", args.count == 5, let start = Double(args[2]), let beats = Int(args[3]),
        let period = Double(args[4]) {
         // Debug: the groove profile of one window, as JSON (4 bands x bins).
@@ -101,7 +114,7 @@ func run() throws {
         print("    \(file.path)  " + marks.map { BlendPlanner.mmss($0.1) }.joined(separator: " · "))
         summary.append(["file": file.path, "label": label, "style": plan.style.rawValue, "reason": plan.reason,
                         "period": plan.period, "tempo": plan.tempo, "gain": plan.incomingGain,
-                        "blendStart": plan.blendStart, "incomingOffset": plan.incomingOffset,
+                        "blendStart": plan.blendStart, "placement": plan.placement.rawValue, "incomingOffset": plan.incomingOffset,
                         "grooveLagMs": plan.grooveLag * 1000, "overlapBeats": plan.style == .phraseCut ? 0 : plan.overlapBeats,
                         "marks": marks.map { [$0.0, $0.1] as [Any] }])
     }

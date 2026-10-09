@@ -79,3 +79,38 @@ struct BlendAnalysisTests {
         #expect(Groove.profile(a, start: 10, beats: 128, period: 60 / 126.0) == nil)
     }
 }
+
+@Suite("Percussive separation")
+struct PercussiveSeparationTests {
+    @Test func slidingMedianMatchesNaiveWithNearestEdges() {
+        var rng: UInt64 = 7
+        let x: [Float] = (0..<200).map { _ in rng = rng &* 6_364_136_223_846_793_005 &+ 1; return Float(rng >> 40) / Float(1 << 24) }
+        var out = [Float](repeating: 0, count: x.count)
+        PercussiveSeparation.slidingMedian(x, width: 17, into: &out)
+        for i in x.indices {
+            let w = (-8...8).map { x[min(x.count - 1, max(0, i + $0))] }.sorted()
+            #expect(out[i] == w[8])
+        }
+    }
+
+    /// A steady tone is harmonic, clicks are percussive.
+    @Test func keepsClicksDropsTone() {
+        let frames = Int(sr * 10)
+        let buffer = PCMBuffer(format: AudioFormat(sampleRate: sr, channelCount: 1), capacity: frames)
+        let ch = buffer.channel(0)
+        for i in 0..<frames { ch[i] = 0.3 * Float(sin(2 * Double.pi * 440 * Double(i) / sr)) }
+        var clicks: [Int] = []
+        var i = Int(sr / 2)
+        while i + 32 < frames { for k in 0..<32 { ch[i + k] += k == 0 ? 0.8 : 0 }; clicks.append(i); i += Int(sr / 2) }
+        let p = PercussiveSeparation.percussive(buffer).channel(0)
+        // Energy near clicks vs in between.
+        var near = 0.0, between = 0.0
+        for c in clicks.dropFirst().dropLast() {
+            for k in -200..<200 { near += Double(p[c + k] * p[c + k]) }
+            for k in 5_000..<5_400 { between += Double(p[c + k] * p[c + k]) }
+        }
+        #expect(near > 20 * between, "near \(near) between \(between)")
+        // The tone is mostly gone: residual RMS between clicks well under the tone's 0.21.
+        #expect((between / Double((clicks.count - 2) * 400)).squareRoot() < 0.05)
+    }
+}
