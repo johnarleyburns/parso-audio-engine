@@ -34,6 +34,7 @@ let package = Package(
         .library(name: "ParsoAudioPlayback",  targets: ["ParsoAudioPlayback"]),
         .library(name: "ParsoAudioStreaming", targets: ["ParsoAudioStreaming"]),
         .library(name: "ParsoDJEngine",      targets: ["ParsoDJEngine"]),
+        .library(name: "ParsoMixEngine",     targets: ["ParsoMixEngine"]),
         .library(name: "ParsoAudioNeural",   targets: ["ParsoAudioNeural"]),
     ],
     targets: [
@@ -148,6 +149,13 @@ let package = Package(
             path: "Sources/CParsoEngine",
             publicHeadersPath: "include"
         ),
+        // Lean stereo two-deck blend player (automatic DJ transitions in album playback).
+        .target(
+            name: "CParsoMix",
+            dependencies: ["CParsoDSP"],
+            path: "Sources/CParsoMix",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "CGlint",
             path: "Sources/CGlint",
@@ -223,6 +231,16 @@ let package = Package(
             name: "ParsoDJEngine",
             dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoEngine"]
         ),
+        .target(
+            name: "ParsoMixEngine",
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoMix"]
+        ),
+        // Dev tool: plans and renders a two-track blend offline (blend lab parity).
+        .executableTarget(
+            name: "parso-blend",
+            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "ParsoMixEngine"],
+            path: "Sources/Tools/parso-blend"
+        ),
         // Phase 7a — CoreML-backed features, deliberately watchOS-excluded
         // (see the file header for why `!os(watchOS)` and not `canImport`).
         // No model weights ship in this target or ever will; see
@@ -257,6 +275,10 @@ let package = Package(
         .testTarget(
             name: "ParsoDJEngineTests",
             dependencies: ["ParsoDJEngine", "ParsoTestSupport"]
+        ),
+        .testTarget(
+            name: "ParsoMixEngineTests",
+            dependencies: ["ParsoMixEngine", "ParsoTestSupport"]
         ),
         .testTarget(
             name: "ParsoAudioNeuralTests",

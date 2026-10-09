@@ -47,6 +47,21 @@ int  pd_tp_process(pd_timepitch*, const float* const* in, int in_frames,
                    float* const* out, int out_frames);       /* returns frames written */
 void pd_tp_destroy(pd_timepitch*);
 
+/* ---- Streaming time-stretch at an exact, fixed rate (Signalsmith, multi-channel) ----
+ * For playback that must stay sample-locked: the caller decides how many input
+ * frames feed each output block (from its own exact position clock), and primes
+ * the stretcher with pd_stretch_output_seek so the first output frame is exactly
+ * the first input frame given there (no latency). Pitch is preserved.
+ * create/output_seek/destroy may allocate (control thread); process does not
+ * when in_frames <= max_in and out_frames <= max_out. */
+typedef struct pd_stretch pd_stretch;
+pd_stretch* pd_stretch_create(double sr, int channels, int max_in, int max_out);
+int  pd_stretch_seek_length(const pd_stretch*, double rate);   /* input frames output_seek wants */
+void pd_stretch_output_seek(pd_stretch*, const float* const* in, int in_frames);
+void pd_stretch_process(pd_stretch*, const float* const* in, int in_frames,
+                        float* const* out, int out_frames);
+void pd_stretch_destroy(pd_stretch*);
+
 /* ---- Effects (delay/echo, reverb, flanger, phaser, bitcrush, limiter) ---- */
 typedef struct pd_delay   pd_delay;
 pd_delay* pd_delay_create(double sr, double max_seconds);

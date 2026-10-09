@@ -46,6 +46,7 @@ add_library(CParsoDSP STATIC
     Sources/CParsoDSP/src/parso_dsp_eq.cpp
     Sources/CParsoDSP/src/parso_dsp_filter.cpp
     Sources/CParsoDSP/src/parso_dsp_timepitch.cpp
+    Sources/CParsoDSP/src/parso_dsp_stretch.cpp
     Sources/CParsoDSP/src/parso_dsp_delay.cpp
     Sources/CParsoDSP/src/parso_dsp_reverb.cpp
     Sources/CParsoDSP/src/parso_dsp_convolution.cpp
@@ -79,7 +80,16 @@ target_include_directories(CParsoEngine
     PRIVATE Sources/CParsoDSP/include
 )
 target_link_libraries(CParsoEngine PUBLIC CParsoDSP)
-set_target_properties(CParsoDSP CParsoEngine PROPERTIES
+add_library(CParsoMix STATIC
+    Sources/CParsoMix/src/parso_mix.cpp
+)
+target_include_directories(CParsoMix
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Sources/CParsoMix/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(CParsoMix PUBLIC CParsoDSP)
+set_target_properties(CParsoDSP CParsoEngine CParsoMix PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
