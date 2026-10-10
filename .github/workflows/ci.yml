@@ -60,6 +60,17 @@ jobs:
         # current_status.md); in release the full suite is minutes. Debug
         # compilation is still covered by the iOS/watchOS xcodebuild jobs.
         run: swift test -c release -v -Xswiftc -warnings-as-errors
+      - name: Crash reports from the test run
+        # A crashing test kills the runner before Swift Testing flushes its
+        # results, so the log alone can't name it; the crash report can.
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for report in ~/Library/Logs/DiagnosticReports/*.ips /Library/Logs/DiagnosticReports/*.ips; do
+            echo "::group::$report"
+            head -c 60000 "$report"
+            echo "::endgroup::"
+          done
       - name: Validate repository scripts and whitespace
         run: |
           bash -n scripts/setup-linux.sh

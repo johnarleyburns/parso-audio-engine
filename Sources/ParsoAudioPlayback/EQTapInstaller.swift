@@ -76,18 +76,22 @@ public struct AudioBufferListPointer: RandomAccessCollection {
     public var startIndex: Int { 0 }
     public var endIndex: Int { Int(raw.pointee.mNumberBuffers) }
 
+    /// The `mBuffers` array in place. Computed from the list's own address:
+    /// `withUnsafeMutablePointer(to: &raw.pointee.mBuffers)` may hand out a
+    /// one-element temporary copy, and indexing past it is out of bounds.
+    private var buffers: UnsafeMutablePointer<AudioBuffer> {
+        (UnsafeMutableRawPointer(raw) + MemoryLayout<AudioBufferList>.offset(of: \AudioBufferList.mBuffers)!)
+            .assumingMemoryBound(to: AudioBuffer.self)
+    }
+
     public subscript(index: Int) -> AudioBuffer {
         get {
             precondition(index >= 0 && index < endIndex, "AudioBufferListPointer index out of range")
-            return withUnsafeMutablePointer(to: &raw.pointee.mBuffers) { base in
-                UnsafeMutableRawPointer(base).assumingMemoryBound(to: AudioBuffer.self)[index]
-            }
+            return buffers[index]
         }
         nonmutating set {
             precondition(index >= 0 && index < endIndex, "AudioBufferListPointer index out of range")
-            withUnsafeMutablePointer(to: &raw.pointee.mBuffers) { base in
-                UnsafeMutableRawPointer(base).assumingMemoryBound(to: AudioBuffer.self)[index] = newValue
-            }
+            buffers[index] = newValue
         }
     }
 }

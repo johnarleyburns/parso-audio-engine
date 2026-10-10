@@ -1,4 +1,4 @@
-static void applyCommand(pe_engine* engine, const pe_command& command) {
+static void applyCommandBody(pe_engine* engine, const pe_command& command) {
     if (command.deck == -1) {
         if (command.type == PE_CMD_SAMPLER_TRIGGER && command.i0 >= 0 && command.i0 < 16) {
             SamplerSlot& slot = engine->sampler[command.i0];
@@ -408,6 +408,18 @@ static void applyCommand(pe_engine* engine, const pe_command& command) {
     }
 }
 
+// Every command that changes a deck's loop state reports it: the host's
+// Deck.isLoopActive follows state events, and without one a state event
+// queued earlier in the same block (e.g. by PLAY) would leave it stale.
+static void applyCommand(pe_engine* engine, const pe_command& command) {
+    const bool deckCommand = command.deck != -1 && validDeck(engine, command.deck);
+    const bool loopBefore = deckCommand && engine->decks[command.deck].loopActive;
+    applyCommandBody(engine, command);
+    if (deckCommand && engine->decks[command.deck].loopActive != loopBefore) {
+        pushStateEvent(engine, command.deck);
+    }
+}
+
 static void drainCommands(pe_engine* engine) {
     uint32_t read = engine->queue.readIndex.load(std::memory_order_relaxed);
     const uint32_t write = engine->queue.writeIndex.load(std::memory_order_acquire);
@@ -417,3 +429,4 @@ static void drainCommands(pe_engine* engine) {
     }
     engine->queue.readIndex.store(read, std::memory_order_release);
 }
+
