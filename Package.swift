@@ -278,7 +278,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ParsoMixEngineTests",
-            dependencies: ["ParsoMixEngine", "ParsoTestSupport"]
+            dependencies: ["ParsoMixEngine", "ParsoAudioAnalysis", "ParsoTestSupport"]
         ),
         .testTarget(
             name: "ParsoAudioNeuralTests",

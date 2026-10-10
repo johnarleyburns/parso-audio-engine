@@ -55,8 +55,37 @@ public struct BlendPlan: Sendable, Equatable {
     public var reason: String
 }
 
+/// A track as its deck plays it: mono audio at the deck's tempo, and its
+/// analysis in that time base. The incoming side of one blend is the outgoing
+/// side of the next, so a mix analyses every track once, as it will sound.
+public struct PlayedTrack: Sendable {
+    public var analysis: BlendTrackAnalysis
+    public var audio: PCMBuffer
+
+    public init(analysis: BlendTrackAnalysis, audio: PCMBuffer) {
+        self.analysis = analysis
+        self.audio = audio
+    }
+
+    /// A track played at its own tempo.
+    public init(source audio: PCMBuffer, analysis: BlendTrackAnalysis) {
+        self.init(analysis: analysis, audio: BlendPlanner.mono(audio))
+    }
+}
+
+public struct BlendPlanning: Sendable {
+    /// Best first (see `BlendPlanner.plan`); every plan shares one tempo.
+    public var plans: [BlendPlan]
+    /// The incoming as its deck will play it, at the plans' tempo.
+    public var incoming: PlayedTrack
+}
+
 public enum BlendPlanner {
     public static let overlapBeats = 64
+    /// Beyond this tempo change the incoming is not stretched to the outgoing:
+    /// keylock artefacts grow audible, and the pair is likely half/double time.
+    /// It plays at its own tempo after a phrase cut.
+    public static let maximumTempoChange = 0.08
     public static let grooveBeats = 128
     /// Drum-stem readings over these windows must agree within `drumAgreement`:
     /// a groove that can be read half a beat either way (deep house's off-beat
@@ -116,15 +145,39 @@ public enum BlendPlanner {
     public static func plan(outgoing a: BlendTrackAnalysis, outgoingAudio: PCMBuffer,
                             incoming source: BlendTrackAnalysis, incomingAudio: PCMBuffer,
                             log: ((String) -> Void)? = nil) -> [BlendPlan] {
+        planBlend(outgoing: PlayedTrack(analysis: a, audio: outgoingAudio),
+                  incoming: source, incomingAudio: incomingAudio, log: log)?.plans ?? []
+    }
+
+    /// `plan`, also returning the incoming as its deck will play it. `outgoing`
+    /// is the outgoing as its deck plays it (its blend times are in that time
+    /// base). Nil when the incoming can't be rendered (empty audio).
+    public static func planBlend(outgoing played: PlayedTrack, incoming source: BlendTrackAnalysis,
+                                 incomingAudio: PCMBuffer, log: ((String) -> Void)? = nil) -> BlendPlanning? {
+        let a = played.analysis, outgoingAudio = played.audio
         let pa = a.grid.period
+        let A = Track(a, scale: 1)
+        guard abs(source.grid.period / pa - 1) <= maximumTempoChange else {
+            // Too far apart to stretch: a phrase cut into the incoming at its own tempo.
+            let B = Track(source, scale: 1)
+            let gain = pow(10, (a.rmsDB - source.rmsDB) / 20)
+            let silenceBeat = B.beats.firstIndex { $0 >= source.leadingSilence } ?? B.n
+            var cut = phraseCut(A: A, B: B, pa: pa, tempo: 1, gain: gain, silenceBeat: silenceBeat)
+            cut.reason = String(format: "tempos %.1f and %.1f BPM are too far apart to blend: ", 60 / pa,
+                                source.grid.bpm) + cut.reason
+            log?(cut.reason)
+            return BlendPlanning(plans: [cut], incoming: PlayedTrack(source: incomingAudio, analysis: source))
+        }
         let tempo = source.grid.period / pa
         // Like the lab: everything about the incoming is read from it as it will
         // sound, i.e. after the deck's keylocked tempo change (stretching moves
         // how a soft groove reads; deep house flipped half a beat without this).
-        guard let stretched = MixEngine.renderTempo(incomingAudio, tempo: tempo) else { return [] }
+        // Mono: every reading below is of the mono mix, and it halves the memory.
+        guard let rendered = MixEngine.renderTempo(incomingAudio, tempo: tempo) else { return nil }
+        let stretched = mono(rendered)
         let b = BlendAnalyzer.analyze(stretched, grid: BlendGrid(period: pa, phase: source.grid.phase / tempo,
                                                                  sharpness: source.grid.sharpness))
-        let A = Track(a, scale: 1)
+        let incoming = PlayedTrack(analysis: b, audio: stretched)
         let B = Track(b, scale: 1, sourceScale: tempo)
         let gain = pow(10, (a.rmsDB - b.rmsDB) / 20)
         let silenceBeat = B.beats.firstIndex { $0 >= b.leadingSilence } ?? B.n
@@ -180,7 +233,10 @@ public enum BlendPlanner {
                 break
             }
         }
-        if !plans.isEmpty { return plans.sorted { $0.style == .doubleDrop && $1.style != .doubleDrop } }
+        if !plans.isEmpty {
+            return BlendPlanning(plans: plans.sorted { $0.style == .doubleDrop && $1.style != .doubleDrop },
+                                 incoming: incoming)
+        }
 
         // 6. The drum stems only.
         let drumsA = PercussiveSeparation.percussive(outgoingAudio)
@@ -210,10 +266,24 @@ public enum BlendPlanner {
                                          + "incoming's \(why) at \(mmss(B.sourceBeats[sb])) of its own track; placed by "
                                          + "the drum stems (32/64/128 beats " + read.map { String(format: "%+.1f", $0 * 1000) }.joined(separator: " / ") + " ms)")
                 plan.placement = .drums
-                return [plan]
+                return BlendPlanning(plans: [plan], incoming: incoming)
             }
         }
-        return [phraseCut(A: A, B: B, pa: pa, tempo: tempo, gain: gain, silenceBeat: silenceBeat)]
+        return BlendPlanning(plans: [phraseCut(A: A, B: B, pa: pa, tempo: tempo, gain: gain, silenceBeat: silenceBeat)],
+                             incoming: incoming)
+    }
+
+    /// The mono mix (the mean of the channels), which every blend reading uses.
+    public static func mono(_ buffer: PCMBuffer) -> PCMBuffer {
+        guard buffer.channelCount > 1 else { return buffer }
+        let out = PCMBuffer(format: AudioFormat(sampleRate: buffer.format.sampleRate, channelCount: 1),
+                            capacity: buffer.frameCount)
+        let ch = out.channel(0), scale = 1 / Float(buffer.channelCount)
+        for c in 0..<buffer.channelCount {
+            let src = buffer.channel(c)
+            for i in 0..<buffer.frameCount { ch[i] += src[i] * scale }
+        }
+        return out
     }
 
     static func bassFromStart(_ T: Track, silenceBeat: Int) -> Bool {

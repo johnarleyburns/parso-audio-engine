@@ -6,6 +6,7 @@
 import Testing
 import Foundation
 import ParsoAudioCore
+import ParsoAudioAnalysis
 import ParsoMixEngine
 
 private let sr = 44_100.0
@@ -199,4 +200,38 @@ private func envelopeLag(_ x: [Float], _ y: [Float], from: Int, to: Int) -> Doub
         if s > best.score { best = (lag, s) }
     }
     return Double(best.lag) / sr * 1_000
+}
+
+@Suite("Blend planning")
+struct BlendPlanningTests {
+    private func played(bpm: Double, seconds: Double) -> (PCMBuffer, BlendTrackAnalysis) {
+        let period = 60 / bpm
+        let audio = clickTrain(frames: Int(seconds * sr), spacing: Int((period * sr).rounded()))
+        let analysis = BlendAnalyzer.analyze(audio, grid: BlendGrid(period: period, phase: period / 2, sharpness: 1))
+        return (audio, analysis)
+    }
+
+    @Test func farTempoIsACutAtTheIncomingsOwnTempo() throws {
+        let (a, aa) = played(bpm: 128, seconds: 90)
+        let (b, ab) = played(bpm: 100, seconds: 60)
+        let result = try #require(BlendPlanner.planBlend(outgoing: PlayedTrack(source: a, analysis: aa),
+                                                         incoming: ab, incomingAudio: b))
+        #expect(result.plans.map(\.style) == [BlendPlan.Style.phraseCut])
+        #expect(result.plans[0].tempo == 1)
+        #expect(result.incoming.audio.channelCount == 1)
+        #expect(result.incoming.audio.frameCount == b.frameCount)
+        #expect(result.incoming.analysis == ab)
+    }
+
+    @Test func incomingIsReturnedAsItWillPlay() throws {
+        let (a, aa) = played(bpm: 126, seconds: 90)
+        let (b, ab) = played(bpm: 124, seconds: 60)
+        let result = try #require(BlendPlanner.planBlend(outgoing: PlayedTrack(source: a, analysis: aa),
+                                                         incoming: ab, incomingAudio: b))
+        let tempo = try #require(result.plans.first?.tempo)
+        #expect(abs(tempo - 126.0 / 124.0) < 1e-9)
+        #expect(result.incoming.audio.channelCount == 1)
+        #expect(result.incoming.audio.frameCount == Int((Double(b.frameCount) / tempo).rounded(.down)))
+        #expect(abs(result.incoming.analysis.grid.period - 60.0 / 126) < 1e-9)
+    }
 }
