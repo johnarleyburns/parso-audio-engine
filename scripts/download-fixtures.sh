@@ -44,10 +44,14 @@ PY
     fi
     echo "  ↓ $id.$ext"
     # -L follows the redirect to upload.wikimedia.org; UA is required by Commons.
-    curl -fL --retry 3 --retry-delay 2 \
-         -A "parso-audio-engine-tests/1.2.0 (https://github.com/; contact: dev)" \
+    # Commons rate-limits bursts (HTTP 429): without --retry-delay curl backs off
+    # exponentially and honours Retry-After, and the pause between files keeps a
+    # cold fetch of the whole corpus under the limit.
+    curl -fL --retry 6 --retry-max-time 300 \
+         -A "parso-audio-engine-tests/1.3 (https://github.com/johnarleyburns/parso-audio-engine; CI fixture fetch)" \
          -o "$out" "$url" \
       || { echo "    !! failed: $id ($url)" >&2; rm -f "$out"; }
+    sleep 2
 done
 
 echo

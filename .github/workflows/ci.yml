@@ -22,8 +22,12 @@ jobs:
       # download-fixtures.sh skips files already on disk, so a cache hit turns
       # the download step into a no-op. Keyed on the manifest so an edit to the
       # track list re-fetches.
-      - name: Cache audio fixtures
-        uses: actions/cache@v4
+      # Restore and save are separate steps: actions/cache saves only when the
+      # whole job succeeds, so a failing test step left the corpus uncached and
+      # every run re-fetched it from Commons until it was rate-limited (429).
+      - name: Restore audio fixtures
+        id: fixtures-cache
+        uses: actions/cache/restore@v4
         with:
           path: Tests/Fixtures/audio
           key: fixtures-${{ hashFiles('Tests/Fixtures/fixtures.json') }}
@@ -52,6 +56,12 @@ jobs:
           done
           echo "::error::The complete $expected_fixture_count-fixture corpus was not downloaded"
           exit 1
+      - name: Save audio fixtures
+        if: steps.fixtures-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Tests/Fixtures/audio
+          key: fixtures-${{ hashFiles('Tests/Fixtures/fixtures.json') }}
       - name: Build with warnings as errors
         run: swift build -c release -v -Xswiftc -warnings-as-errors
       - name: Unit tests (synthetic and real fixtures)
