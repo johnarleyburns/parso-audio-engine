@@ -7,7 +7,6 @@ on:
 jobs:
   build-test-macos:
     runs-on: macos-14
-    concurrency: { group: cadence-macos, cancel-in-progress: false, queue: max }
     steps:
       - uses: actions/checkout@v4
       - name: Select latest installed Xcode
@@ -397,7 +396,6 @@ jobs:
 
   build-watchos:
     runs-on: macos-14
-    concurrency: { group: cadence-macos, cancel-in-progress: false, queue: max }
     steps:
       - uses: actions/checkout@v4
       - name: Select latest installed Xcode
@@ -417,7 +415,6 @@ jobs:
 
   build-ios:
     runs-on: macos-14
-    concurrency: { group: cadence-macos, cancel-in-progress: false, queue: max }
     steps:
       - uses: actions/checkout@v4
       - name: Select latest installed Xcode
