@@ -7,6 +7,7 @@ on:
 jobs:
   build-test-macos:
     runs-on: macos-14
+    concurrency: { group: cadence-macos, cancel-in-progress: false, queue: max }
     steps:
       - uses: actions/checkout@v4
       - name: Select latest installed Xcode
@@ -396,6 +397,7 @@ jobs:
 
   build-watchos:
     runs-on: macos-14
+    concurrency: { group: cadence-macos, cancel-in-progress: false, queue: max }
     steps:
       - uses: actions/checkout@v4
       - name: Select latest installed Xcode
@@ -406,15 +408,16 @@ jobs:
           done
           if [[ -n "$xcode_app" ]]; then sudo xcode-select -s "$xcode_app"; fi
           xcodebuild -version
-      - name: Build for watchOS Simulator
+      - name: Build for generic watchOS device
         run: |
           xcodebuild -scheme parso-audio-engine-Package \
-            -destination 'generic/platform=watchOS Simulator' \
+            -destination 'generic/platform=watchOS' \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             -skipPackagePluginValidation build
 
   build-ios:
     runs-on: macos-14
+    concurrency: { group: cadence-macos, cancel-in-progress: false, queue: max }
     steps:
       - uses: actions/checkout@v4
       - name: Select latest installed Xcode
@@ -425,10 +428,10 @@ jobs:
           done
           if [[ -n "$xcode_app" ]]; then sudo xcode-select -s "$xcode_app"; fi
           xcodebuild -version
-      - name: Build for iOS Simulator
+      - name: Build for generic iOS device
         run: |
           xcodebuild -scheme parso-audio-engine-Package \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'generic/platform=iOS' \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             -skipPackagePluginValidation build
       - name: Cache acceptance-tool build
