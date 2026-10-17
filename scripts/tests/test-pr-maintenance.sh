@@ -87,6 +87,15 @@ grep -Eq 'pr (ready|merge|close)' "$MOCK_LOG" && r=yes || r=no
 eq "no ready/merge/close on behind PR" "$r" no
 eq "fork/non-Claude ignored" "$(jq '.open_claude_prs' "$tmp/report.json")" 1
 eq "behind counted" "$(jq '.behind' "$tmp/report.json")" 1
+eq "release reserves macOS capacity" "$(echo '{"workflow_runs":[{"path":".github/workflows/ios.yml"}]}' | macos_work_pending && echo busy || echo idle)" busy
+eq "main CI reserves macOS capacity" "$(echo '{"workflow_runs":[{"path":".github/workflows/ci.yml"}]}' | macos_work_pending && echo busy || echo idle)" busy
+eq "maintenance leaves macOS capacity available" "$(echo '{"workflow_runs":[{"path":".github/workflows/pr-maintenance.yml"}]}' | macos_work_pending && echo busy || echo idle)" idle
+: >"$MOCK_LOG"
+( ACTIONS_STARTED=1; decide() { echo update-branch; }; process_pr 97 ) >"$tmp/budget-out" 2>&1
+grep -q 'deferred until the next controlled batch' "$tmp/budget-out" && r=yes || r=no
+eq "second PR action is deferred" "$r" yes
+grep -q ' -X PUT ' "$MOCK_LOG" && r=yes || r=no
+eq "exhausted batch budget never updates another branch" "$r" no
 
 # Git: modify/delete conflict resolved by accepting main's deletion, filenames with spaces.
 if [[ -z "${SKIP_GIT_TESTS:-}" ]]; then
