@@ -22,6 +22,7 @@ done < <(git ls-files '.github/workflows/*.yml')
 endstep
 
 step "Automation regression tests"
+bash scripts/tests/test-issue-pr-policy.sh
 if [[ -f scripts/tests/test-pr-maintenance.sh && -f .github/scripts/pr-maintenance.sh ]]; then
   bash scripts/tests/test-pr-maintenance.sh
 fi
