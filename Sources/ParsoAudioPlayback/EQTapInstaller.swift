@@ -223,20 +223,14 @@ public final class EQTapInstaller: @unchecked Sendable {
                 e.processor.processRealtime(abl, frameCount: Int(numberFrames))
             })
 
-        // SDKs before Xcode 16.3 (Swift 6.1) type the out-parameter as
-        // `Unmanaged<MTAudioProcessingTap>?` on both iOS and macOS; newer SDKs
-        // use the bridged `MTAudioProcessingTap?`.
-        #if compiler(<6.1)
+        // The supported Apple SDKs import the Core Media ownership transfer as
+        // an `Unmanaged` out-parameter.  Convert that retained result exactly
+        // once here; using the bridged optional form is rejected by current
+        // Xcode 16.4 and macOS-latest SDKs.
         var tapOut: Unmanaged<MTAudioProcessingTap>?
         let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, placement.flag, &tapOut)
         guard err == noErr, let tap = tapOut?.takeRetainedValue() else { return nil }
         return tap
-        #else
-        var tap: MTAudioProcessingTap?
-        let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, placement.flag, &tap)
-        guard err == noErr, let tap else { return nil }
-        return tap
-        #endif
     }
 
     private func applyMix(tap: MTAudioProcessingTap, to item: AVPlayerItem) {
