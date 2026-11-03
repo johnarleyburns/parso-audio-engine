@@ -28,6 +28,66 @@ public enum DJEngineHostMode: String, Codable, Sendable {
     case externalEngine
 }
 
+/// Routes the combined master+monitor signal to the single hardware output a
+/// device like iPhone has (no separate headphone/monitor bus). `.stereo` is
+/// the existing, unmodified master passthrough. `.splitLeft`/`.splitRight`
+/// mono-sum `pe_render`'s master and `pe_render_monitor`'s cue/PFL signal and
+/// place one on each channel — the classic single-pair-of-headphones
+/// "split cue" trick, since `CueMode.splitOutput` alone only feeds a second
+/// bus this engine never connects to any output.
+public enum MasterOutputRoute: String, Sendable, CaseIterable {
+    case stereo
+    case splitLeft
+    case splitRight
+
+    /// Raw value stored in the lock-free flag the real-time render thread reads.
+    fileprivate var rawFlag: Int32 {
+        switch self {
+        case .stereo: return 0
+        case .splitLeft: return 1
+        case .splitRight: return 2
+        }
+    }
+}
+
+/// A single aligned `Int32` word written by the main actor and read by the
+/// real-time render thread. No lock, no syscall, no allocation after `init` —
+/// a torn read is architecturally impossible for an aligned word on supported
+/// platforms, and a one-callback-late value is harmless (same latency class as
+/// any other live control change). `@unchecked Sendable` invariant: `storage`
+/// is allocated once in `init` and only ever read/written as a single scalar.
+final class RouteFlag: @unchecked Sendable {
+    private let storage: UnsafeMutablePointer<Int32>
+    init() {
+        storage = .allocate(capacity: 1)
+        storage.initialize(to: 0)
+    }
+    deinit { storage.deallocate() }
+    var value: Int32 {
+        get { storage.pointee }
+        set { storage.pointee = newValue }
+    }
+}
+
+/// Fixed-size scratch buffers for combining the master and monitor buses in
+/// the render block, sized once to `maxFramesPerRender` so the real-time path
+/// never allocates. `@unchecked Sendable` invariant: every buffer is touched
+/// only from the single Core Audio render thread for the life of the engine.
+final class RouteScratchBuffers: @unchecked Sendable {
+    let capacity: Int
+    let masterL, masterR, cueL, cueR: UnsafeMutablePointer<Float>
+    init(capacity: Int) {
+        self.capacity = capacity
+        masterL = .allocate(capacity: capacity)
+        masterR = .allocate(capacity: capacity)
+        cueL = .allocate(capacity: capacity)
+        cueR = .allocate(capacity: capacity)
+    }
+    deinit {
+        masterL.deallocate(); masterR.deallocate(); cueL.deallocate(); cueR.deallocate()
+    }
+}
+
 /// Render-side telemetry snapshot (Phase 6b item 2). The Tonearm adapter maps
 /// this onto its app-facing `EngineTelemetry` value type.
 public struct EngineStats: Sendable {
@@ -106,6 +166,16 @@ public final class DJEngine {
     public private(set) var hostMode: DJEngineHostMode = .ownedEngine
     private var configChangeObserver: NSObjectProtocol?
     private var configChangeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    private let routeFlag = RouteFlag()
+    private let routeScratch: RouteScratchBuffers
+
+    /// Routes the combined master+monitor signal to the single hardware
+    /// output on a device with no separate headphone bus. `.stereo` (the
+    /// default) is the unmodified master passthrough — identical to this
+    /// engine's behavior before this property existed. See `MasterOutputRoute`.
+    public var masterOutputRoute: MasterOutputRoute = .stereo {
+        didSet { routeFlag.value = masterOutputRoute.rawFlag }
+    }
 
     public init(sampleRate: Double = 48_000, maxFramesPerRender: Int = 512,
                 deckCount: Int = 4, profile: DJEngineProfile = .full) {
@@ -115,6 +185,7 @@ public final class DJEngine {
         self.sampleRateValue = sampleRate
         self.maxFramesPerRender = maxFramesPerRender
         self.profile = profile
+        self.routeScratch = RouteScratchBuffers(capacity: maxFramesPerRender)
         decks = (0..<bridge.deckCount).map { Deck(bridge: bridge, index: $0) }
         mixer = Mixer(bridge: bridge)
         sampler = Sampler(bridge: bridge)
@@ -221,7 +292,9 @@ public final class DJEngine {
         }
 
         let sourceNode = AVAudioSourceNode(format: sourceFormat,
-                                          renderBlock: Self.makeRenderBlock(handle: bridge.handle))
+                                          renderBlock: Self.makeRenderBlock(handle: bridge.handle,
+                                                                             routeFlag: routeFlag,
+                                                                             scratch: routeScratch))
         audioEngine.attach(sourceNode)
         audioEngine.connect(sourceNode, to: destination ?? audioEngine.mainMixerNode, format: sourceFormat)
         self.audioEngine = audioEngine
@@ -244,8 +317,21 @@ public final class DJEngine {
     /// isolation check that fires (and traps, `EXC_BREAKPOINT`/`SIGTRAP` via
     /// `dispatch_assert_queue_fail`) the moment the engine starts rendering.
     /// `handle` is an `OpaquePointer`, so it crosses into this nonisolated
-    /// scope safely with no shared mutable state.
-    nonisolated private static func makeRenderBlock(handle: OpaquePointer) -> AVAudioSourceNodeRenderBlock {
+    /// scope safely with no shared mutable state. `routeFlag`/`scratch` are
+    /// `@unchecked Sendable` for the same reason (documented invariants on
+    /// each type).
+    ///
+    /// When `routeFlag` reads `.stereo` (0, the default) this is byte-for-byte
+    /// the original single-call `pe_render` passthrough — zero behavior
+    /// change for every existing caller. Otherwise it also renders the
+    /// monitor bus (`pe_render_monitor`, already honoring whatever
+    /// `Channel.cuePFL`/`Monitoring` are set to) into fixed-size scratch
+    /// buffers, mono-sums each bus, and places master/cue on the two output
+    /// channels per `MasterOutputRoute`. No allocation, lock, or syscall is
+    /// introduced on this path — `scratch`'s buffers are sized once at
+    /// `DJEngine.init` to `maxFramesPerRender`.
+    nonisolated private static func makeRenderBlock(handle: OpaquePointer, routeFlag: RouteFlag,
+                                                     scratch: RouteScratchBuffers) -> AVAudioSourceNodeRenderBlock {
         { _, _, frameCount, audioBufferList in
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
             guard buffers.count >= 2,
@@ -253,8 +339,44 @@ public final class DJEngine {
                   let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else {
                 return noErr
             }
-            pe_render(handle, left, right, Int32(frameCount))
+            let route = routeFlag.value
+            let n = Int(frameCount)
+            guard route != 0, n <= scratch.capacity else {
+                pe_render(handle, left, right, Int32(frameCount))
+                return noErr
+            }
+            pe_render(handle, scratch.masterL, scratch.masterR, Int32(frameCount))
+            pe_render_monitor(handle, scratch.cueL, scratch.cueR, Int32(frameCount))
+            combineRoute(route, frameCount: n, masterL: scratch.masterL, masterR: scratch.masterR,
+                         cueL: scratch.cueL, cueR: scratch.cueR, outLeft: left, outRight: right)
             return noErr
+        }
+    }
+
+    /// The pure per-sample combine step `makeRenderBlock` uses once both buses
+    /// are rendered — split out so it can be unit-tested with plain buffers,
+    /// independent of `AVAudioEngine`/`EngineBridge`. No allocation; every
+    /// pointer is caller-owned and already sized to at least `frameCount`.
+    /// `route` is `MasterOutputRoute.rawFlag` (0 stereo passthrough is handled
+    /// by the caller before this is reached — only 1/`.splitLeft` and
+    /// 2/`.splitRight` are meaningful here).
+    nonisolated static func combineRoute(_ route: Int32, frameCount n: Int,
+                                          masterL: UnsafePointer<Float>, masterR: UnsafePointer<Float>,
+                                          cueL: UnsafePointer<Float>, cueR: UnsafePointer<Float>,
+                                          outLeft: UnsafeMutablePointer<Float>,
+                                          outRight: UnsafeMutablePointer<Float>) {
+        if route == 1 {
+            // splitLeft: cue (PFL-selected deck) on the left, master on the right.
+            for i in 0..<n {
+                outLeft[i] = (cueL[i] + cueR[i]) * 0.5
+                outRight[i] = (masterL[i] + masterR[i]) * 0.5
+            }
+        } else {
+            // splitRight (or any other non-stereo value): master on the left, cue on the right.
+            for i in 0..<n {
+                outLeft[i] = (masterL[i] + masterR[i]) * 0.5
+                outRight[i] = (cueL[i] + cueR[i]) * 0.5
+            }
         }
     }
 

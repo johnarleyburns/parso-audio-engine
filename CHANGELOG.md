@@ -6,6 +6,18 @@ The public API reached **1.0.0** after validation by the first real integrations
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-03
+### Added
+- `DJEngine.masterOutputRoute` (`MasterOutputRoute`: `.stereo`/`.splitLeft`/`.splitRight`) — a
+  single-output "split cue" mode for devices with no separate headphone/monitor bus (e.g. iPhone).
+  When non-`.stereo`, the owned/external render path mono-sums `pe_render`'s master bus and
+  `pe_render_monitor`'s cue/PFL bus and places one on each output channel, so a DJ wearing ordinary
+  stereo headphones can cue the PFL-selected deck in one ear while hearing the live master in the
+  other. `.stereo` (the default) is byte-for-byte the prior single-`pe_render` passthrough — no
+  behavior change for existing callers. No C/DSP changes — this composes the two already-exposed,
+  already-tested `pe_render`/`pe_render_monitor` entry points entirely in the Swift render block,
+  with a lock-free flag and fixed-size scratch buffers (no allocation on the real-time path).
+
 ## [1.2.1] - 2026-09-20
 ### Added
 - Tier-aware sparse-cache accounting for separately reporting evictable streaming
