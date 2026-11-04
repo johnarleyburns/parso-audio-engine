@@ -6,6 +6,20 @@ The public API reached **1.0.0** after validation by the first real integrations
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-04
+### Fixed
+- `pe_render_monitor` (the cue/monitor bus `renderMonitor` calls) read each playing deck's
+  `position` as a single frozen value for an entire render block instead of stepping through it
+  one frame at a time the way `pe_render`'s `renderChunk` does — every sample in a block was
+  identical, jumping to a different held value on the next block. Harmless as long as this bus
+  only ever fed a genuinely separate headphone output blended faintly against real content, but
+  audible as loud stepped/static noise once `MasterOutputRoute.splitLeft`/`.splitRight` (1.5.0)
+  made it the *entire* signal in one ear on a single-output device. Fixed by stepping a per-deck,
+  call-local preview position forward each frame (plain forward/reverse at tempo × motor level,
+  the same increment `renderChunk` uses) without writing it back to the deck's real `position` —
+  `pe_render` remains the sole authority for that, so nothing double-advances. Regression test:
+  `Phase6bTests.monitorBusAdvancesThroughConsecutiveSamplesRatherThanFreezingOnOne`.
+
 ## [1.5.0] - 2026-11-03
 ### Added
 - `DJEngine.masterOutputRoute` (`MasterOutputRoute`: `.stereo`/`.splitLeft`/`.splitRight`) — a

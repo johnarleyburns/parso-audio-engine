@@ -221,6 +221,38 @@ struct CueModeTests {
         #expect(right > 0.001)    // cue on the right
     }
 
+    /// Regression for the single-output split-cue bug report: `renderMonitor` read
+    /// `deck.position` as a single frozen scalar for the whole call instead of
+    /// stepping through it like `render` does, so a whole block held one repeated
+    /// sample before jumping to a different one next block — an audible stepped/
+    /// static artifact once this bus became audible on its own (split L/R), not
+    /// just blended faintly into a real two-bus headphone mix the way it always had
+    /// been before. `splitOutputSendsMasterLeftAndCueRight` above only checks peak
+    /// magnitude, which a frozen nonzero sample still satisfies — this checks the
+    /// actual sample-to-sample content for the sine source `loadedDeckA` already
+    /// loads (far more than one cycle within 2048 frames at 220 Hz / 48 kHz).
+    @Test func monitorBusAdvancesThroughConsecutiveSamplesRatherThanFreezingOnOne() {
+        let e = loadedDeckA()
+        e.deckA.play()
+        e.mixer.channelA.cuePFL = true
+        _ = e.render(frames: 1)
+        let out = e.renderMonitor(frames: 2048)
+        let distinctValues = Set(out.left.map(\.bitPattern))
+        #expect(distinctValues.count > 100, "a stepping playhead must visit far more than 100 distinct samples")
+        var longestRunOfIdenticalAdjacentSamples = 1
+        var run = 1
+        for i in 1..<out.left.count {
+            if out.left[i] == out.left[i - 1] {
+                run += 1
+                longestRunOfIdenticalAdjacentSamples = max(longestRunOfIdenticalAdjacentSamples, run)
+            } else {
+                run = 1
+            }
+        }
+        #expect(longestRunOfIdenticalAdjacentSamples < 50,
+                "a frozen playhead holds one sample for an entire render block")
+    }
+
     @Test func offKeepsTheMonitorPathUnchanged() {
         func run(_ mode: CueMode) -> [Float] {
             let e = loadedDeckA()

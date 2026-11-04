@@ -197,6 +197,18 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
         cueGains[deckIndex] = trim;
     }
 
+    // Per-deck preview-only playhead, seeded from the real position and stepped forward
+    // one frame at a time below — never written back to `deck.position`, which
+    // `pe_render`'s renderChunk() remains the sole authority for. Without this, every
+    // frame in this call read the same unmoving `deck.position`, so the whole buffer
+    // held one repeated sample that only changed between callbacks: an audible
+    // stepped/static artifact once this bus is audible on its own (the single-output
+    // split-cue route), not just blended faintly into a real two-bus headphone mix.
+    double previewPosition[PE_MAX_DECKS];
+    for (int deckIndex = 0; deckIndex < engine->deckCount; ++deckIndex) {
+        previewPosition[deckIndex] = engine->decks[deckIndex].position;
+    }
+
     for (int frame = 0; frame < frames; ++frame) {
         float cueSignal = 0.0f;
         float masterSignal = 0.0f;
@@ -204,14 +216,23 @@ static void renderMonitor(pe_engine* engine, float* left, float* right, int fram
             const DeckState& deck = engine->decks[deckIndex];
             if (!deck.playing || deck.frames <= 0 || deck.sampleRate <= 0.0) continue;
             const int rightChannel = deck.channelCount > 1 ? 1 : 0;
+            const double pos = previewPosition[deckIndex];
             const float sample = 0.5f * (
-                sampleAt(deck, 0, deck.position) + sampleAt(deck, rightChannel, deck.position)
+                sampleAt(deck, 0, pos) + sampleAt(deck, rightChannel, pos)
             );
             const float fader = smoothedChannelFader(engine, deckIndex);
             masterSignal += sample * channelGains[deckIndex] * fader;
             if (engine->control.cuePFL[deckIndex].load(std::memory_order_relaxed) > 0.5f) {
                 cueSignal += sample * cueGains[deckIndex] * fader;
             }
+            // Plain forward/reverse step at tempo × motor level — the same increment
+            // renderChunk() uses for ordinary playback, without its scratch/jog/loop
+            // handling, which this simplified preview bus never modeled either way.
+            const float tempoRatio = engine->control.deckTimeRatio[deckIndex].load(std::memory_order_relaxed);
+            const double forwardIncrement = deck.sampleRate / engine->sampleRate *
+                (std::isfinite(tempoRatio) && tempoRatio > 0.0f ? static_cast<double>(tempoRatio) : 1.0);
+            const double motor = static_cast<double>(deck.motorLevel);
+            previewPosition[deckIndex] += (deck.reverse ? -forwardIncrement : forwardIncrement) * motor;
         }
         if (masterCue > 0.5f) {
             masterSignal *= masterLevel;
