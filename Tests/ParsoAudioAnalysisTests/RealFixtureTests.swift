@@ -125,6 +125,24 @@ struct FixtureFullAnalysisTests {
     }
 }
 
+@Suite("RealFixture LeanAnalysis")
+struct FixtureLeanAnalysisTests {
+    /// `LeanAnalysis.run` and `FullAnalysis.run` must agree on every real
+    /// fixture, not just the synthetic click-track in `PortedPipelineTests.swift`.
+    @Test(.enabled(if: FixtureLibrary.isAvailable))
+    func matchesFullAnalysisOnEveryTrack() throws {
+        for fixture in FixtureLibrary.decodeFixtures {
+            let pcm = try AnalysisDecoder.decode(FixtureLibrary.url(for: fixture))
+            let full = FullAnalysis.run(pcm)
+            let lean = LeanAnalysis.run(pcm)
+            #expect(lean.bpm == full.bpm, "bpm mismatch for \(fixture.id)")
+            #expect(lean.beatGrid == full.beatGrid, "beatGrid mismatch for \(fixture.id)")
+            #expect(lean.key == full.key, "key mismatch for \(fixture.id)")
+            #expect(lean.energy == full.energy, "energy mismatch for \(fixture.id)")
+        }
+    }
+}
+
 // Helper: turn a missing on-disk file into a recorded known-issue rather than a hard failure,
 // so a partial download does not fail the whole suite.
 private func withKnownIssueIfMissing(_ fixture: Fixture, _ body: () throws -> Void) rethrows {

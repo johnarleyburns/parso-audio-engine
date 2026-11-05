@@ -5,6 +5,13 @@ The public API reached **1.0.0** after validation by the first real integrations
 (see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current release is `1.2.1`.
 
 ## [Unreleased]
+### Added
+- `LeanAnalysis`, a trimmed sibling of `FullAnalysis` for callers that only need bpm, beatgrid,
+  key, and energy — the facts a BPM/Camelot-compatible next-track picker needs. Shares its exact
+  computation with `FullAnalysis` (both call the newly-factored-out `FullAnalysis.musicalCore`),
+  so the two can never silently drift apart. Skips `FullAnalysis`'s loudness measurement,
+  phrase/structure segmentation, and waveform pyramid — the three most expensive stages, none of
+  which a next-track picker reads.
 
 ## [1.5.1] - 2026-11-04
 ### Fixed

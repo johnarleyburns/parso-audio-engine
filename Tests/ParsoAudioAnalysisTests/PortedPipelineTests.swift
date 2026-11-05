@@ -285,3 +285,37 @@ struct FullAnalysisTests {
         #expect(r.phrases.isEmpty)
     }
 }
+
+// MARK: - LeanAnalysis
+
+/// `LeanAnalysis` shares its exact computation with `FullAnalysis` (both call
+/// `FullAnalysis.musicalCore`), so these assert true equality against the
+/// corresponding `FullAnalysis` fields, not an approximation.
+@Suite("LeanAnalysis")
+struct LeanAnalysisTests {
+    @Test func matchesFullAnalysisOverClickTrack() {
+        let samples = Synth.clickTrack(bpm: 128, seconds: 12)
+        let audio = AnalysisAudio(sampleRate: 48_000, channels: [samples])
+        let full = FullAnalysis.run(audio)
+        let lean = LeanAnalysis.run(AnalysisAudio(sampleRate: 48_000, channels: [samples]))
+        #expect(lean.bpm == full.bpm)
+        #expect(lean.beatGrid == full.beatGrid)
+        #expect(lean.downbeats == full.downbeats)
+        #expect(lean.key == full.key)
+        #expect(lean.energy == full.energy)
+    }
+
+    @Test func emptyAudioDegradesGracefully() {
+        let r = LeanAnalysis.run(AnalysisAudio(sampleRate: 48_000, channels: [[]]))
+        #expect(r.bpm == nil)
+        #expect(r.beatGrid == nil)
+        #expect(r.energy == nil)
+    }
+
+    @Test func isDeterministic() {
+        let samples = Synth.clickTrack(bpm: 128, seconds: 12)
+        let r1 = LeanAnalysis.run(AnalysisAudio(sampleRate: 48_000, channels: [samples]))
+        let r2 = LeanAnalysis.run(AnalysisAudio(sampleRate: 48_000, channels: [samples]))
+        #expect(r1 == r2)
+    }
+}

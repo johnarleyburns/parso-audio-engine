@@ -78,6 +78,25 @@ public enum FullAnalysisEvent: Sendable {
     case complete(FullAnalysisResult)
 }
 
+/// The shared tempo/beatgrid/key/energy computation `FullAnalysis` and
+/// `LeanAnalysis` both build on — factored out so the two pipelines can never
+/// silently drift apart. `internal` (not `private`): `LeanAnalysis.swift` is a
+/// different file in this same module.
+struct MusicalCoreResult {
+    let frames: [SpectralFrame]
+    /// Per-STFT-frame fused chroma, reused both for the global key estimate
+    /// and (by `FullAnalysis`) for each phrase's local key — computed once.
+    let chromaFrames: [HPCP]
+    let sampleRate: Double
+    let hopSeconds: Double
+    let bpm: Double?
+    let beatGrid: BeatGrid?
+    let downbeatIndices: [Int]
+    let beatFeatures: [BeatFeature]
+    let key: KeyEstimate?
+    let energy: EnergyResult?
+}
+
 /// Pure pipeline: decode → run every stage → assemble `FullAnalysisResult`.
 /// Deterministic for a fixed input (NFR-DET-3).
 public enum FullAnalysis {
@@ -156,7 +175,45 @@ public enum FullAnalysis {
         let loudness = measureLoudness(pcm)
         try progress(.loudness, 0.12)
 
-        // STFT → features → onset envelope.
+        let core = musicalCore(pcm)
+        try progress(.spectral, 0.30)
+        try progress(.tempo, 0.46)
+        emit?(.tempo(core.bpm))
+        emit?(.beatGrid(core.beatGrid, downbeats: core.downbeatIndices))
+        try progress(.beatGrid, 0.52)
+        try progress(.key, 0.58)
+        emit?(.key(core.key))
+        try progress(.energy, 0.69)
+
+        // Phrases.
+        var phrases: [Phrase] = []
+        if !core.beatFeatures.isEmpty, !core.downbeatIndices.isEmpty, let beatGrid = core.beatGrid {
+            phrases = PhraseSegmenter.segment(features: core.beatFeatures,
+                                              beats: beatGrid.beatSamples,
+                                              downbeats: core.downbeatIndices,
+                                              sampleRate: core.sampleRate)
+        }
+        phrases = addLocalDescriptors(to: phrases, frames: core.frames,
+                                      keyFrames: core.chromaFrames,
+                                      sampleRate: core.sampleRate, hopSeconds: core.hopSeconds)
+        try progress(.structure, 0.83)
+        emit?(.phrases(phrases))
+
+        // Waveform pyramid.
+        let waveform = WaveformPyramidBuilder.build(pcm.mono, sampleRate: core.sampleRate)
+        try progress(.waveform, 0.95)
+        emit?(.waveform(waveform))
+
+        return FullAnalysisResult(loudness: loudness, bpm: core.bpm, key: core.key,
+                                  beatGrid: core.beatGrid, downbeats: core.downbeatIndices,
+                                  phrases: phrases, energy: core.energy,
+                                  waveform: waveform, hopSeconds: core.hopSeconds)
+    }
+
+    /// STFT → spectral features → onset envelope → tempo/beatgrid → key →
+    /// energy. Everything `LeanAnalysis` needs, and everything `FullAnalysis`
+    /// needs before its own loudness/phrase/waveform stages.
+    static func musicalCore(_ pcm: AnalysisAudio) -> MusicalCoreResult {
         let stft = STFTConfig()
         let kernel = STFTKernel(config: stft)
         let spectra = kernel.spectra(pcm.mono)
@@ -177,7 +234,6 @@ public enum FullAnalysis {
                 frames.append(SpectralFeatures.frame(spec, prevPower: prev, frameSamples: slice))
             }
         }
-        try progress(.spectral, 0.30)
 
         let envelope = OnsetDetector.envelope(spectra: spectra)
         let onsets = hopSeconds > 0
@@ -212,19 +268,13 @@ public enum FullAnalysis {
                 }
             }
         }
-        try progress(.tempo, 0.46)
-        emit?(.tempo(bpm))
-        emit?(.beatGrid(beatGrid, downbeats: downbeatIndices))
-        try progress(.beatGrid, 0.52)
 
         // Key from per-frame chroma.
+        let chromaFrames = spectra.map { KeyDetector.fusedChroma($0) }
         var key: KeyEstimate?
         if !spectra.isEmpty {
-            let chromaFrames = spectra.map { KeyDetector.fusedChroma($0) }
             key = KeyDetector.estimate(chromaFrames)
         }
-        try progress(.key, 0.58)
-        emit?(.key(key))
 
         // Energy curve + scalar (§19.4 `energy_curve` — carried, not discarded).
         var energy: EnergyResult?
@@ -235,31 +285,11 @@ public enum FullAnalysis {
             energy = EnergyResult(scalar: EnergyAnalyzer.scalar(curve),
                                   curve: curve, hopSeconds: hopSeconds)
         }
-        try progress(.energy, 0.69)
 
-        // Phrases.
-        var phrases: [Phrase] = []
-        if !beatFeatures.isEmpty && !downbeatIndices.isEmpty, let beatGrid {
-            phrases = PhraseSegmenter.segment(features: beatFeatures,
-                                              beats: beatGrid.beatSamples,
-                                              downbeats: downbeatIndices,
-                                              sampleRate: stft.sampleRate)
-        }
-        phrases = addLocalDescriptors(to: phrases, frames: frames,
-                                      keyFrames: spectra.map { KeyDetector.fusedChroma($0) },
-                                      sampleRate: stft.sampleRate, hopSeconds: hopSeconds)
-        try progress(.structure, 0.83)
-        emit?(.phrases(phrases))
-
-        // Waveform pyramid.
-        let waveform = WaveformPyramidBuilder.build(pcm.mono, sampleRate: stft.sampleRate)
-        try progress(.waveform, 0.95)
-        emit?(.waveform(waveform))
-
-        return FullAnalysisResult(loudness: loudness, bpm: bpm, key: key,
-                                  beatGrid: beatGrid, downbeats: downbeatIndices,
-                                  phrases: phrases, energy: energy,
-                                  waveform: waveform, hopSeconds: hopSeconds)
+        return MusicalCoreResult(frames: frames, chromaFrames: chromaFrames,
+                                 sampleRate: stft.sampleRate, hopSeconds: hopSeconds,
+                                 bpm: bpm, beatGrid: beatGrid, downbeatIndices: downbeatIndices,
+                                 beatFeatures: beatFeatures, key: key, energy: energy)
     }
 
     private static func addLocalDescriptors(
