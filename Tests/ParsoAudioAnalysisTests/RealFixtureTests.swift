@@ -129,10 +129,20 @@ struct FixtureFullAnalysisTests {
 struct FixtureLeanAnalysisTests {
     /// `LeanAnalysis.run` and `FullAnalysis.run` must agree on every real
     /// fixture, not just the synthetic click-track in `PortedPipelineTests.swift`.
+    ///
+    /// Decodes via `AudioFileReader` (this module's own multi-format
+    /// decoder — Vorbis/Opus/FLAC/MP3/WAV/AIFF/CAF/M4A), not
+    /// `AnalysisDecoder.decode(url:)`: that one goes through plain
+    /// `AVAudioFile`, which can't open the `.ogg` fixtures at all. Converts
+    /// the resulting `PCMBuffer` to `AnalysisAudio` by hand (the equivalent
+    /// `AnalysisBridge.analysisAudio(from:)` `TrackAnalyzer.analyze` uses
+    /// internally is `internal`, not visible from this plain `import`).
     @Test(.enabled(if: FixtureLibrary.isAvailable))
     func matchesFullAnalysisOnEveryTrack() throws {
         for fixture in FixtureLibrary.decodeFixtures {
-            let pcm = try AnalysisDecoder.decode(FixtureLibrary.url(for: fixture))
+            let buffer = try AudioFileReader(url: FixtureLibrary.url(for: fixture)).readAll()
+            let channels = (0..<buffer.channelCount).map { Array(buffer.channel($0)) }
+            let pcm = AnalysisAudio(sampleRate: buffer.format.sampleRate, channels: channels)
             let full = FullAnalysis.run(pcm)
             let lean = LeanAnalysis.run(pcm)
             #expect(lean.bpm == full.bpm, "bpm mismatch for \(fixture.id)")
