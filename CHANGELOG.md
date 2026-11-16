@@ -2,9 +2,43 @@
 
 All notable changes are documented here. Format: Keep a Changelog; scheme: SemVer.
 The public API reached **1.0.0** after validation by the first real integrations
-(see docs/SPEC.md §17). The `1.1.0` feature line is tagged; the current release is `1.2.1`.
+(see docs/SPEC.md §17). The current release is `1.6.1`.
 
 ## [Unreleased]
+
+## [1.6.1] - 2026-11-16
+### Fixed
+- `CoreMLSemanticModel` (CLAP audio/text embedding) cached its loaded `MLModel` indefinitely
+  with no invalidation path. Real report via Tonearm: once one GPU-backed ML Program prediction
+  failed with CoreML's generic "Unable to compute the asynchronous prediction using ML Program"
+  error (GPU/ML-Program resource loss after backgrounding, thermal throttling, or memory
+  pressure can all trigger it), every subsequent `embedAudio`/`embedText` call on that same
+  cached model failed identically for the rest of the process's lifetime — 1000+ tracks failing
+  in one indexing run, not a handful of bad tracks. `embedText`/`embedAudio` now discard the
+  cached model on any prediction failure, so the next call reloads a fresh `MLModel` instead of
+  permanently repeating the same failure. `predict(...)` stays `static` (not actor-isolated) as
+  before — the fix lives at the two actor-isolated call sites, not inside it, since making it an
+  instance method would let a non-Sendable `MLFeatureProvider` result cross back into the actor
+  (caught by Swift 6 strict concurrency during this fix's own CI verification).
+### CI
+- `build-test-macos`/`build-watchos`/`build-ios` requested the now-retired `macos-14` runner
+  image (GitHub retired macOS 14 from Actions on 2026-11-02); switched to `xcode-27`, the label
+  already used successfully elsewhere in this repo and in Tonearm's CI.
+- `build-test-macos` had six steps that are genuinely Linux/portability concerns (script/
+  whitespace validation, the SPDX copyleft guard, the native CMake/ctest build, and a portable-
+  Swift smoke compiled with a bare `swift-actions/setup-swift` toolchain) duplicated or misplaced
+  from `build-native-linux`; the portable-Swift-smoke step actively failed on macOS ("no such
+  module 'Foundation'" — a standalone swift.org toolchain with no Apple SDK configured). Moved
+  into `build-native-linux`, where they already partly lived and where the environment actually
+  supports them.
+- `parso-blend` (an `executableTarget` in the root `Package.swift`) hit the exact problem
+  `docs/UNIFICATION_PLAN.md` §4c already diagnosed and fixed for `ParsoAcceptanceArtifacts`/
+  `ParsoStemsAcceptance`/`ParsoClapAcceptance`: watchOS has no CLI executables to link, so the
+  root package's whole-package scheme could never build for a watch destination while any
+  executable target lived there. Moved to `Tools/ParsoBlend/`, matching the established
+  `Tools/AcceptanceArtifacts/` pattern.
+
+## [1.6.0] - 2026-11-05
 ### Added
 - `LeanAnalysis`, a trimmed sibling of `FullAnalysis` for callers that only need bpm, beatgrid,
   key, and energy — the facts a BPM/Camelot-compatible next-track picker needs. Shares its exact
