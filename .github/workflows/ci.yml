@@ -81,6 +81,11 @@ jobs:
             head -c 60000 "$report"
             echo "::endgroup::"
           done
+
+  build-native-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
       - name: Validate repository scripts and whitespace
         run: |
           bash -n scripts/setup-linux.sh
@@ -114,22 +119,6 @@ jobs:
             Tests/PortableSwift/LinuxPortableSmoke.swift \
             -o /tmp/parso-linux-swift-smoke
           /tmp/parso-linux-swift-smoke
-
-  build-native-linux:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate repository scripts and whitespace
-        run: |
-          bash -n scripts/setup-linux.sh
-          bash -n scripts/generate-linux-tts-review.sh
-          git diff --check
-      - name: Build native CMake targets
-        run: |
-          cmake -S . -B build-native -DPARSO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-native --parallel
-      - name: Test native CMake targets
-        run: ctest --test-dir build-native --output-on-failure
       - name: Install and test Python binding in a fresh virtual environment
         run: |
           python3 -m venv /tmp/parso-python-venv

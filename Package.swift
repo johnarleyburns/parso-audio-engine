@@ -235,12 +235,6 @@ let package = Package(
             name: "ParsoMixEngine",
             dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "CParsoMix"]
         ),
-        // Dev tool: plans and renders a two-track blend offline (blend lab parity).
-        .executableTarget(
-            name: "parso-blend",
-            dependencies: ["ParsoAudioCore", "ParsoAudioAnalysis", "ParsoMixEngine"],
-            path: "Sources/Tools/parso-blend"
-        ),
         // Phase 7a — CoreML-backed features, deliberately watchOS-excluded
         // (see the file header for why `!os(watchOS)` and not `canImport`).
         // No model weights ship in this target or ever will; see
