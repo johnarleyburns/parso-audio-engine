@@ -215,8 +215,16 @@ public actor CoreMLSemanticModel: SemanticModel {
             "input_ids": MLFeatureValue(multiArray: ids),
             "attention_mask": MLFeatureValue(multiArray: mask),
         ])
-        return try await predict(modelBox, provider: provider,
-                                 outputName: "text_embedding", count: spec.dimensions)
+        do {
+            return try await Self.predict(modelBox, provider: provider,
+                                          outputName: "text_embedding", count: spec.dimensions)
+        } catch {
+            // Real report: once a GPU-backed ML Program prediction failed (resource loss after
+            // backgrounding, thermal throttling, or memory pressure), every subsequent call on
+            // this cached box failed identically -- discard it so the next call reloads fresh.
+            box = nil
+            throw error
+        }
     }
 
     public func embedAudio(logMel: [Float]) async throws -> [Float] {
@@ -236,8 +244,13 @@ public actor CoreMLSemanticModel: SemanticModel {
         let provider = try MLDictionaryFeatureProvider(dictionary: [
             "log_mel": MLFeatureValue(multiArray: input),
         ])
-        return try await predict(modelBox, provider: provider,
-                                 outputName: "audio_embedding", count: spec.dimensions)
+        do {
+            return try await Self.predict(modelBox, provider: provider,
+                                          outputName: "audio_embedding", count: spec.dimensions)
+        } catch {
+            box = nil
+            throw error
+        }
     }
 
     private func load() throws -> ModelBox {
@@ -260,26 +273,15 @@ public actor CoreMLSemanticModel: SemanticModel {
     /// Runs the prediction and extracts the output outside actor isolation:
     /// `MLModel.prediction(from:)`'s non-Sendable `MLFeatureProvider` result
     /// can't cross back into the actor, so only the Sendable `[Float]` does.
-    ///
-    /// Real report: once one prediction on a loaded `MLModel` failed with CoreML's generic
-    /// "Unable to compute the asynchronous prediction using ML Program" error (GPU/ML-Program
-    /// resource loss after backgrounding, thermal throttling, or memory pressure can all trigger
-    /// it), every subsequent track in that indexing run failed identically -- `box` was cached
-    /// indefinitely with no path back to a healthy state. A prediction failure now discards the
-    /// cached box so the next `embedAudio`/`embedText` call reloads a fresh `MLModel` instead of
-    /// permanently repeating the same failure for the rest of the process's lifetime.
-    private func predict(_ box: ModelBox, provider: MLDictionaryFeatureProvider,
-                         outputName: String, count: Int) async throws -> [Float] {
-        do {
-            let output = try await box.model.prediction(from: provider)
-            guard let value = output.featureValue(for: outputName)?.multiArrayValue else {
-                throw SemanticModelError.inferenceFailed("missing \(outputName) output")
-            }
-            return Self.extract(value, count: count)
-        } catch {
-            self.box = nil
-            throw error
+    /// Deliberately `static` (not actor-isolated) so that non-Sendable result never crosses
+    /// back into the actor -- callers invalidate `box` themselves on failure (see below).
+    private static func predict(_ box: ModelBox, provider: MLDictionaryFeatureProvider,
+                                 outputName: String, count: Int) async throws -> [Float] {
+        let output = try await box.model.prediction(from: provider)
+        guard let value = output.featureValue(for: outputName)?.multiArrayValue else {
+            throw SemanticModelError.inferenceFailed("missing \(outputName) output")
         }
+        return extract(value, count: count)
     }
 
     private static func extract(_ multiArray: MLMultiArray, count: Int) -> [Float] {
